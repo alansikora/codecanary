@@ -43,6 +43,7 @@ echo "Fetching release ${TAG}..."
 URL="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/tags/${TAG}" \
   | grep '"browser_download_url"' \
   | grep "_${OS}_${ARCH}\.tar\.gz" \
+  | grep -v 'codecanary-setup' \
   | cut -d'"' -f4)"
 
 if [ -z "$URL" ]; then
