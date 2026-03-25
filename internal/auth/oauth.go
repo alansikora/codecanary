@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -30,7 +31,7 @@ type SetupResult struct {
 }
 
 // InstallGitHubApp opens the browser to install the Claude GitHub App on a repo.
-func InstallGitHubApp(repo string) error {
+func InstallGitHubApp(repo string, reader *bufio.Reader) error {
 	installURL := githubAppURL
 	fmt.Printf("Opening browser to install the Claude GitHub App...\n")
 	fmt.Printf("  → Select the repository: %s\n\n", repo)
@@ -40,7 +41,7 @@ func InstallGitHubApp(repo string) error {
 	}
 
 	fmt.Printf("Press Enter after installing the app...")
-	fmt.Scanln()
+	reader.ReadString('\n')
 	fmt.Println()
 	return nil
 }
