@@ -67,7 +67,7 @@ func run() error {
 
 	// 6. Create workflow file.
 	workflowDir := filepath.Join(".github", "workflows")
-	workflowPath := filepath.Join(workflowDir, "codecanary-review.yml")
+	workflowPath := filepath.Join(workflowDir, "codecanary-bot.yml")
 
 	var authEnv string
 	if secretName == "ANTHROPIC_API_KEY" {
@@ -92,7 +92,7 @@ jobs:
   filter:
     if: >-
       github.event_name == 'pull_request' || (
-        github.event.comment.user.login != 'codecanary-review[bot]' &&
+        github.event.comment.user.login != 'codecanary-bot[bot]' &&
         github.event.comment.in_reply_to_id
       )
     runs-on: ubuntu-latest
@@ -180,7 +180,7 @@ jobs:
 	var filesToAdd []string
 	var bullets []string
 	if workflowCreated {
-		filesToAdd = append(filesToAdd, ".github/workflows/codecanary-review.yml")
+		filesToAdd = append(filesToAdd, ".github/workflows/codecanary-bot.yml")
 		bullets = append(bullets, "- Add CodeCanary automated PR review workflow")
 	}
 	if configCreated {

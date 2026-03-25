@@ -2,7 +2,7 @@ package auth
 
 import "fmt"
 
-const codeCanaryAppInstallURL = "https://github.com/apps/codecanary-review/installations/new"
+const codeCanaryAppInstallURL = "https://github.com/apps/codecanary-bot/installations/new"
 
 // InstallCodeCanaryApp opens the browser to install the CodeCanary Review app on a repo.
 func InstallCodeCanaryApp(repo string) error {
