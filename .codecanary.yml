@@ -1,0 +1,63 @@
+version: 1
+
+context: |
+  Go CLI tool (two binaries: review and setup) with a Cloudflare Worker (TypeScript) for OIDC token exchange.
+  Uses Cobra for CLI, gh/claude CLIs for GitHub and AI integration. Shell code should be minimal — all logic belongs in Go.
+  No test suite yet beyond config unit tests, so refactors need extra care. Config is a flat .codecanary.yml file at repo root.
+
+rules:
+  - id: error-handling-wrapped
+    description: "Go errors returned from functions should be wrapped with fmt.Errorf and %w to preserve the error chain"
+    severity: warning
+    paths: ["**/*.go"]
+
+  - id: minimize-shell-logic
+    description: "Shell scripts (setup.sh, GitHub Action) must stay thin — all meaningful logic should live in Go binaries"
+    severity: warning
+    paths: ["*.sh", ".github/**/*.yml"]
+
+  - id: no-hardcoded-secrets
+    description: "No API keys, tokens, passwords, or secrets should be hardcoded in source files"
+    severity: critical
+
+  - id: cobra-flag-error-handling
+    description: "Cobra flag values retrieved with GetString/GetBool should check the returned error or use MustGet variants to avoid silent failures"
+    severity: bug
+    paths: ["cmd/**/*.go"]
+
+  - id: yaml-struct-tags
+    description: "Exported struct fields used in YAML config parsing must have yaml struct tags to ensure correct serialization"
+    severity: bug
+    paths: ["internal/review/config.go"]
+
+  - id: input-validation
+    description: "User-supplied input (PR numbers, file paths, config values) must be validated before use to prevent injection or unexpected behavior"
+    severity: critical
+    paths: ["**/*.go"]
+
+  - id: worker-request-validation
+    description: "The OIDC worker must validate and sanitize all incoming request data before processing token exchanges"
+    severity: critical
+    paths: ["worker/src/**/*.ts"]
+
+  - id: resource-cleanup
+    description: "Opened files, HTTP response bodies, and other resources must be closed via defer to prevent leaks"
+    severity: warning
+    paths: ["**/*.go"]
+
+  - id: no-unsafe-exec
+    description: "Avoid passing unsanitized input to os/exec commands — arguments should be passed as separate args, not interpolated into command strings"
+    severity: critical
+    paths: ["**/*.go"]
+
+  - id: backward-compat-markers
+    description: "Changes to marker detection must preserve support for both codecanary and legacy clanopy HTML markers"
+    severity: bug
+    paths: ["internal/review/**/*.go"]
+
+ignore:
+  - "go.sum"
+  - "worker/node_modules/**"
+  - "worker/package-lock.json"
+  - "worker/.wrangler/**"
+  - "LICENSE"
