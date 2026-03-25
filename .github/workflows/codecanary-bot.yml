@@ -1,0 +1,50 @@
+name: CodeCanary Review
+on:
+  pull_request:
+    types: [opened, synchronize]
+  pull_request_review_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+jobs:
+  filter:
+    if: >-
+      github.event_name == 'pull_request' || (
+        github.event.comment.user.login != 'codecanary-bot[bot]' &&
+        github.event.comment.in_reply_to_id
+      )
+    runs-on: ubuntu-latest
+    outputs:
+      should_review: ${{ github.event_name == 'pull_request' || steps.check.outputs.is_codecanary_thread == 'true' }}
+    steps:
+      - name: Check if codecanary thread
+        id: check
+        if: github.event_name == 'pull_request_review_comment'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BODY=$(gh api repos/${{ github.repository }}/pulls/comments/${{ github.event.comment.in_reply_to_id }} --jq '.body')
+          if echo "$BODY" | grep -q "codecanary fix\|clanopy fix"; then
+            echo "is_codecanary_thread=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_codecanary_thread=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  review:
+    needs: filter
+    if: needs.filter.outputs.should_review == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - uses: alansikora/codecanary-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          config_path: .codecanary.yml
+          reply_only: ${{ github.event_name == 'pull_request_review_comment' }}

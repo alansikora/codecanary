@@ -1,0 +1,58 @@
+version: 1
+
+context: |
+  Go CLI tool (two binaries: review and setup) with a Cloudflare Worker (TypeScript).
+  Uses Cobra for CLI, gh/claude CLIs for GitHub and AI integration.
+  Config is .codecanary.yml at repo root. Shell code should be minimal — all logic in Go.
+  No automated tests beyond config unit tests, so refactors need extra care.
+
+rules:
+  - id: error-handling-go
+    description: "Go functions must check and propagate errors with context using fmt.Errorf wrapping (%w)"
+    severity: bug
+    paths: ["**/*.go"]
+
+  - id: minimize-shell-logic
+    description: "Shell scripts and GitHub Action definitions should be thin wrappers — all logic must live in Go, not in bash"
+    severity: warning
+    paths: ["**/*.sh", ".github/**/*.yml"]
+
+  - id: command-injection
+    description: "User-controlled or external input must not be interpolated into shell commands (exec.Command, os/exec) without proper argument separation"
+    severity: critical
+    paths: ["**/*.go"]
+
+  - id: secret-exposure
+    description: "Tokens, credentials, and secrets must not be logged, printed, or included in error messages"
+    severity: critical
+
+  - id: input-validation
+    description: "External inputs (CLI args, API responses, YAML config values) must be validated before use"
+    severity: bug
+
+  - id: worker-request-validation
+    description: "Cloudflare Worker endpoints must validate request origin, method, and token claims before returning sensitive data"
+    severity: critical
+    paths: ["worker/**/*.ts"]
+
+  - id: resource-cleanup
+    description: "Opened files, HTTP response bodies, and other resources must be closed with defer immediately after creation"
+    severity: warning
+    paths: ["**/*.go"]
+
+  - id: backwards-compat-markers
+    description: "PR marker detection must support both codecanary and legacy clanopy prefixes to avoid breaking existing installations"
+    severity: bug
+    paths: ["internal/review/**/*.go"]
+
+  - id: config-defaults
+    description: "Config fields with defaults (max_file_size, max_total_size, timeout_minutes) must use Effective* accessor methods rather than reading struct fields directly"
+    severity: warning
+    paths: ["internal/review/**/*.go"]
+
+ignore:
+  - "go.sum"
+  - "worker/node_modules/**"
+  - "worker/package-lock.json"
+  - "worker/.wrangler/**"
+  - "*.lock"

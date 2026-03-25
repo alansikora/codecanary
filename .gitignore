@@ -6,3 +6,6 @@ dist/
 
 # Dependencies
 worker/node_modules/
+
+# codecanary
+.codecanary.yml.bak
