@@ -261,6 +261,7 @@ func authenticateClaude(repo string, reader *bufio.Reader) (string, string, erro
 	// Check if either secret already exists.
 	secretsOut, err := exec.Command("gh", "secret", "list", "--repo", repo).Output()
 	if err == nil {
+		// OAuth token takes priority — only one auth secret is expected at a time.
 		existing := ""
 		if strings.Contains(string(secretsOut), "CLAUDE_CODE_OAUTH_TOKEN") {
 			existing = "CLAUDE_CODE_OAUTH_TOKEN"
