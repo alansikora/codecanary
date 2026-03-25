@@ -35,7 +35,7 @@ func hasFlag(name string) bool {
 func run() error {
 	canary := hasFlag("--canary")
 	if canary {
-		fmt.Fprintf(os.Stderr, "CodeCanary Setup %s (canary)\n\n", version)
+		fmt.Fprintf(os.Stderr, "CodeCanary Setup (canary)\n\n")
 	} else {
 		fmt.Fprintf(os.Stderr, "CodeCanary Setup %s\n\n", version)
 	}
@@ -60,18 +60,24 @@ func run() error {
 	repo := strings.TrimSpace(string(repoOut))
 	fmt.Fprintf(os.Stderr, "Repository: %s\n\n", repo)
 
-	// 3. Install the CodeCanary Review App.
+	// 3. Preflight: check the setup branch doesn't already exist.
+	branch := "codecanary/review-setup"
+	if err := exec.Command("git", "show-ref", "--verify", "refs/heads/"+branch).Run(); err == nil {
+		return fmt.Errorf("branch %s already exists — delete it with `git branch -D %s` to retry", branch, branch)
+	}
+
+	// 4. Install the CodeCanary Review App.
 	if err := auth.InstallCodeCanaryApp(repo, reader); err != nil {
 		return fmt.Errorf("installing CodeCanary app: %w", err)
 	}
 
-	// 4. Auth: prompt for method.
+	// 5. Auth: prompt for method.
 	secretName, token, err := authenticateClaude(repo, reader)
 	if err != nil {
 		return err
 	}
 
-	// 5. Confirm and set secret.
+	// 6. Confirm and set secret.
 	if token != "" {
 		fmt.Fprintf(os.Stderr, "Set %s as a secret on %s? [Y/n] ", secretName, repo)
 		if confirm(reader) {
@@ -86,7 +92,7 @@ func run() error {
 		}
 	}
 
-	// 6. Create workflow file.
+	// 7. Create workflow file.
 	workflowDir := filepath.Join(".github", "workflows")
 	workflowPath := filepath.Join(workflowDir, "codecanary.yml")
 
@@ -170,7 +176,7 @@ jobs:
 		fmt.Fprintf(os.Stderr, "  Created %s\n", workflowPath)
 	}
 
-	// 7. Generate review config.
+	// 8. Generate review config.
 	configPath := ".codecanary.yml"
 	configCreated := false
 	generateConfig := true
@@ -198,7 +204,7 @@ jobs:
 		configCreated = true
 	}
 
-	// 8. Create PR.
+	// 9. Create PR.
 	if !workflowCreated && !configCreated {
 		fmt.Fprintf(os.Stderr, "\nSetup is already complete — nothing to do.\n")
 		return nil
@@ -219,12 +225,7 @@ jobs:
 		return fmt.Errorf("internal error: no files to stage")
 	}
 
-	branch := "codecanary/review-setup"
 	fmt.Fprintf(os.Stderr, "\nCreating PR...\n")
-
-	if err := exec.Command("git", "show-ref", "--verify", "refs/heads/"+branch).Run(); err == nil {
-		return fmt.Errorf("branch %s already exists — delete it with `git branch -D %s` to retry", branch, branch)
-	}
 
 	if out, err := exec.Command("git", "checkout", "-b", branch).CombinedOutput(); err != nil {
 		return fmt.Errorf("creating branch: %s\n%s", err, string(out))

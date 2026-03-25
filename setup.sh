@@ -22,11 +22,10 @@ case "$ARCH" in
   aarch64|arm64) ARCH="arm64" ;;
 esac
 
+TAG=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" | grep '"tag_name"' | head -1 | sed 's/.*"v//' | sed 's/".*//')
 if [ "$CANARY" = true ]; then
-  TAG=$(curl -fsSL "https://api.github.com/repos/$REPO/releases" | grep '"tag_name"' | head -1 | sed 's/.*"v//' | sed 's/".*//')
-  echo "Downloading CodeCanary Setup v${TAG} (canary)..."
+  echo "Downloading CodeCanary Setup (canary)..."
 else
-  TAG=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" | grep '"tag_name"' | head -1 | sed 's/.*"v//' | sed 's/".*//')
   echo "Downloading CodeCanary Setup v${TAG}..."
 fi
 URL="https://github.com/$REPO/releases/download/v${TAG}/codecanary-setup_${TAG}_${OS}_${ARCH}.tar.gz"
