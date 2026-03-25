@@ -1,4 +1,4 @@
-package cmd
+package cli
 
 import (
 	"fmt"
@@ -9,9 +9,9 @@ import (
 )
 
 var reviewCmd = &cobra.Command{
-	Use:   "review <pr-number>",
-	Short: "Review a pull request",
-	Args:  cobra.ArbitraryArgs,
+	Use:              "review <pr-number>",
+	Short:            "Review a pull request",
+	Args:             cobra.ArbitraryArgs,
 	TraverseChildren: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {

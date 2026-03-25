@@ -1,0 +1,333 @@
+package main
+
+import (
+	"bufio"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"syscall"
+
+	"github.com/alansikora/codecanary/internal/auth"
+	"github.com/alansikora/codecanary/internal/review"
+	"golang.org/x/term"
+)
+
+var version = "dev"
+
+func main() {
+	if err := run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	fmt.Fprintf(os.Stderr, "CodeCanary Setup %s\n\n", version)
+
+	// 1. Check for gh CLI.
+	if _, err := exec.LookPath("gh"); err != nil {
+		return fmt.Errorf("gh CLI not found. Install it: https://cli.github.com")
+	}
+
+	// 2. Detect repo.
+	repoOut, err := exec.Command("gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner").Output()
+	if err != nil {
+		return fmt.Errorf("could not detect repo (are you in a git repo with a GitHub remote?): %w", err)
+	}
+	repo := strings.TrimSpace(string(repoOut))
+	fmt.Fprintf(os.Stderr, "Repository: %s\n\n", repo)
+
+	// 3. Install the CodeCanary Review App.
+	if err := auth.InstallCodeCanaryApp(repo); err != nil {
+		return fmt.Errorf("installing CodeCanary app: %w", err)
+	}
+
+	// 4. Auth: prompt for method.
+	secretName, token, err := authenticateClaude(repo)
+	if err != nil {
+		return err
+	}
+
+	// 5. Confirm and set secret.
+	if token != "" {
+		fmt.Fprintf(os.Stderr, "Set %s as a secret on %s? [Y/n] ", secretName, repo)
+		if confirm() {
+			fmt.Fprintf(os.Stderr, "Setting %s secret on %s...\n", secretName, repo)
+			if err := auth.SetGitHubSecret(repo, secretName, token); err != nil {
+				return fmt.Errorf("setting secret: %w", err)
+			}
+			fmt.Fprintf(os.Stderr, "  Done!\n\n")
+		} else {
+			fmt.Fprintf(os.Stderr, "Skipped. You'll need to set the secret manually:\n")
+			fmt.Fprintf(os.Stderr, "  gh secret set %s --repo %s\n\n", secretName, repo)
+		}
+	}
+
+	// 6. Create workflow file.
+	workflowDir := filepath.Join(".github", "workflows")
+	workflowPath := filepath.Join(workflowDir, "codecanary-review.yml")
+
+	var authEnv string
+	if secretName == "ANTHROPIC_API_KEY" {
+		authEnv = "          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}"
+	} else {
+		authEnv = "          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}"
+	}
+
+	workflow := fmt.Sprintf(`name: CodeCanary Review
+on:
+  pull_request:
+    types: [opened, synchronize]
+  pull_request_review_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+jobs:
+  filter:
+    if: >-
+      github.event_name == 'pull_request' || (
+        github.event.comment.user.login != 'codecanary-review[bot]' &&
+        github.event.comment.in_reply_to_id
+      )
+    runs-on: ubuntu-latest
+    outputs:
+      should_review: ${{ github.event_name == 'pull_request' || steps.check.outputs.is_codecanary_thread == 'true' }}
+    steps:
+      - name: Check if codecanary thread
+        id: check
+        if: github.event_name == 'pull_request_review_comment'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BODY=$(gh api repos/${{ github.repository }}/pulls/comments/${{ github.event.comment.in_reply_to_id }} --jq '.body')
+          if echo "$BODY" | grep -q "codecanary fix\|clanopy fix"; then
+            echo "is_codecanary_thread=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_codecanary_thread=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  review:
+    needs: filter
+    if: needs.filter.outputs.should_review == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - uses: alansikora/codecanary-action@v1
+        with:
+%s
+          config_path: .codecanary.yml
+          reply_only: ${{ github.event_name == 'pull_request_review_comment' }}
+`, authEnv)
+
+	if err := os.MkdirAll(workflowDir, 0755); err != nil {
+		return fmt.Errorf("creating workflow directory: %w", err)
+	}
+
+	_, existsErr := os.Stat(workflowPath)
+	workflowExisted := existsErr == nil
+	if err := os.WriteFile(workflowPath, []byte(workflow), 0644); err != nil {
+		return fmt.Errorf("writing workflow file: %w", err)
+	}
+	workflowCreated := true
+	if workflowExisted {
+		fmt.Fprintf(os.Stderr, "  Updated %s\n", workflowPath)
+	} else {
+		fmt.Fprintf(os.Stderr, "  Created %s\n", workflowPath)
+	}
+
+	// 7. Generate review config.
+	configPath := ".codecanary.yml"
+	configCreated := false
+	if _, err := os.Stat(configPath); err == nil {
+		fmt.Fprintf(os.Stderr, "  %s already exists, skipping\n", configPath)
+	} else {
+		configContent := review.StarterConfig
+		fmt.Fprintf(os.Stderr, "Generating review config...\n")
+		if generated, err := review.Generate(); err != nil {
+			fmt.Fprintf(os.Stderr, "  Warning: could not generate config with Claude: %v\n", err)
+			fmt.Fprintf(os.Stderr, "  Using starter template instead\n")
+		} else {
+			configContent = generated + "\n"
+		}
+		if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+			return fmt.Errorf("writing review config: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "  Created %s\n", configPath)
+		configCreated = true
+	}
+
+	// 8. Update .gitignore.
+	gitignoreUpdated, err := updateGitignore()
+	if err != nil {
+		return fmt.Errorf("updating .gitignore: %w", err)
+	}
+
+	// 9. Create PR.
+	if !workflowCreated && !configCreated && !gitignoreUpdated {
+		fmt.Fprintf(os.Stderr, "\nSetup is already complete — nothing to do.\n")
+		return nil
+	}
+
+	var filesToAdd []string
+	var bullets []string
+	if workflowCreated {
+		filesToAdd = append(filesToAdd, ".github/workflows/codecanary-review.yml")
+		bullets = append(bullets, "- Add CodeCanary automated PR review workflow")
+	}
+	if configCreated {
+		filesToAdd = append(filesToAdd, ".codecanary.yml")
+		bullets = append(bullets, "- Add starter `.codecanary.yml` config")
+	}
+	if gitignoreUpdated {
+		filesToAdd = append(filesToAdd, ".gitignore")
+		bullets = append(bullets, "- Update `.gitignore` with codecanary entries")
+	}
+
+	if len(filesToAdd) == 0 {
+		return fmt.Errorf("internal error: no files to stage")
+	}
+
+	branch := "codecanary/review-setup"
+	fmt.Fprintf(os.Stderr, "\nCreating PR...\n")
+
+	if err := exec.Command("git", "show-ref", "--verify", "refs/heads/"+branch).Run(); err == nil {
+		return fmt.Errorf("branch %s already exists — delete it with `git branch -D %s` to retry", branch, branch)
+	}
+
+	if out, err := exec.Command("git", "checkout", "-b", branch).CombinedOutput(); err != nil {
+		return fmt.Errorf("creating branch: %s\n%s", err, string(out))
+	}
+	if out, err := exec.Command("git", append([]string{"add"}, filesToAdd...)...).CombinedOutput(); err != nil {
+		return fmt.Errorf("staging files: %s\n%s", err, string(out))
+	}
+	if out, err := exec.Command("git", "commit", "-m", "Add CodeCanary automated PR review").CombinedOutput(); err != nil {
+		return fmt.Errorf("committing: %s\n%s", err, string(out))
+	}
+	if out, err := exec.Command("git", "push", "-u", "origin", branch).CombinedOutput(); err != nil {
+		return fmt.Errorf("pushing: %s\n%s", err, string(out))
+	}
+
+	prBody := "## Summary\n" + strings.Join(bullets, "\n") + "\n\nPRs will be automatically reviewed by Claude on open and update."
+	prOut, err := exec.Command("gh", "pr", "create",
+		"--title", "Add CodeCanary PR review",
+		"--body", prBody,
+		"--repo", repo,
+	).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("creating PR: %s\n%s", err, string(prOut))
+	}
+
+	fmt.Fprintf(os.Stderr, "  %s\n", strings.TrimSpace(string(prOut)))
+	fmt.Fprintf(os.Stderr, "\nDone! Merge the PR to enable automated reviews.\n")
+	return nil
+}
+
+// authenticateClaude prompts the user for auth method and returns (secretName, token, error).
+// If the secret already exists, returns ("", "", nil).
+func authenticateClaude(repo string) (string, string, error) {
+	// Check if either secret already exists.
+	secretsOut, err := exec.Command("gh", "secret", "list", "--repo", repo).Output()
+	if err == nil {
+		if strings.Contains(string(secretsOut), "CLAUDE_CODE_OAUTH_TOKEN") {
+			fmt.Fprintf(os.Stderr, "  CLAUDE_CODE_OAUTH_TOKEN secret found on %s\n\n", repo)
+			return "CLAUDE_CODE_OAUTH_TOKEN", "", nil
+		}
+		if strings.Contains(string(secretsOut), "ANTHROPIC_API_KEY") {
+			fmt.Fprintf(os.Stderr, "  ANTHROPIC_API_KEY secret found on %s\n\n", repo)
+			return "ANTHROPIC_API_KEY", "", nil
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "How would you like to authenticate Claude?\n")
+	fmt.Fprintf(os.Stderr, "  [1] OAuth (default)\n")
+	fmt.Fprintf(os.Stderr, "  [2] API key\n")
+	fmt.Fprintf(os.Stderr, "Choice [1]: ")
+
+	reader := bufio.NewReader(os.Stdin)
+	choice, _ := reader.ReadString('\n')
+	choice = strings.TrimSpace(choice)
+
+	if choice == "2" {
+		// API key flow.
+		fmt.Fprintf(os.Stderr, "\nPaste your Anthropic API key: ")
+		keyBytes, err := term.ReadPassword(int(syscall.Stdin))
+		fmt.Fprintf(os.Stderr, "\n")
+		if err != nil {
+			return "", "", fmt.Errorf("reading API key: %w", err)
+		}
+		key := strings.TrimSpace(string(keyBytes))
+		if key == "" {
+			return "", "", fmt.Errorf("API key cannot be empty")
+		}
+		fmt.Fprintf(os.Stderr, "\n")
+		return "ANTHROPIC_API_KEY", key, nil
+	}
+
+	// OAuth flow (default).
+	if err := auth.InstallGitHubApp(repo); err != nil {
+		return "", "", fmt.Errorf("installing Claude GitHub App: %w", err)
+	}
+
+	token, err := auth.OAuthToken()
+	if err != nil {
+		return "", "", fmt.Errorf("OAuth authentication failed: %w", err)
+	}
+
+	return "CLAUDE_CODE_OAUTH_TOKEN", token, nil
+}
+
+func confirm() bool {
+	reader := bufio.NewReader(os.Stdin)
+	answer, _ := reader.ReadString('\n')
+	answer = strings.TrimSpace(strings.ToLower(answer))
+	return answer == "" || answer == "y" || answer == "yes"
+}
+
+func updateGitignore() (bool, error) {
+	entries := []string{
+		".codecanary.yml.bak",
+	}
+
+	gitignorePath := ".gitignore"
+	existing := ""
+	if data, err := os.ReadFile(gitignorePath); err == nil {
+		existing = string(data)
+	}
+
+	var toAdd []string
+	for _, entry := range entries {
+		if !strings.Contains(existing, entry) {
+			toAdd = append(toAdd, entry)
+		}
+	}
+
+	if len(toAdd) == 0 {
+		fmt.Fprintf(os.Stderr, "  .gitignore already up to date\n")
+		return false, nil
+	}
+
+	if existing != "" && !strings.HasSuffix(existing, "\n") {
+		existing += "\n"
+	}
+
+	prefix := "\n"
+	if existing == "" {
+		prefix = ""
+	}
+	section := prefix + "# codecanary\n" + strings.Join(toAdd, "\n") + "\n"
+	if err := os.WriteFile(gitignorePath, []byte(existing+section), 0644); err != nil {
+		return false, err
+	}
+
+	fmt.Fprintf(os.Stderr, "  Updated .gitignore\n")
+	return true, nil
+}

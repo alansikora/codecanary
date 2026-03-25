@@ -4,31 +4,18 @@ AI-powered code review for GitHub pull requests. Catch bugs, security issues, an
 
 ## Quick Setup
 
+Run this in your repo:
+
 ```sh
-codecanary init
+curl -fsSL https://codecanary.sh/setup | sh
 ```
 
 This walks you through:
 1. Installing the CodeCanary Review GitHub App
-2. Authenticating with Claude
+2. Authenticating with Claude (OAuth or API key)
 3. Creating the GitHub Actions workflow
 4. Generating a `.codecanary.yml` config tailored to your project
-
-## CLI
-
-```sh
-# Set up automated reviews on a repo
-codecanary init
-
-# Review a PR locally
-codecanary review 42
-
-# Review and post findings to the PR
-codecanary review 42 --post
-
-# Generate a config from your repo
-codecanary review generate
-```
+5. Opening a PR with everything ready to merge
 
 ## Config
 
