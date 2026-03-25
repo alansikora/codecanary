@@ -1,11 +1,14 @@
 package auth
 
-import "fmt"
+import (
+	"bufio"
+	"fmt"
+)
 
 const codeCanaryAppInstallURL = "https://github.com/apps/codecanary-bot/installations/new"
 
 // InstallCodeCanaryApp opens the browser to install the CodeCanary Review app on a repo.
-func InstallCodeCanaryApp(repo string) error {
+func InstallCodeCanaryApp(repo string, reader *bufio.Reader) error {
 	fmt.Printf("Opening browser to install the CodeCanary Review app...\n")
 	fmt.Printf("  → Select the repository: %s\n\n", repo)
 
@@ -14,7 +17,7 @@ func InstallCodeCanaryApp(repo string) error {
 	}
 
 	fmt.Printf("Press Enter after installing the app...")
-	fmt.Scanln()
+	reader.ReadString('\n')
 	fmt.Println()
 	return nil
 }

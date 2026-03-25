@@ -21,4 +21,4 @@ URL="https://github.com/$REPO/releases/download/v${TAG}/codecanary-setup_${TAG}_
 echo "Downloading CodeCanary Setup v${TAG}..."
 curl -fsSL "$URL" | tar -xz -C "$TMPDIR" "$BINARY"
 chmod +x "$TMPDIR/$BINARY"
-"$TMPDIR/$BINARY" "$@"
+"$TMPDIR/$BINARY" "$@" < /dev/tty

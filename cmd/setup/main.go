@@ -26,6 +26,13 @@ func main() {
 func run() error {
 	fmt.Fprintf(os.Stderr, "CodeCanary Setup %s\n\n", version)
 
+	// Ensure stdin is a terminal so interactive prompts work.
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return fmt.Errorf("stdin is not a terminal — run with: curl -fsSL https://codecanary.sh/setup | sh")
+	}
+
+	reader := bufio.NewReader(os.Stdin)
+
 	// 1. Check for gh CLI.
 	if _, err := exec.LookPath("gh"); err != nil {
 		return fmt.Errorf("gh CLI not found. Install it: https://cli.github.com")
@@ -40,12 +47,12 @@ func run() error {
 	fmt.Fprintf(os.Stderr, "Repository: %s\n\n", repo)
 
 	// 3. Install the CodeCanary Review App.
-	if err := auth.InstallCodeCanaryApp(repo); err != nil {
+	if err := auth.InstallCodeCanaryApp(repo, reader); err != nil {
 		return fmt.Errorf("installing CodeCanary app: %w", err)
 	}
 
 	// 4. Auth: prompt for method.
-	secretName, token, err := authenticateClaude(repo)
+	secretName, token, err := authenticateClaude(repo, reader)
 	if err != nil {
 		return err
 	}
@@ -53,7 +60,7 @@ func run() error {
 	// 5. Confirm and set secret.
 	if token != "" {
 		fmt.Fprintf(os.Stderr, "Set %s as a secret on %s? [Y/n] ", secretName, repo)
-		if confirm() {
+		if confirm(reader) {
 			fmt.Fprintf(os.Stderr, "Setting %s secret on %s...\n", secretName, repo)
 			if err := auth.SetGitHubSecret(repo, secretName, token); err != nil {
 				return fmt.Errorf("setting secret: %w", err)
@@ -233,7 +240,7 @@ jobs:
 
 // authenticateClaude prompts the user for auth method and returns (secretName, token, error).
 // If the secret already exists, returns ("", "", nil).
-func authenticateClaude(repo string) (string, string, error) {
+func authenticateClaude(repo string, reader *bufio.Reader) (string, string, error) {
 	// Check if either secret already exists.
 	secretsOut, err := exec.Command("gh", "secret", "list", "--repo", repo).Output()
 	if err == nil {
@@ -252,7 +259,6 @@ func authenticateClaude(repo string) (string, string, error) {
 	fmt.Fprintf(os.Stderr, "  [2] API key\n")
 	fmt.Fprintf(os.Stderr, "Choice [1]: ")
 
-	reader := bufio.NewReader(os.Stdin)
 	choice, _ := reader.ReadString('\n')
 	choice = strings.TrimSpace(choice)
 
@@ -273,7 +279,7 @@ func authenticateClaude(repo string) (string, string, error) {
 	}
 
 	// OAuth flow (default).
-	if err := auth.InstallGitHubApp(repo); err != nil {
+	if err := auth.InstallGitHubApp(repo, reader); err != nil {
 		return "", "", fmt.Errorf("installing Claude GitHub App: %w", err)
 	}
 
@@ -285,8 +291,7 @@ func authenticateClaude(repo string) (string, string, error) {
 	return "CLAUDE_CODE_OAUTH_TOKEN", token, nil
 }
 
-func confirm() bool {
-	reader := bufio.NewReader(os.Stdin)
+func confirm(reader *bufio.Reader) bool {
 	answer, _ := reader.ReadString('\n')
 	answer = strings.TrimSpace(strings.ToLower(answer))
 	return answer == "" || answer == "y" || answer == "yes"
