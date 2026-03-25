@@ -1,0 +1,61 @@
+version: 1
+
+context: |
+  Go CLI tool for AI-powered GitHub PR code reviews. Two binaries: a review engine
+  (cobra CLI) and an interactive setup wizard. Uses gh CLI for GitHub API, claude CLI
+  for AI inference. Includes a Cloudflare Worker (TypeScript) for OIDC token exchange.
+  Key conventions: minimize shell code (logic belongs in Go), config is a flat YAML file
+  at repo root, no test suite yet so refactors need extra care.
+
+rules:
+  - id: no-logic-in-shell
+    description: "Shell scripts (setup.sh, GitHub Actions) must be thin wrappers. Business logic, validation, and control flow belong in Go binaries, not shell code."
+    severity: warning
+    paths: ["*.sh", ".github/workflows/*.yml"]
+
+  - id: error-handling-required
+    description: "All fallible operations (file I/O, network calls, command execution, type conversions) must have their errors checked and handled. Do not discard errors with _ or ignore returned error values."
+    severity: bug
+    paths: ["**/*.go"]
+
+  - id: command-injection-prevention
+    description: "User-supplied or external input must never be interpolated directly into shell commands or exec.Command arguments. Use parameterized arguments and avoid shell interpretation of untrusted strings."
+    severity: critical
+    paths: ["**/*.go"]
+
+  - id: sensitive-data-exposure
+    description: "Tokens, secrets, and credentials must not be logged, written to disk in plaintext, or included in error messages. Verify that OIDC tokens and GitHub App installation tokens are handled securely."
+    severity: critical
+
+  - id: worker-input-validation
+    description: "The Cloudflare Worker must validate and sanitize all incoming request data (OIDC tokens, headers, query parameters) before processing. Reject malformed or unexpected input early."
+    severity: critical
+    paths: ["worker/**/*.ts"]
+
+  - id: config-parsing-robustness
+    description: "YAML config parsing should handle missing optional fields gracefully with documented defaults. Validate field values (e.g., severity must be one of the known values, version must be 1) and return clear error messages."
+    severity: warning
+    paths: ["internal/review/config*.go"]
+
+  - id: cobra-flag-error-handling
+    description: "Cobra flag values retrieved with cmd.Flags().GetString/GetBool should check the returned error instead of discarding it with _, especially for required flags or flags with constrained values."
+    severity: warning
+    paths: ["cmd/review/cli/**/*.go"]
+
+  - id: json-output-integrity
+    description: "When parsing Claude's JSON output, validate that required fields (file, line, severity, id) are present and well-formed before using findings. Guard against malformed or hallucinated output."
+    severity: bug
+    paths: ["internal/review/**/*.go"]
+
+  - id: resource-limits-enforcement
+    description: "Respect configured resource limits (max_file_size, max_total_size, timeout_minutes, max_budget_usd). Ensure timeouts are applied to all external process invocations (gh CLI, claude CLI) and that size limits are checked before reading file content."
+    severity: warning
+    paths: ["internal/review/**/*.go"]
+
+ignore:
+  - "worker/node_modules/**"
+  - "worker/.wrangler/**"
+  - "*.lock"
+  - "go.sum"
+  - "*.exe"
+  - "*.bin"
