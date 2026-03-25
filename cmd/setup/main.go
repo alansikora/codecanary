@@ -256,18 +256,26 @@ jobs:
 }
 
 // authenticateClaude prompts the user for auth method and returns (secretName, token, error).
-// If the secret already exists, returns ("", "", nil).
+// If the secret already exists and the user doesn't want to replace it, returns ("", "", nil).
 func authenticateClaude(repo string, reader *bufio.Reader) (string, string, error) {
 	// Check if either secret already exists.
 	secretsOut, err := exec.Command("gh", "secret", "list", "--repo", repo).Output()
 	if err == nil {
+		// OAuth token takes priority — only one auth secret is expected at a time.
+		existing := ""
 		if strings.Contains(string(secretsOut), "CLAUDE_CODE_OAUTH_TOKEN") {
-			fmt.Fprintf(os.Stderr, "  CLAUDE_CODE_OAUTH_TOKEN secret found on %s\n\n", repo)
-			return "CLAUDE_CODE_OAUTH_TOKEN", "", nil
+			existing = "CLAUDE_CODE_OAUTH_TOKEN"
+		} else if strings.Contains(string(secretsOut), "ANTHROPIC_API_KEY") {
+			existing = "ANTHROPIC_API_KEY"
 		}
-		if strings.Contains(string(secretsOut), "ANTHROPIC_API_KEY") {
-			fmt.Fprintf(os.Stderr, "  ANTHROPIC_API_KEY secret found on %s\n\n", repo)
-			return "ANTHROPIC_API_KEY", "", nil
+		if existing != "" {
+			fmt.Fprintf(os.Stderr, "  %s secret found on %s\n", existing, repo)
+			fmt.Fprintf(os.Stderr, "  Replace it? [y/N] ")
+			if !confirmNo(reader) {
+				fmt.Fprintf(os.Stderr, "  Keeping existing secret.\n\n")
+				return existing, "", nil
+			}
+			fmt.Fprintf(os.Stderr, "\n")
 		}
 	}
 
@@ -312,5 +320,11 @@ func confirm(reader *bufio.Reader) bool {
 	answer, _ := reader.ReadString('\n')
 	answer = strings.TrimSpace(strings.ToLower(answer))
 	return answer == "" || answer == "y" || answer == "yes"
+}
+
+func confirmNo(reader *bufio.Reader) bool {
+	answer, _ := reader.ReadString('\n')
+	answer = strings.TrimSpace(strings.ToLower(answer))
+	return answer == "y" || answer == "yes"
 }
 
