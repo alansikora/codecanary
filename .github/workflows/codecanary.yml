@@ -28,7 +28,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           BODY=$(gh api repos/${{ github.repository }}/pulls/comments/${{ github.event.comment.in_reply_to_id }} --jq '.body')
-          if echo "$BODY" | grep -q "codecanary fix\|clanopy fix"; then
+          if echo "$BODY" | grep -qF "codecanary:finding" || echo "$BODY" | grep -qF "codecanary fix" || echo "$BODY" | grep -qF "clanopy fix"; then
             echo "is_codecanary_thread=true" >> "$GITHUB_OUTPUT"
           else
             echo "is_codecanary_thread=false" >> "$GITHUB_OUTPUT"
