@@ -410,6 +410,7 @@ func Run(opts RunOptions) error {
 			}
 		}
 		findings = filteredFindings
+		findings = FilterNonActionable(findings)
 	}
 
 	if len(findings) == 0 {

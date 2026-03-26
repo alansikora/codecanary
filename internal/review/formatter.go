@@ -91,9 +91,6 @@ func FormatMarkdown(result *ReviewResult) string {
 		icon := severityIcon(f.Severity)
 		fmt.Fprintf(&b, "### %s `%s` in `%s:%d`\n", icon, f.ID, f.File, f.Line)
 		fmt.Fprintf(&b, "**%s**\n\n", f.Title)
-		if f.IsPossiblyNonActionable() {
-			b.WriteString("\u26A0\uFE0F *This finding may not be actionable \u2014 dismiss if not relevant.*\n\n")
-		}
 		fmt.Fprintf(&b, "%s\n", f.Description)
 
 		if f.Suggestion != "" {
@@ -165,9 +162,6 @@ func FormatReviewBody(result *ReviewResult, canInline func(Finding) bool) string
 			icon := severityIcon(f.Severity)
 			fmt.Fprintf(&b, "### %s **%s** \u2014 `%s`\n\n", icon, f.Severity, f.ID)
 			fmt.Fprintf(&b, "**%s**\n\n", f.Title)
-			if f.IsPossiblyNonActionable() {
-				b.WriteString("\u26A0\uFE0F *This finding may not be actionable \u2014 dismiss if not relevant.*\n\n")
-			}
 			fmt.Fprintf(&b, "%s\n", f.Description)
 			if f.Suggestion != "" {
 				fmt.Fprintf(&b, "\n> **Suggestion**: %s\n", f.Suggestion)
@@ -192,9 +186,6 @@ func FormatFindingComment(f *Finding) string {
 	b.WriteString("<!-- codecanary:finding -->\n")
 	icon := severityIcon(f.Severity)
 	fmt.Fprintf(&b, "%s **%s** \u2014 `%s`\n\n", icon, f.Severity, f.ID)
-	if f.IsPossiblyNonActionable() {
-		b.WriteString("\u26A0\uFE0F *This finding may not be actionable \u2014 dismiss if not relevant.*\n\n")
-	}
 	fmt.Fprintf(&b, "%s\n", f.Description)
 
 	if f.Suggestion != "" {
