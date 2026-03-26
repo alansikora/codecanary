@@ -125,15 +125,13 @@ permissions:
   pull-requests: write
 
 jobs:
-  filter:
+  review:
     if: >-
       github.event_name == 'pull_request' || (
         github.event.comment.user.login != 'codecanary-bot[bot]' &&
         github.event.comment.in_reply_to_id
       )
     runs-on: ubuntu-latest
-    outputs:
-      should_review: ${{ github.event_name == 'pull_request' || steps.check.outputs.is_codecanary_thread == 'true' }}
     steps:
       - name: Check if codecanary thread
         id: check
@@ -145,19 +143,22 @@ jobs:
           if echo "$BODY" | grep -q "codecanary fix\|clanopy fix"; then
             echo "is_codecanary_thread=true" >> "$GITHUB_OUTPUT"
           else
-            echo "is_codecanary_thread=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping: not a codecanary thread"
+            exit 0
           fi
 
-  review:
-    needs: filter
-    if: needs.filter.outputs.should_review == 'true'
-    runs-on: ubuntu-latest
-    steps:
+      - name: Skip if not codecanary thread
+        if: github.event_name == 'pull_request_review_comment' && steps.check.outputs.is_codecanary_thread != 'true'
+        run: |
+          echo "skip=true" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v4
+        if: env.skip != 'true'
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - uses: alansikora/codecanary-action@%s
+        if: env.skip != 'true'
         with:
 %s
           config_path: .codecanary.yml
