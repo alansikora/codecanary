@@ -3,6 +3,7 @@ package review
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"regexp"
 )
 
@@ -16,6 +17,7 @@ type Finding struct {
 	Description string `json:"description"`
 	Suggestion  string `json:"suggestion,omitempty"`
 	FixRef      string `json:"fix_ref"`
+	Actionable  *bool  `json:"actionable,omitempty"`
 }
 
 // ReviewResult holds the complete output of a review run.
@@ -52,4 +54,18 @@ func ParseFindings(output string) ([]Finding, error) {
 	}
 
 	return nil, fmt.Errorf("parsing findings JSON: %w\nClaude output:\n%s", lastErr, output)
+}
+
+// FilterNonActionable removes findings that Claude explicitly marked as not
+// actionable (actionable: false). Findings without the field are kept.
+func FilterNonActionable(findings []Finding) []Finding {
+	var kept []Finding
+	for _, f := range findings {
+		if f.Actionable != nil && !*f.Actionable {
+			fmt.Fprintf(os.Stderr, "Dropped non-actionable finding: %s (%s:%d)\n", f.ID, f.File, f.Line)
+			continue
+		}
+		kept = append(kept, f)
+	}
+	return kept
 }
