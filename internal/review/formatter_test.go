@@ -96,3 +96,24 @@ func TestFormatReviewBody_NoFindings_NoFixAll(t *testing.T) {
 		t.Error("should not contain <details> when there are no findings")
 	}
 }
+
+func TestCodeFence(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{"no backticks", "hello world", "```"},
+		{"triple backticks", "some ```code``` here", "````"},
+		{"quad backticks", "some ````code```` here", "`````"},
+		{"mixed runs", "` `` ``` ```` ``", "`````"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := codeFence(tt.content)
+			if got != tt.want {
+				t.Errorf("codeFence(%q) = %q, want %q", tt.content, got, tt.want)
+			}
+		})
+	}
+}

@@ -173,9 +173,11 @@ func FormatReviewBody(result *ReviewResult, canInline func(Finding) bool) string
 	if len(result.Findings) > 0 {
 		b.WriteString("\n<details>\n<summary>\U0001F527 Fix all with AI</summary>\n\n")
 		b.WriteString("Copy the prompt below and paste it into your AI coding tool:\n\n")
-		b.WriteString("````\n")
-		b.WriteString(buildFixAllPrompt(result.Findings))
-		b.WriteString("````\n\n")
+		prompt := buildFixAllPrompt(result.Findings)
+		fence := codeFence(prompt)
+		fmt.Fprintf(&b, "%s\n", fence)
+		b.WriteString(prompt)
+		fmt.Fprintf(&b, "%s\n\n", fence)
 		b.WriteString("</details>\n")
 	}
 
@@ -205,6 +207,29 @@ func buildFixAllPrompt(findings []Finding) string {
 	}
 
 	return b.String()
+}
+
+// codeFence returns a backtick fence long enough to safely wrap content.
+// It scans for the longest consecutive backtick run and returns one longer,
+// with a minimum of 3.
+func codeFence(content string) string {
+	max := 0
+	cur := 0
+	for _, ch := range content {
+		if ch == '`' {
+			cur++
+			if cur > max {
+				max = cur
+			}
+		} else {
+			cur = 0
+		}
+	}
+	n := max + 1
+	if n < 3 {
+		n = 3
+	}
+	return strings.Repeat("`", n)
 }
 
 // FormatFindingComment renders a single finding as markdown for an inline PR
