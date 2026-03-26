@@ -26,6 +26,8 @@ TAG=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" | grep '"t
 if [ -z "$TAG" ]; then
   echo "Error: could not determine latest release" >&2; exit 1
 fi
+case "$TAG" in *[!0-9.]*)
+  echo "Error: unexpected tag format: $TAG" >&2; exit 1;; esac
 if [ "$CANARY" = true ]; then
   echo "Downloading CodeCanary Setup (canary)..."
 else
