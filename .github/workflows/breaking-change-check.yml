@@ -21,9 +21,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          REPO: ${{ github.repository }}
         run: |
-          BASE="${{ github.event.pull_request.base.sha }}"
-          CHANGED=$(git diff --name-only "$BASE"...HEAD)
+          CHANGED=$(git diff --name-only "$BASE_SHA"...HEAD)
 
           if [ -z "$CHANGED" ]; then
             echo "has_breaking=false" >> "$GITHUB_OUTPUT"
@@ -89,6 +90,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
         run: |
           # Ensure label exists
           gh label create breaking-change --color D93F0B \
@@ -98,14 +100,14 @@ jobs:
           gh pr edit "$PR_NUMBER" --add-label breaking-change
 
           # Find existing bot comment
-          COMMENT_ID=$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+          COMMENT_ID=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
             --jq '.[] | select(.body | contains("codecanary:breaking-change-check")) | .id' \
             | head -1)
 
           BODY=$(cat /tmp/comment-body.md)
 
           if [ -n "$COMMENT_ID" ]; then
-            gh api "repos/${{ github.repository }}/issues/comments/${COMMENT_ID}" \
+            gh api "repos/${REPO}/issues/comments/${COMMENT_ID}" \
               -X PATCH -f body="$BODY"
           else
             gh pr comment "$PR_NUMBER" --body "$BODY"
@@ -116,15 +118,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
         run: |
           # Remove label if it was previously added
           gh pr edit "$PR_NUMBER" --remove-label breaking-change 2>/dev/null || true
 
           # Remove existing bot comment if any
-          COMMENT_ID=$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+          COMMENT_ID=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
             --jq '.[] | select(.body | contains("codecanary:breaking-change-check")) | .id' \
             | head -1)
 
           if [ -n "$COMMENT_ID" ]; then
-            gh api "repos/${{ github.repository }}/issues/comments/${COMMENT_ID}" -X DELETE
+            gh api "repos/${REPO}/issues/comments/${COMMENT_ID}" -X DELETE
           fi
