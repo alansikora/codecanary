@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var errBreakingChangesFound = errors.New("")
+var errBreakingChangesFound = errors.New("breaking changes detected")
 
 type breakingSurface struct {
 	Pattern  string
