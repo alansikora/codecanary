@@ -214,7 +214,7 @@ func buildCodeChangePrompt(t TriagedThread, cfg *ReviewConfig) string {
 	b.WriteString("- Answer YES if the change fixes the root cause, removes the problematic code, or meaningfully changes the code so the finding no longer applies.\n")
 	b.WriteString("- A change to nearby or adjacent code counts IF it effectively resolves the concern (e.g. fixing the logic, adding the missing check, refactoring the problematic pattern).\n")
 	b.WriteString("- Answer NO if the finding's concern is still present in the changed code.\n\n")
-	writeResolutionFormat(&b)
+	writeCodeChangeResolutionFormat(&b)
 
 	return b.String()
 }
@@ -293,7 +293,7 @@ func buildCrossFilePrompt(t TriagedThread, cfg *ReviewConfig) string {
 	b.WriteString("Does any change in this diff address the issue you raised, even though the changes are in different files?\n")
 	b.WriteString("- Answer YES if a change in another file effectively resolves the concern (e.g. fixing the caller instead of the callee, adding validation in a different layer, removing the code path that triggers the issue).\n")
 	b.WriteString("- Answer NO if none of the changes are related to the finding.\n\n")
-	writeResolutionFormat(&b)
+	writeCodeChangeResolutionFormat(&b)
 
 	return b.String()
 }
@@ -332,10 +332,20 @@ func writeReplies(b *strings.Builder, t ReviewThread, botLogin string) {
 	b.WriteString("\n")
 }
 
-// writeResolutionFormat writes the expected JSON response format.
+// writeResolutionFormat writes the expected JSON response format with all reason options.
+// Used for prompts where author replies are present (TriageHasReply, TriageCodeChangedReply).
 func writeResolutionFormat(b *strings.Builder) {
 	b.WriteString("Return a JSON object inside a ```json code fence:\n")
 	b.WriteString("- If resolved: `{\"resolved\": true, \"reason\": \"code_change\"}` or `{\"resolved\": true, \"reason\": \"dismissed\"}` or `{\"resolved\": true, \"reason\": \"acknowledged\"}` or `{\"resolved\": true, \"reason\": \"rebutted\"}`\n")
+	b.WriteString("- If NOT resolved: `{\"resolved\": false}`\n")
+}
+
+// writeCodeChangeResolutionFormat writes a restricted JSON response format
+// for code-change-only evaluations (no author reply). Only allows code_change
+// as a resolution reason since there is no author reply to acknowledge/dismiss/rebut.
+func writeCodeChangeResolutionFormat(b *strings.Builder) {
+	b.WriteString("Return a JSON object inside a ```json code fence:\n")
+	b.WriteString("- If resolved: `{\"resolved\": true, \"reason\": \"code_change\"}`\n")
 	b.WriteString("- If NOT resolved: `{\"resolved\": false}`\n")
 }
 
