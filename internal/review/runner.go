@@ -254,6 +254,12 @@ func Run(opts RunOptions) error {
 		cfg = loaded
 	}
 
+	// Read project documentation (CLAUDE.md files).
+	projectDocs := ReadProjectDocs()
+	if len(projectDocs) > 0 {
+		fmt.Fprintf(os.Stderr, "Loaded %d project doc(s) for review context\n", len(projectDocs))
+	}
+
 	// Fetch full file contents for context.
 	fileContents, skippedFiles := FetchFileContents(pr.Files, cfg.Ignore, cfg.EffectiveMaxFileSize(), cfg.EffectiveMaxTotalSize())
 	pr.FileContents = fileContents
@@ -412,7 +418,7 @@ func Run(opts RunOptions) error {
 					fbPlural = ""
 				}
 				fmt.Fprintf(os.Stderr, "Falling back to full review (%d known issue%s excluded)...\n", len(unresolved), fbPlural)
-				prompt = BuildPrompt(pr, cfg, startIndex)
+				prompt = BuildPrompt(pr, cfg, startIndex, projectDocs)
 			} else {
 				// Scope file contents to only files in the incremental diff to
 				// prevent hallucinations about unrelated files from the full PR.
@@ -428,13 +434,13 @@ func Run(opts RunOptions) error {
 					plural = ""
 				}
 				fmt.Fprintf(os.Stderr, "Reviewing new changes (%d known issue%s excluded)...\n", len(unresolved), plural)
-				prompt = BuildIncrementalPrompt(incrementalDiff, cfg, unresolved, opts.PRNumber, startIndex, incContents, incFiles, resolvedCtx)
+				prompt = BuildIncrementalPrompt(incrementalDiff, cfg, unresolved, opts.PRNumber, startIndex, incContents, incFiles, resolvedCtx, projectDocs)
 			}
 		}
 	} else {
 		// First review — full PR diff.
 		fmt.Fprintf(os.Stderr, "Reviewing PR #%d...\n", opts.PRNumber)
-		prompt = BuildPrompt(pr, cfg, startIndex)
+		prompt = BuildPrompt(pr, cfg, startIndex, projectDocs)
 	}
 
 	// 5. Dry run — print prompt and return.

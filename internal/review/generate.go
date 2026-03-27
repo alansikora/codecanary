@@ -204,38 +204,8 @@ func GatherRepoInfo() (*RepoInfo, error) {
 
 // gatherProjectDocs reads CLAUDE.md files from known locations.
 func gatherProjectDocs(info *RepoInfo) {
-	// Check root and .claude/ first.
-	docPaths := []string{"CLAUDE.md", ".claude/CLAUDE.md"}
-
-	// Check top-level subdirectories.
-	entries, err := os.ReadDir(".")
-	if err == nil {
-		for _, e := range entries {
-			if !e.IsDir() || skipDirs[e.Name()] || strings.HasPrefix(e.Name(), ".") {
-				continue
-			}
-			docPaths = append(docPaths, filepath.Join(e.Name(), "CLAUDE.md"))
-		}
-	}
-
-	totalBytes := 0
-	for _, p := range docPaths {
-		if len(info.ProjectDocs) >= 5 {
-			break
-		}
-		data, err := os.ReadFile(p)
-		if err != nil {
-			continue
-		}
-		content := string(data)
-		if len(content) > maxDocBytes {
-			content = content[:maxDocBytes] + "\n... (truncated)"
-		}
-		if totalBytes+len(content) > maxTotalDocBytes {
-			continue
-		}
+	for p, content := range ReadProjectDocs() {
 		info.ProjectDocs[p] = content
-		totalBytes += len(content)
 	}
 }
 

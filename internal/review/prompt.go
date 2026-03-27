@@ -8,7 +8,7 @@ import (
 // BuildPrompt constructs the review prompt from PR data and review config.
 // startIndex is the number of existing findings across prior reviews so that
 // fix_ref numbering continues from where the last review left off.
-func BuildPrompt(pr *PRData, cfg *ReviewConfig, startIndex int) string {
+func BuildPrompt(pr *PRData, cfg *ReviewConfig, startIndex int, projectDocs map[string]string) string {
 	var b strings.Builder
 
 	b.WriteString("You are a code reviewer. Review the following pull request and report findings.\n")
@@ -28,6 +28,9 @@ func BuildPrompt(pr *PRData, cfg *ReviewConfig, startIndex int) string {
 	if cfg != nil && cfg.Context != "" {
 		fmt.Fprintf(&b, "## Additional Context\n%s\n\n", cfg.Context)
 	}
+
+	// Project documentation (CLAUDE.md files).
+	writeProjectDocs(&b, projectDocs)
 
 	// Review rules.
 	if cfg != nil && len(cfg.Rules) > 0 {
@@ -151,7 +154,7 @@ func BuildReevaluatePrompt(threads []ReviewThread, incrementalDiff string) strin
 // BuildIncrementalPrompt reviews only new code, avoiding duplicate reports.
 // startIndex is the number of existing findings so fix_ref numbering continues.
 // resolved provides context about recently resolved findings to prevent ping-ponging.
-func BuildIncrementalPrompt(diff string, cfg *ReviewConfig, knownIssues []ReviewThread, prNumber int, startIndex int, fileContents map[string]string, files []string, resolved []ResolvedContext) string {
+func BuildIncrementalPrompt(diff string, cfg *ReviewConfig, knownIssues []ReviewThread, prNumber int, startIndex int, fileContents map[string]string, files []string, resolved []ResolvedContext, projectDocs map[string]string) string {
 	var b strings.Builder
 
 	b.WriteString("You are a code reviewer. Review ONLY the following incremental changes and report NEW findings.\n")
@@ -172,6 +175,9 @@ func BuildIncrementalPrompt(diff string, cfg *ReviewConfig, knownIssues []Review
 	if cfg != nil && cfg.Context != "" {
 		fmt.Fprintf(&b, "## Additional Context\n%s\n\n", cfg.Context)
 	}
+
+	// Project documentation (CLAUDE.md files).
+	writeProjectDocs(&b, projectDocs)
 
 	// Review rules.
 	if cfg != nil && len(cfg.Rules) > 0 {
@@ -263,6 +269,21 @@ func BuildIncrementalPrompt(diff string, cfg *ReviewConfig, knownIssues []Review
 	fmt.Fprintf(&b, "    \"fix_ref\": \"%d-%d\",\n    \"actionable\": true\n  }\n]\n```\n", prNumber, first)
 
 	return b.String()
+}
+
+// writeProjectDocs adds a "Project Documentation" section to the prompt builder
+// if any CLAUDE.md files are provided.
+func writeProjectDocs(b *strings.Builder, docs map[string]string) {
+	if len(docs) == 0 {
+		return
+	}
+	b.WriteString("## Project Documentation\n")
+	b.WriteString("The following project documentation describes conventions and standards for this codebase. Use these to inform your review — flag violations of these conventions when relevant.\n\n")
+	for path, content := range docs {
+		fmt.Fprintf(b, "### `%s`\n", path)
+		b.WriteString(content)
+		b.WriteString("\n\n")
+	}
 }
 
 // writeFileContents adds a "Changed File Contents" section to the prompt builder.
