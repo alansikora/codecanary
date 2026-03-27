@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/spf13/cobra"
 )
+
+var errBreakingChangesFound = errors.New("")
 
 type breakingSurface struct {
 	Pattern  string
@@ -42,11 +45,19 @@ var breakingManifest = []breakingSurface{
 }
 
 var breakingChangesCmd = &cobra.Command{
-	Use:   "breaking-changes",
-	Short: "Detect changes to user-facing surfaces",
+	Use:           "breaking-changes",
+	Short:         "Detect changes to user-facing surfaces",
+	SilenceErrors: true,
+	SilenceUsage:  true,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		base, _ := cmd.Flags().GetString("base")
-		output, _ := cmd.Flags().GetString("output")
+		base, err := cmd.Flags().GetString("base")
+		if err != nil {
+			return fmt.Errorf("flag --base: %w", err)
+		}
+		output, err := cmd.Flags().GetString("output")
+		if err != nil {
+			return fmt.Errorf("flag --output: %w", err)
+		}
 
 		if base == "" {
 			return fmt.Errorf("--base is required")
@@ -70,7 +81,7 @@ var breakingChangesCmd = &cobra.Command{
 		}
 
 		if result.Breaking {
-			os.Exit(1)
+			return errBreakingChangesFound
 		}
 		return nil
 	},
