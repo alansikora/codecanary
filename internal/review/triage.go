@@ -38,9 +38,18 @@ type ThreadResolution struct {
 
 // threadLabel returns a short label for logging: "path:line — title".
 func threadLabel(t ReviewThread) string {
-	firstLine := t.Body
-	if idx := strings.Index(t.Body, "\n"); idx >= 0 {
-		firstLine = t.Body[:idx]
+	body := t.Body
+	// Skip leading HTML marker lines (e.g. "<!-- codecanary:finding -->").
+	for strings.HasPrefix(body, "<!--") {
+		if idx := strings.Index(body, "\n"); idx >= 0 {
+			body = strings.TrimLeft(body[idx+1:], "\n")
+		} else {
+			break
+		}
+	}
+	firstLine := body
+	if idx := strings.Index(body, "\n"); idx >= 0 {
+		firstLine = body[:idx]
 	}
 	// Truncate long titles for readability.
 	if len(firstLine) > 80 {
