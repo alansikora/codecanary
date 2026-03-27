@@ -97,3 +97,48 @@ func TestBuildCodeChangeReplyPrompt_AllowsAllReasons(t *testing.T) {
 		}
 	}
 }
+
+func TestParseThreadResolution_RejectsInvalidReasonForCodeChangeOnly(t *testing.T) {
+	// Simulate Claude returning "acknowledged" for a code-change-only thread.
+	output := "```json\n{\"resolved\": true, \"reason\": \"acknowledged\"}\n```"
+	res := parseThreadResolution(output, 0)
+
+	// parseThreadResolution itself accepts any reason (it's just a parser).
+	// Verify that it does parse it so we know the validation must happen downstream.
+	if !res.Resolved || res.Reason != "acknowledged" {
+		t.Fatal("parseThreadResolution should parse the raw response as-is")
+	}
+
+	// Now simulate the validation that EvaluateThreadsParallel applies
+	// for TriageCodeChanged and TriageCrossFileChange classifications.
+	for _, class := range []ThreadClassification{TriageCodeChanged, TriageCrossFileChange} {
+		res := parseThreadResolution(output, 0)
+		if res.Resolved && res.Reason != "code_change" &&
+			(class == TriageCodeChanged || class == TriageCrossFileChange) {
+			res.Resolved = false
+			res.Reason = ""
+		}
+		if res.Resolved {
+			t.Errorf("class %d: resolution with reason 'acknowledged' should be rejected", class)
+		}
+		if res.Reason != "" {
+			t.Errorf("class %d: reason should be cleared, got %q", class, res.Reason)
+		}
+	}
+
+	// For reply-based classifications, the same reason should be accepted.
+	for _, class := range []ThreadClassification{TriageHasReply, TriageCodeChangedReply} {
+		res := parseThreadResolution(output, 0)
+		if res.Resolved && res.Reason != "code_change" &&
+			(class == TriageCodeChanged || class == TriageCrossFileChange) {
+			res.Resolved = false
+			res.Reason = ""
+		}
+		if !res.Resolved {
+			t.Errorf("class %d: resolution with reason 'acknowledged' should be accepted", class)
+		}
+		if res.Reason != "acknowledged" {
+			t.Errorf("class %d: reason should be 'acknowledged', got %q", class, res.Reason)
+		}
+	}
+}

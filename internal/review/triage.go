@@ -391,7 +391,16 @@ func EvaluateThreadsParallel(triaged []TriagedThread, env []string, cfg *ReviewC
 			usage := result.Usage
 			usage.Phase = "triage"
 			tracker.Add(usage)
-			results[idx] = parseThreadResolution(result.Text, tt.Index)
+			res := parseThreadResolution(result.Text, tt.Index)
+			// For code-change-only classifications (no author reply),
+			// only "code_change" is a valid resolution reason. If Claude
+			// returns anything else, treat it as unresolved.
+			if res.Resolved && res.Reason != "code_change" &&
+				(tt.Class == TriageCodeChanged || tt.Class == TriageCrossFileChange) {
+				res.Resolved = false
+				res.Reason = ""
+			}
+			results[idx] = res
 		}(i, t)
 	}
 
