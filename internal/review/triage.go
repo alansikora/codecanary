@@ -392,14 +392,7 @@ func EvaluateThreadsParallel(triaged []TriagedThread, env []string, cfg *ReviewC
 			usage.Phase = "triage"
 			tracker.Add(usage)
 			res := parseThreadResolution(result.Text, tt.Index)
-			// For code-change-only classifications (no author reply),
-			// only "code_change" is a valid resolution reason. If Claude
-			// returns anything else, treat it as unresolved.
-			if res.Resolved && res.Reason != "code_change" &&
-				(tt.Class == TriageCodeChanged || tt.Class == TriageCrossFileChange) {
-				res.Resolved = false
-				res.Reason = ""
-			}
+			res = validateResolutionReason(res, tt.Class)
 			results[idx] = res
 		}(i, t)
 	}
@@ -430,6 +423,18 @@ func parseThreadResolution(output string, index int) ThreadResolution {
 
 	// If parsing fails, treat as unresolved (conservative).
 	return ThreadResolution{Index: index, Resolved: false}
+}
+
+// validateResolutionReason enforces that code-change-only classifications
+// (no author reply) can only resolve with reason "code_change". If Claude
+// returns "acknowledged"/"dismissed"/"rebutted", treat it as unresolved.
+func validateResolutionReason(res ThreadResolution, class ThreadClassification) ThreadResolution {
+	if res.Resolved && res.Reason != "code_change" &&
+		(class == TriageCodeChanged || class == TriageCrossFileChange) {
+		res.Resolved = false
+		res.Reason = ""
+	}
+	return res
 }
 
 // LogTriage prints structured triage results to stderr.
