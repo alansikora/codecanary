@@ -16,73 +16,23 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Detect user-facing changes
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          cache: true
+
+      - name: Build
+        run: go build -o codecanary ./cmd/review
+
+      - name: Detect breaking changes
         id: detect
         env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          REPO: ${{ github.repository }}
         run: |
-          CHANGED=$(git diff --name-only "$BASE_SHA"...HEAD)
-
-          if [ -z "$CHANGED" ]; then
-            echo "has_breaking=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          # Manifest: pattern → category | impact
-          MANIFEST=(
-            "internal/review/config.go|Config Schema|Users may need to update \`.codecanary.yml\` field names, types, or values"
-            "cmd/review/cli/review.go|CLI Flags|CLI flag names or defaults may have changed"
-            "cmd/review/cli/root.go|CLI Flags|CLI flag names or defaults may have changed"
-            "cmd/review/cli/generate.go|CLI Generate|\`codecanary review generate\` behavior may have changed"
-            "cmd/setup/main.go|Workflow Template|Users may need to re-run setup or manually update their workflow file"
-            "setup.sh|Setup Script|Setup behavior changed — users re-running setup will get different behavior"
-            "install.sh|Install Script|Install behavior changed — users re-installing will get different behavior"
-            "worker/src/index.ts|Worker API|Token exchange endpoint changed; action may behave differently"
-            "internal/review/formatter.go|Comment Format|PR comment markers or format changed; existing threads may not be detected"
-            "internal/auth/oauth.go|OAuth / Auth|OAuth endpoints, client ID, or auth flow changed"
-            ".goreleaser.yml|Release Artifacts|Binary naming, archive format, or supported platforms changed"
-          )
-
-          FOUND_CATEGORIES=""
-          FOUND_DETAILS=""
-
-          for entry in "${MANIFEST[@]}"; do
-            IFS='|' read -r pattern category impact <<< "$entry"
-            if echo "$CHANGED" | grep -qF "$pattern"; then
-              # Deduplicate categories
-              if ! echo "$FOUND_CATEGORIES" | grep -qF "$category"; then
-                FOUND_CATEGORIES="${FOUND_CATEGORIES}${category}\n"
-                FOUND_DETAILS="${FOUND_DETAILS}- **${category}** (\`${pattern}\`)\n  ${impact}\n\n"
-              else
-                # Same category, append file
-                FOUND_DETAILS="${FOUND_DETAILS}  Also: \`${pattern}\`\n\n"
-              fi
-            fi
-          done
-
-          if [ -z "$FOUND_CATEGORIES" ]; then
+          if ./codecanary review breaking-changes --base "$BASE_SHA" > /tmp/comment-body.md; then
             echo "has_breaking=false" >> "$GITHUB_OUTPUT"
           else
             echo "has_breaking=true" >> "$GITHUB_OUTPUT"
-
-            # Write comment body to file to preserve formatting
-            {
-              echo '<!-- codecanary:breaking-change-check -->'
-              echo '## Breaking Change Detection'
-              echo ''
-              echo 'This PR modifies user-facing surfaces. Users may need to take action when this is released.'
-              echo ''
-              echo '### Affected Areas'
-              echo ''
-              echo -e "$FOUND_DETAILS"
-              echo '### Checklist'
-              echo '- [ ] Changes are backward-compatible (no user action needed)'
-              echo '- [ ] Migration guide added to release notes'
-              echo '- [ ] Version bump warranted (major/minor)'
-            } > /tmp/comment-body.md
           fi
 
       - name: Add label and comment
@@ -92,14 +42,12 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
         run: |
-          # Ensure label exists
           gh label create breaking-change --color D93F0B \
             --description "Changes user-facing surfaces — may require user action" \
             --force 2>/dev/null || true
 
           gh pr edit "$PR_NUMBER" --add-label breaking-change
 
-          # Find existing bot comment
           COMMENT_ID=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
             --jq '.[] | select(.body | contains("codecanary:breaking-change-check")) | .id' \
             | head -1)
@@ -120,10 +68,8 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
         run: |
-          # Remove label if it was previously added
           gh pr edit "$PR_NUMBER" --remove-label breaking-change 2>/dev/null || true
 
-          # Remove existing bot comment if any
           COMMENT_ID=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
             --jq '.[] | select(.body | contains("codecanary:breaking-change-check")) | .id' \
             | head -1)
