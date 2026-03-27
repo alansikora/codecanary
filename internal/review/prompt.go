@@ -2,6 +2,8 @@ package review
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 )
 
@@ -279,10 +281,9 @@ func writeProjectDocs(b *strings.Builder, docs map[string]string) {
 	}
 	b.WriteString("## Project Documentation\n")
 	b.WriteString("The following project documentation describes conventions and standards for this codebase. Use these to inform your review — flag violations of these conventions when relevant.\n\n")
-	for path, content := range docs {
-		fmt.Fprintf(b, "### `%s`\n", path)
-		b.WriteString(content)
-		b.WriteString("\n\n")
+	for _, path := range slices.Sorted(maps.Keys(docs)) {
+		safe := escapePromptTag(docs[path], "project-doc")
+		fmt.Fprintf(b, "<project-doc path=%q>\n%s\n</project-doc>\n\n", path, safe)
 	}
 }
 
