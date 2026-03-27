@@ -12,7 +12,10 @@ var costsCmd = &cobra.Command{
 	Use:   "costs",
 	Short: "Print usage summary from a review run",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		data, _ := cmd.Flags().GetString("data")
+		data, err := cmd.Flags().GetString("data")
+		if err != nil {
+			return fmt.Errorf("flag --data: %w", err)
+		}
 		if data == "" {
 			fmt.Println("No usage data available.")
 			return nil

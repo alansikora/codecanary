@@ -166,7 +166,9 @@ jobs:
 
       - name: Usage
         if: always() && env.skip != 'true' && env.CODECANARY_USAGE != ''
-        run: codecanary review costs --data '${{ env.CODECANARY_USAGE }}'
+        env:
+          USAGE_DATA: ${{ env.CODECANARY_USAGE }}
+        run: codecanary review costs --data "$USAGE_DATA"
 `, actionRef, authEnv)
 
 	if err := os.MkdirAll(workflowDir, 0755); err != nil {
