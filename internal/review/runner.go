@@ -100,6 +100,10 @@ func runClaude(prompt string, env []string, model string, maxBudgetUSD float64, 
 		return &claudeResult{Text: string(output)}, nil
 	}
 
+	if resp.IsError {
+		return nil, fmt.Errorf("claude returned error: %s", resp.Result)
+	}
+
 	return &claudeResult{
 		Text: resp.Result,
 		Usage: CallUsage{
