@@ -339,7 +339,7 @@ func Run(opts RunOptions) error {
 			LogTriage(triaged)
 			needsEval := countNonSkipped(triaged)
 			if needsEval > 0 {
-				resolutions := EvaluateThreadsParallel(triaged, env, cfg, 3, "haiku", tracker)
+				resolutions := EvaluateThreadsParallel(triaged, env, cfg, 3, cfg.EffectiveTriageModel(), tracker)
 				LogResolutions(triaged, resolutions)
 				fixed = toFixedThreads(resolutions)
 
@@ -452,7 +452,7 @@ func Run(opts RunOptions) error {
 	var findings []Finding
 	if !opts.ReplyOnly {
 		// 6. Run Claude.
-		result, err := runClaude(prompt, env, "", cfg.MaxBudgetUSD, cfg.EffectiveTimeout())
+		result, err := runClaude(prompt, env, cfg.EffectiveReviewModel(), cfg.MaxBudgetUSD, cfg.EffectiveTimeout())
 		if err != nil {
 			return err
 		}

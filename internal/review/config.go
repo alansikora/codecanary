@@ -18,7 +18,30 @@ type ReviewConfig struct {
 	MaxTotalSize int               `yaml:"max_total_size"` // total file content limit in bytes (default 500KB)
 	MaxBudgetUSD float64           `yaml:"max_budget_usd"`  // per-invocation spending limit in USD (default 0 = unlimited)
 	TimeoutMins  int               `yaml:"timeout_minutes"` // per-invocation timeout in minutes (default 5)
+	ReviewModel  string            `yaml:"review_model"`    // Claude model for main review (default: sonnet)
+	TriageModel  string            `yaml:"triage_model"`    // Claude model for thread re-evaluation (default: haiku)
 	Evaluation   *EvaluationConfig `yaml:"evaluation"`
+}
+
+// validModels is the set of allowed model values.
+var validModels = map[string]bool{
+	"haiku": true, "sonnet": true, "opus": true,
+}
+
+// EffectiveReviewModel returns the model for main review, defaulting to "sonnet".
+func (c *ReviewConfig) EffectiveReviewModel() string {
+	if c != nil && c.ReviewModel != "" {
+		return c.ReviewModel
+	}
+	return "sonnet"
+}
+
+// EffectiveTriageModel returns the model for thread re-evaluation, defaulting to "haiku".
+func (c *ReviewConfig) EffectiveTriageModel() string {
+	if c != nil && c.TriageModel != "" {
+		return c.TriageModel
+	}
+	return "haiku"
 }
 
 // EvaluationConfig holds per-evaluation-type settings for re-evaluation prompts.
@@ -85,6 +108,12 @@ func (c *ReviewConfig) Validate() error {
 	}
 	if c.MaxBudgetUSD < 0 {
 		return fmt.Errorf("max_budget_usd must be non-negative, got %f", c.MaxBudgetUSD)
+	}
+	if c.ReviewModel != "" && !validModels[c.ReviewModel] {
+		return fmt.Errorf("invalid review_model %q (valid: haiku, sonnet, opus)", c.ReviewModel)
+	}
+	if c.TriageModel != "" && !validModels[c.TriageModel] {
+		return fmt.Errorf("invalid triage_model %q (valid: haiku, sonnet, opus)", c.TriageModel)
 	}
 	for i, r := range c.Rules {
 		if r.Severity != "" && !validSeverities[r.Severity] {
