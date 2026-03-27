@@ -12,6 +12,8 @@ Most AI code review tools are one-shot: paste a PR, get feedback, repeat from sc
 - **Thread lifecycle** — understands code fixes, author dismissals, acknowledgments, and rebuttals as distinct resolution types. Each finding is tracked independently.
 - **Anti-hallucination** — explicit file allowlists, line number validation against the diff, and distance thresholds prevent fabricated findings.
 - **Cost-efficient** — uses faster models for triage, full models for review. Tracks usage per invocation so you can see exactly what you're spending.
+- **Conversational** — when authors reply to a finding, CodeCanary reads the reply and re-evaluates in context. It reasons over code changes, dismissals, and rebuttals separately — not just "resolved or not."
+- **Transparent** — every resolution is visible in the PR thread: why a finding was resolved, what the author said, and how CodeCanary interpreted it. No black-box decisions.
 - **Configuration-as-code** — project-specific rules, severity levels, ignore patterns, and context in a single `.codecanary.yml` file.
 
 ## Quick Setup
