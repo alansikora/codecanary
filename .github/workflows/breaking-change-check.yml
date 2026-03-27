@@ -1,4 +1,4 @@
-name: Breaking Change Check
+name: Breaking Change
 
 permissions:
   contents: read
