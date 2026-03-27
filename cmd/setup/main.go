@@ -163,6 +163,10 @@ jobs:
 %s
           config_path: .codecanary.yml
           reply_only: ${{ github.event_name == 'pull_request_review_comment' }}
+
+      - name: Usage
+        if: always() && env.skip != 'true' && env.CODECANARY_USAGE != ''
+        run: codecanary review costs --data '${{ env.CODECANARY_USAGE }}'
 `, actionRef, authEnv)
 
 	if err := os.MkdirAll(workflowDir, 0755); err != nil {

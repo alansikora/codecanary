@@ -586,10 +586,10 @@ func Run(opts RunOptions) error {
 		}
 	}
 
-	// Write usage report.
+	// Export usage data for the costs step.
 	if report := tracker.Report(repo, opts.PRNumber); len(report.Calls) > 0 {
-		if err := WriteUsageFile(report); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not write usage report: %v\n", err)
+		if err := WriteUsageEnv(report); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not write usage env: %v\n", err)
 		}
 	}
 

@@ -61,26 +61,48 @@ func (u *UsageTracker) Report(repo string, prNumber int) *UsageReport {
 	return r
 }
 
-// WriteUsageFile writes the usage report to disk as JSON.
-// Path defaults to "codecanary-usage.json" but can be overridden via
-// the CODECANARY_USAGE_FILE environment variable.
-func WriteUsageFile(report *UsageReport) error {
-	path := os.Getenv("CODECANARY_USAGE_FILE")
+// WriteUsageEnv writes the usage report as a CODECANARY_USAGE env var
+// to $GITHUB_ENV so subsequent workflow steps can read it. No-op outside
+// GitHub Actions.
+func WriteUsageEnv(report *UsageReport) error {
+	path := os.Getenv("GITHUB_ENV")
 	if path == "" {
-		path = "codecanary-usage.json"
+		return nil
 	}
 
-	data, err := json.MarshalIndent(report, "", "  ")
+	data, err := json.Marshal(report)
 	if err != nil {
 		return fmt.Errorf("marshaling usage report: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		return fmt.Errorf("writing usage file: %w", err)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("opening GITHUB_ENV: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := fmt.Fprintf(f, "CODECANARY_USAGE=%s\n", data); err != nil {
+		return fmt.Errorf("writing to GITHUB_ENV: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "Usage report written to %s\n", path)
 	return nil
+}
+
+// PrintUsageSummary prints a human-readable table and JSON to stdout.
+func PrintUsageSummary(report *UsageReport) {
+	fmt.Printf("\n── Usage (%s) ──\n", report.PR)
+	for _, c := range report.Calls {
+		fmt.Printf("  %-8s  %-25s  %6d in / %6d out  $%.4f  %dms\n",
+			c.Phase, c.Model, c.InputTokens, c.OutputTokens, c.CostUSD, c.DurationMS)
+	}
+	fmt.Printf("  %-34s  %6d in / %6d out  $%.4f\n",
+		"TOTAL", report.TotalInputTokens, report.TotalOutputTokens, report.TotalCostUSD)
+
+	data, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return
+	}
+	fmt.Printf("\n%s\n", data)
 }
 
 // claudeJSONResponse represents the JSON output from `claude --print --output-format json`.

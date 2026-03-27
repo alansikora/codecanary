@@ -35,6 +35,7 @@ var breakingManifest = []breakingSurface{
 	{"cmd/review/cli/review.go", "CLI Flags", "CLI flag names or defaults may have changed"},
 	{"cmd/review/cli/root.go", "CLI Flags", "CLI flag names or defaults may have changed"},
 	{"cmd/review/cli/generate.go", "CLI Generate", "`codecanary review generate` behavior may have changed"},
+	{"cmd/review/cli/costs.go", "CLI Costs", "`codecanary review costs` behavior may have changed"},
 	{"cmd/setup/main.go", "Workflow Template", "Users may need to re-run setup or manually update their workflow file"},
 	{"setup.sh", "Setup Script", "Setup behavior changed — users re-running setup will get different behavior"},
 	{"install.sh", "Install Script", "Install behavior changed — users re-installing will get different behavior"},
