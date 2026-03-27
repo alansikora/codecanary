@@ -152,7 +152,7 @@ jobs:
         run: |
           echo "skip=true" >> "$GITHUB_ENV"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         if: env.skip != 'true'
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
