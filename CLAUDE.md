@@ -56,4 +56,5 @@ Version is set via ldflags: `-X main.version=v{version}`
 
 - **Minimize shell code.** `setup.sh` and the GitHub Action (`alansikora/codecanary-action`) should be kept as thin as possible. All logic must live in Go.
 - **Keep the setup generator in sync.** `cmd/setup/main.go` contains an embedded workflow template. Any change to `.github/workflows/codecanary.yml` (actions, steps, permissions, etc.) must also be applied to that template, and vice versa.
+- **Keep the breaking-change manifest in sync.** `.github/workflows/breaking-change-check.yml` contains a manifest of user-facing files. When adding new user-facing surfaces (config fields, CLI flags, public endpoints, etc.), add them to the manifest.
 - No automated tests exist yet (only config unit tests). Be careful with refactors.
