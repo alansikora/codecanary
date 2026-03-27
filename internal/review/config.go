@@ -29,16 +29,18 @@ var validModels = map[string]bool{
 }
 
 // EffectiveReviewModel returns the model for main review, defaulting to "sonnet".
+// Falls back to the default if the configured value is not in the allowlist.
 func (c *ReviewConfig) EffectiveReviewModel() string {
-	if c != nil && c.ReviewModel != "" {
+	if c != nil && validModels[c.ReviewModel] {
 		return c.ReviewModel
 	}
 	return "sonnet"
 }
 
 // EffectiveTriageModel returns the model for thread re-evaluation, defaulting to "haiku".
+// Falls back to the default if the configured value is not in the allowlist.
 func (c *ReviewConfig) EffectiveTriageModel() string {
-	if c != nil && c.TriageModel != "" {
+	if c != nil && validModels[c.TriageModel] {
 		return c.TriageModel
 	}
 	return "haiku"
