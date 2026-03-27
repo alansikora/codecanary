@@ -2,6 +2,18 @@
 
 AI-powered code review for GitHub pull requests. Catch bugs, security issues, and quality problems before they land in main.
 
+## Why CodeCanary?
+
+Most AI code review tools are one-shot: paste a PR, get feedback, repeat from scratch next time. CodeCanary is different — it's a stateful, automated reviewer that lives in your CI pipeline.
+
+- **Fully automated** — runs as a GitHub Action on every push. No one needs to open a tool or paste a link.
+- **Native PR integration** — posts inline comments on exact diff lines, auto-resolves threads when code is fixed, and minimizes stale reviews to keep PRs clean.
+- **Incremental reviews** — on re-push, Go-driven triage classifies existing threads at zero Claude cost. Only threads where code actually changed get re-evaluated.
+- **Thread lifecycle** — understands code fixes, author dismissals, acknowledgments, and rebuttals as distinct resolution types. Each finding is tracked independently.
+- **Anti-hallucination** — explicit file allowlists, line number validation against the diff, and distance thresholds prevent fabricated findings.
+- **Cost-efficient** — uses faster models for triage, full models for review. Tracks usage per invocation so you can see exactly what you're spending.
+- **Configuration-as-code** — project-specific rules, severity levels, ignore patterns, and context in a single `.codecanary.yml` file.
+
 ## Quick Setup
 
 Run this in your repo:
