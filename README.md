@@ -53,6 +53,9 @@ ignore:
   - "*.lock"
   - "vendor/**"
 
+review_model: sonnet   # Model for main review (default: sonnet)
+triage_model: haiku    # Model for thread re-evaluation (default: haiku)
+
 evaluation:
   code_change:
     context: |
@@ -61,6 +64,15 @@ evaluation:
     context: |
       Treat WONTFIX as acknowledgment.
 ```
+
+### Models
+
+You can configure which Claude models are used for reviews and thread triage:
+
+| Field | Description | Default | Allowed values |
+|-------|-------------|---------|----------------|
+| `review_model` | Model for the main code review | `sonnet` | `haiku`, `sonnet`, `opus` |
+| `triage_model` | Model for re-evaluating existing threads on re-push | `haiku` | `haiku`, `sonnet`, `opus` |
 
 ### Severity Levels
 
@@ -87,7 +99,7 @@ evaluation:
 On subsequent pushes, CodeCanary is smarter:
 
 1. **Go-driven triage** classifies existing threads — no Claude calls for unchanged code
-2. **Parallel evaluation** re-checks threads where code changed or the author replied (using Claude Haiku)
+2. **Parallel evaluation** re-checks threads where code changed or the author replied (using the `triage_model`, default: Haiku)
 3. **New code review** only covers the incremental diff, excluding known issues
 4. **Auto-resolution** marks threads as resolved when the code fix addresses the finding
 
