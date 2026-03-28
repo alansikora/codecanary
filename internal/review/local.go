@@ -19,31 +19,31 @@ type RunLocalOptions struct {
 }
 
 // FetchLocalDiff builds a PRData struct from the local git diff against baseBranch.
-// It does not require a GitHub PR to exist.
-func FetchLocalDiff(baseBranch string) (*PRData, error) {
+// It does not require a GitHub PR to exist. The returned string is the HEAD SHA.
+func FetchLocalDiff(baseBranch string) (*PRData, string, error) {
 	// Verify base branch exists locally.
 	if _, err := exec.Command("git", "rev-parse", "--verify", baseBranch).Output(); err != nil {
-		return nil, fmt.Errorf("base branch %q not found locally (try: git fetch origin %s)", baseBranch, baseBranch)
+		return nil, "", fmt.Errorf("base branch %q not found locally (try: git fetch origin %s)", baseBranch, baseBranch)
 	}
 
 	// Get unified diff.
 	diffOut, err := exec.Command("git", "diff", baseBranch+"...HEAD").Output()
 	if err != nil {
-		return nil, fmt.Errorf("git diff: %w", err)
+		return nil, "", fmt.Errorf("git diff: %w", err)
 	}
 	diff := string(diffOut)
 
 	if strings.TrimSpace(diff) == "" {
-		return nil, fmt.Errorf("no changes between %q and HEAD — nothing to review", baseBranch)
+		return nil, "", fmt.Errorf("no changes between %q and HEAD — nothing to review", baseBranch)
 	}
 
 	// Extract file list from diff (reuses existing helper).
 	files := FilesFromDiff(diff)
 
-	// Get HEAD SHA.
+	// Get HEAD SHA (used for detached HEAD fallback and returned to caller).
 	shaOut, err := exec.Command("git", "rev-parse", "HEAD").Output()
 	if err != nil {
-		return nil, fmt.Errorf("git rev-parse HEAD: %w", err)
+		return nil, "", fmt.Errorf("git rev-parse HEAD: %w", err)
 	}
 	sha := strings.TrimSpace(string(shaOut))
 
@@ -72,8 +72,6 @@ func FetchLocalDiff(baseBranch string) (*PRData, error) {
 		author = "local"
 	}
 
-	_ = sha // SHA used only locally; PRData has no SHA field
-
 	return &PRData{
 		Number:     0,
 		Title:      title,
@@ -83,7 +81,7 @@ func FetchLocalDiff(baseBranch string) (*PRData, error) {
 		HeadBranch: headBranch,
 		Diff:       diff,
 		Files:      files,
-	}, nil
+	}, sha, nil
 }
 
 // RunLocal orchestrates a local review against a base branch without a GitHub PR.
@@ -101,7 +99,7 @@ func RunLocal(opts RunLocalOptions) error {
 	}
 
 	// 1. Fetch local diff.
-	pr, err := FetchLocalDiff(baseBranch)
+	pr, headSHA, err := FetchLocalDiff(baseBranch)
 	if err != nil {
 		return err
 	}
@@ -185,14 +183,11 @@ func RunLocal(opts RunLocalOptions) error {
 		fmt.Fprintf(os.Stderr, "Found %d finding(s)\n", len(findings))
 	}
 
-	// 9. Get HEAD SHA for result tracking.
-	headSHA, _ := exec.Command("git", "rev-parse", "HEAD").Output()
-
 	reviewResult := &ReviewResult{
 		PRNumber: 0,
 		Repo:     "local",
 		Findings: findings,
-		SHA:      strings.TrimSpace(string(headSHA)),
+		SHA:      headSHA,
 	}
 
 	// 10. Format and print output.
@@ -219,9 +214,9 @@ func RunLocal(opts RunLocalOptions) error {
 		}
 		// Append the fix-all prompt when there are findings.
 		if len(findings) > 0 {
+			fixPrompt := buildFixAllPrompt(findings)
 			md += "\n---\n\n## Fix All With AI\n\n"
 			md += "Paste the prompt below into your AI coding tool, or run: `codecanary pre-review --fix`\n\n"
-			fixPrompt := buildFixAllPrompt(findings)
 			fence := codeFence(fixPrompt)
 			md += fence + "\n"
 			md += fixPrompt
@@ -235,7 +230,10 @@ func RunLocal(opts RunLocalOptions) error {
 	// 11. Apply fixes via Claude if requested.
 	if opts.ApplyFixes && len(findings) > 0 {
 		fmt.Fprintf(os.Stderr, "\nApplying fixes via Claude...\n\n")
-		claudeCmd := exec.Command("claude", buildFixAllPrompt(findings))
+		fixPrompt := buildFixAllPrompt(findings)
+		// Pass the prompt as the initial argument (not stdin) so that the user's
+		// TTY remains available for the interactive Claude session.
+		claudeCmd := exec.Command("claude", fixPrompt)
 		claudeCmd.Stdin = os.Stdin
 		claudeCmd.Stdout = os.Stdout
 		claudeCmd.Stderr = os.Stderr

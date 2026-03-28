@@ -105,6 +105,18 @@ func PrintUsageSummary(report *UsageReport) {
 	fmt.Printf("\n%s\n", data)
 }
 
+// WriteUsageFile writes the usage report to codecanary-usage.json in the current directory.
+func WriteUsageFile(report *UsageReport) error {
+	data, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling usage report: %w", err)
+	}
+	if err := os.WriteFile("codecanary-usage.json", data, 0644); err != nil {
+		return fmt.Errorf("writing codecanary-usage.json: %w", err)
+	}
+	return nil
+}
+
 // claudeJSONResponse represents the JSON output from `claude --print --output-format json`.
 type claudeJSONResponse struct {
 	Result     string  `json:"result"`
