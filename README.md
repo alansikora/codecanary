@@ -125,6 +125,12 @@ On subsequent pushes, CodeCanary is smarter:
 - **Author rebuts** — evaluated for technical merit, kept open
 - **No changes** — skipped entirely (zero Claude cost)
 
+### Draft PRs
+
+Draft PRs are skipped by default — the workflow won't run until the PR is marked as ready for review. When you convert a draft to ready, CodeCanary triggers automatically.
+
+To review draft PRs, remove the `github.event.pull_request.draft == false` condition from the workflow `if` in `.github/workflows/codecanary.yml`.
+
 ### Safety
 
 - **Anti-hallucination**: explicit file allowlist, line number validation against diff

@@ -115,7 +115,7 @@ func run() error {
 	workflow := fmt.Sprintf(`name: CodeCanary
 on:
   pull_request:
-    types: [opened, synchronize]
+    types: [opened, synchronize, ready_for_review]
   pull_request_review_comment:
     types: [created]
 
@@ -127,7 +127,10 @@ permissions:
 jobs:
   review:
     if: >-
-      github.event_name == 'pull_request' || (
+      (
+        github.event_name == 'pull_request' &&
+        github.event.pull_request.draft == false
+      ) || (
         github.event.comment.user.login != 'codecanary-bot[bot]' &&
         github.event.comment.in_reply_to_id
       )
