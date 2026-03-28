@@ -72,7 +72,10 @@ func runClaude(prompt string, env []string, model string, maxBudgetUSD float64, 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	args := []string{"--print", "--output-format", "json", "--no-session-persistence"}
+	// --tools "" disables all Claude tools (file reads, bash, etc.) for both the
+	// main review and triage passes. Both are pure text-generation tasks; allowing
+	// tools causes agentic behaviour that reliably exhausts the 5-minute timeout.
+	args := []string{"--print", "--output-format", "json", "--no-session-persistence", "--tools", ""}
 	if model != "" {
 		args = append(args, "--model", model)
 	}
