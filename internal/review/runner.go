@@ -72,7 +72,7 @@ func runClaude(prompt string, env []string, model string, maxBudgetUSD float64, 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	args := []string{"--print", "--output-format", "json", "--no-session-persistence"}
+	args := []string{"--print", "--output-format", "json", "--no-session-persistence", "--tools", ""}
 	if model != "" {
 		args = append(args, "--model", model)
 	}
