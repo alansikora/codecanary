@@ -204,7 +204,7 @@ func RunLocal(opts RunLocalOptions) error {
 			return fmt.Errorf("formatting JSON: %w", err)
 		}
 		formatted = jsonOut
-	default:
+	case "markdown":
 		// Strip the hidden <!-- codecanary:review {...} --> block that FormatMarkdown
 		// appends for incremental PR reviews. It serves no purpose in pre-review output
 		// and pollutes the terminal.
@@ -223,6 +223,8 @@ func RunLocal(opts RunLocalOptions) error {
 			md += fence + "\n"
 		}
 		formatted = md
+	default:
+		return fmt.Errorf("unsupported output format %q: must be \"markdown\" or \"json\"", outputFormat)
 	}
 
 	fmt.Print(formatted)
@@ -233,7 +235,7 @@ func RunLocal(opts RunLocalOptions) error {
 		fixPrompt := buildFixAllPrompt(findings)
 		// Pass the prompt as the initial argument (not stdin) so that the user's
 		// TTY remains available for the interactive Claude session.
-		claudeCmd := exec.Command("claude", fixPrompt)
+		claudeCmd := exec.Command("claude", "--", fixPrompt)
 		claudeCmd.Stdin = os.Stdin
 		claudeCmd.Stdout = os.Stdout
 		claudeCmd.Stderr = os.Stderr
