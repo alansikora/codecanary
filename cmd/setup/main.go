@@ -115,7 +115,7 @@ func run() error {
 	workflow := fmt.Sprintf(`name: CodeCanary
 on:
   pull_request_target:
-    types: [opened, synchronize, ready_for_review]
+    types: [opened, reopened, synchronize, ready_for_review]
   pull_request_review_comment:
     types: [created]
 
