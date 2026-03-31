@@ -818,8 +818,8 @@ func titleFromThreadBody(body string) string {
 			continue
 		}
 		// First content line after header is the title/description start.
-		if len(line) > 100 {
-			line = line[:97] + "..."
+		if runes := []rune(line); len(runes) > 100 {
+			line = string(runes[:97]) + "..."
 		}
 		return line
 	}

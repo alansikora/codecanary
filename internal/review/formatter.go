@@ -354,25 +354,6 @@ func terminalSeparator() string {
 	return "  " + strings.Repeat("━", lineW)
 }
 
-// buildColorSeveritySummary builds a summary with colorized severity counts.
-func buildColorSeveritySummary(findings []Finding, colors bool) string {
-	counts := map[string]int{}
-	for _, f := range findings {
-		counts[strings.ToLower(f.Severity)]++
-	}
-	total := len(findings)
-
-	levels := []string{"critical", "bug", "warning", "suggestion", "nitpick"}
-	var parts []string
-	for _, sev := range levels {
-		if n := counts[sev]; n > 0 {
-			label := severityLabel(sev, n)
-			parts = append(parts, applyStyle(colors, severityColor(sev), label))
-		}
-	}
-	return fmt.Sprintf("Found %d issues (%s)", total, strings.Join(parts, ", "))
-}
-
 // statusTag returns a colored status label for terminal display.
 func statusTag(status string, colors bool) string {
 	switch status {
