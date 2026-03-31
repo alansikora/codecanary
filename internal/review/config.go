@@ -163,7 +163,7 @@ func FindConfig() (string, error) {
 		// Legacy fallback: .codecanary.yml
 		legacyPath := filepath.Join(dir, ".codecanary.yml")
 		if _, err := os.Stat(legacyPath); err == nil {
-			fmt.Fprintf(os.Stderr, "Warning: .codecanary.yml is deprecated — move to .codecanary/config.yml\n")
+			Stderrf(ansiYellow, "Warning: .codecanary.yml is deprecated — move to .codecanary/config.yml\n")
 			return legacyPath, nil
 		}
 

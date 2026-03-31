@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"os"
 	"strconv"
 
 	"github.com/alansikora/codecanary/internal/review"
@@ -42,7 +41,7 @@ var reviewCmd = &cobra.Command{
 
 		// Try auto-detecting PR from current branch.
 		if prNumber, err := review.DetectPRNumber(repo); err == nil {
-			fmt.Fprintf(os.Stderr, "Auto-detected PR #%d from current branch\n", prNumber)
+			review.Stderrf(review.ColorCyan, "Auto-detected PR #%d from current branch\n", prNumber)
 			return review.Run(review.RunOptions{
 				Repo:        repo,
 				PRNumber:    prNumber,
@@ -60,14 +59,14 @@ var reviewCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("no PR found and local diff failed: %w", err)
 		}
-		fmt.Fprintf(os.Stderr, "No PR found — reviewing local changes on %s\n", pr.HeadBranch)
+		review.Stderrf(review.ColorCyan, "No PR found — reviewing local changes on %s\n", pr.HeadBranch)
 
 		if post {
-			fmt.Fprintf(os.Stderr, "Warning: --post ignored in local mode (no PR to post to)\n")
+			review.Stderrf(review.ColorYellow, "Warning: --post ignored in local mode (no PR to post to)\n")
 			post = false
 		}
 		if replyOnly {
-			fmt.Fprintf(os.Stderr, "Warning: --reply-only ignored in local mode\n")
+			review.Stderrf(review.ColorYellow, "Warning: --reply-only ignored in local mode\n")
 			replyOnly = false
 		}
 
@@ -85,7 +84,7 @@ var reviewCmd = &cobra.Command{
 
 func init() {
 	reviewCmd.Flags().StringP("repo", "r", "", "GitHub repo (owner/name)")
-	reviewCmd.Flags().StringP("output", "o", "markdown", "Output format: markdown or json")
+	reviewCmd.Flags().StringP("output", "o", "markdown", "Output format: markdown, terminal, or json (default: auto-detect)")
 	reviewCmd.Flags().Bool("post", false, "Post findings as a PR comment")
 	reviewCmd.Flags().StringP("config", "c", ".codecanary/config.yml", "Path to review config")
 	reviewCmd.Flags().Bool("reply-only", false, "Evaluate thread replies only, skip new findings")
