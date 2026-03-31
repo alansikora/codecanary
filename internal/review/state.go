@@ -66,6 +66,26 @@ func stateFilePath(branch string) string {
 	return filepath.Join(".codecanary", ".state", safe+".json")
 }
 
+// mergeFindings appends new findings to existing ones, deduplicating by
+// finding ID and file:line to prevent state file bloat across repeated runs.
+func mergeFindings(existing, new []Finding) []Finding {
+	seen := make(map[string]bool, len(existing))
+	for _, f := range existing {
+		key := f.ID + "\x00" + f.File + "\x00" + fmt.Sprintf("%d", f.Line)
+		seen[key] = true
+	}
+	merged := make([]Finding, len(existing))
+	copy(merged, existing)
+	for _, f := range new {
+		key := f.ID + "\x00" + f.File + "\x00" + fmt.Sprintf("%d", f.Line)
+		if !seen[key] {
+			merged = append(merged, f)
+			seen[key] = true
+		}
+	}
+	return merged
+}
+
 // findingsToKnownIssues converts saved findings to the ReviewThread shape
 // expected by BuildIncrementalPrompt's knownIssues parameter.
 func findingsToKnownIssues(findings []Finding) []ReviewThread {

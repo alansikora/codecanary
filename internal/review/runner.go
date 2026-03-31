@@ -435,6 +435,68 @@ func Run(opts RunOptions) error {
 				prompt = BuildIncrementalPrompt(incrementalDiff, cfg, unresolved, opts.PRNumber, startIndex, incContents, incFiles, resolvedCtx, projectDocs)
 			}
 		}
+	} else if opts.LocalDetect && !isIncremental {
+		// LocalDetect mode: no GitHub threads but may have local state from a
+		// previous local run. Use local state for incremental detection.
+		branch, branchErr := currentBranch()
+		if branchErr == nil {
+			state, stateErr := LoadLocalState(branch)
+			if stateErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not load local state: %v\n", stateErr)
+			}
+			if state != nil && state.SHA != "" && isAncestor(state.SHA) {
+				isIncremental = true
+				startIndex = len(state.Findings)
+				fmt.Fprintf(os.Stderr, "Found previous local review at %s (%d findings)\n", state.SHA[:8], len(state.Findings))
+
+				incrementalDiff, diffErr := GetIncrementalDiff(state.SHA)
+				if diffErr != nil {
+					fmt.Fprintf(os.Stderr, "Could not compute incremental diff, falling back to full review\n")
+					prompt = BuildPrompt(pr, cfg, startIndex, projectDocs)
+				} else if strings.TrimSpace(incrementalDiff) == "" {
+					// No new changes — show previous findings as still-open.
+					for _, f := range state.Findings {
+						sf := f
+						sf.Status = "still open"
+						stillOpenFindings = append(stillOpenFindings, sf)
+					}
+					Stderrf(ansiGreen, "No new changes since last review\n")
+					prompt = "" // skip Claude call
+				} else {
+					// Scope incremental diff to branch files.
+					allowed := make(map[string]bool, len(pr.Files))
+					for _, f := range pr.Files {
+						allowed[f] = true
+					}
+					incrementalDiff = ScopeDiffToFiles(incrementalDiff, allowed)
+
+					incFiles := FilesFromDiff(incrementalDiff)
+					incContents := make(map[string]string, len(incFiles))
+					for _, f := range incFiles {
+						if content, ok := pr.FileContents[f]; ok {
+							incContents[f] = content
+						}
+					}
+
+					knownIssues := findingsToKnownIssues(state.Findings)
+					// Mark previous findings as still open for terminal display.
+					for _, f := range state.Findings {
+						sf := f
+						sf.Status = "still open"
+						stillOpenFindings = append(stillOpenFindings, sf)
+					}
+					Stderrf(ansiBold, "Reviewing new changes (%d known issues excluded)...\n", len(knownIssues))
+					prompt = BuildIncrementalPrompt(incrementalDiff, cfg, knownIssues, opts.PRNumber, startIndex, incContents, incFiles, nil, projectDocs)
+				}
+			} else {
+				// No local state — first review.
+				Stderrf(ansiBold, "Reviewing PR #%d...\n", opts.PRNumber)
+				prompt = BuildPrompt(pr, cfg, startIndex, projectDocs)
+			}
+		} else {
+			Stderrf(ansiBold, "Reviewing PR #%d...\n", opts.PRNumber)
+			prompt = BuildPrompt(pr, cfg, startIndex, projectDocs)
+		}
 	} else {
 		// First review — full PR diff.
 		Stderrf(ansiBold, "Reviewing PR #%d...\n", opts.PRNumber)
@@ -448,7 +510,7 @@ func Run(opts RunOptions) error {
 	}
 
 	var findings []Finding
-	if !opts.ReplyOnly {
+	if !opts.ReplyOnly && prompt != "" {
 		// 6. Run Claude.
 		result, err := runClaude(prompt, env, cfg.EffectiveReviewModel(), cfg.MaxBudgetUSD, cfg.EffectiveTimeout())
 		if err != nil {
@@ -602,14 +664,14 @@ func Run(opts RunOptions) error {
 	if opts.LocalDetect && !opts.DryRun && !opts.ReplyOnly {
 		branch, branchErr := currentBranch()
 		if branchErr == nil {
-			// Merge with existing findings to avoid losing earlier incremental results.
+			// Merge with existing findings, deduplicating by ID+file+line.
 			allFindings := findings
 			existingState, loadErr := LoadLocalState(branch)
 			if loadErr != nil {
 				Stderrf(ansiYellow, "Warning: could not load local state for merge: %v\n", loadErr)
 			}
 			if existingState != nil {
-				allFindings = append(existingState.Findings, findings...)
+				allFindings = mergeFindings(existingState.Findings, findings)
 			}
 			if saveErr := SaveLocalState(branch, &LocalState{
 				SHA:      result.SHA,
@@ -807,8 +869,8 @@ func runLocal(opts RunOptions) error {
 	// Merge new findings with previous findings (from incremental) or just use new findings.
 	allFindings := findings
 	if state != nil && state.SHA != "" && isAncestor(state.SHA) {
-		// Incremental: keep old findings and append new ones.
-		allFindings = append(state.Findings, findings...)
+		// Incremental: keep old findings and merge new ones (dedup by ID+file+line).
+		allFindings = mergeFindings(state.Findings, findings)
 	}
 	if saveErr := SaveLocalState(branch, &LocalState{
 		SHA:      headSHA,
