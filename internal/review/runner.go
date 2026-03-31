@@ -578,7 +578,8 @@ func Run(opts RunOptions) error {
 	}
 
 	// Save local state when running locally (auto-detected PR, not in CI).
-	if opts.LocalDetect && !opts.DryRun {
+	// Skip in reply-only mode to avoid overwriting previous findings with an empty slice.
+	if opts.LocalDetect && !opts.DryRun && !opts.ReplyOnly {
 		branch, branchErr := currentBranch()
 		if branchErr == nil {
 			if saveErr := SaveLocalState(branch, &LocalState{
