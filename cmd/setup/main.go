@@ -164,7 +164,7 @@ jobs:
         if: env.skip != 'true'
         with:
 %s
-          config_path: .codecanary.yml
+          config_path: .codecanary/config.yml
           reply_only: ${{ github.event_name == 'pull_request_review_comment' }}
 
       - name: Usage
@@ -191,7 +191,7 @@ jobs:
 	}
 
 	// 8. Generate review config.
-	configPath := ".codecanary.yml"
+	configPath := filepath.Join(".codecanary", "config.yml")
 	configCreated := false
 	generateConfig := true
 	if _, err := os.Stat(configPath); err == nil {
@@ -214,6 +214,9 @@ jobs:
 		} else {
 			configContent = generated + "\n"
 		}
+		if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+			return fmt.Errorf("creating .codecanary directory: %w", err)
+		}
 		if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
 			return fmt.Errorf("writing review config: %w", err)
 		}
@@ -234,8 +237,8 @@ jobs:
 		bullets = append(bullets, "- Add CodeCanary automated PR review workflow")
 	}
 	if configCreated {
-		filesToAdd = append(filesToAdd, ".codecanary.yml")
-		bullets = append(bullets, "- Add starter `.codecanary.yml` config")
+		filesToAdd = append(filesToAdd, ".codecanary/config.yml")
+		bullets = append(bullets, "- Add starter `.codecanary/config.yml` config")
 	}
 
 	if len(filesToAdd) == 0 {

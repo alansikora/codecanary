@@ -50,7 +50,7 @@ jobs:
         if: env.skip != 'true'
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          config_path: .codecanary.yml
+          config_path: .codecanary/config.yml
           reply_only: ${{ github.event_name == 'pull_request_review_comment' }}
 
       - name: Usage

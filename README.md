@@ -14,7 +14,7 @@ Most AI code review tools are one-shot: paste a PR, get feedback, repeat from sc
 - **Cost-efficient** — uses faster models for triage, full models for review. Tracks usage per invocation so you can see exactly what you're spending.
 - **Conversational** — when authors reply to a finding, CodeCanary reads the reply and re-evaluates in context. It reasons over code changes, dismissals, and rebuttals separately — not just "resolved or not."
 - **Transparent** — every resolution is visible in the PR thread: why a finding was resolved, what the author said, and how CodeCanary interpreted it. No black-box decisions.
-- **Configuration-as-code** — project-specific rules, severity levels, ignore patterns, and context in a single `.codecanary.yml` file.
+- **Configuration-as-code** — project-specific rules, severity levels, ignore patterns, and context in `.codecanary/config.yml`.
 
 ## Quick Setup
 
@@ -28,7 +28,7 @@ This walks you through:
 1. Installing the CodeCanary Review GitHub App
 2. Authenticating with Claude (OAuth or API key)
 3. Creating the GitHub Actions workflow
-4. Generating a `.codecanary.yml` config tailored to your project
+4. Generating a `.codecanary/config.yml` config tailored to your project
 5. Opening a PR with everything ready to merge
 
 ## Canary
@@ -41,9 +41,32 @@ curl -fsSL https://codecanary.sh/setup | sh -s -- --canary
 
 This installs the latest prerelease and pins your workflow to `@canary` instead of `@v1`.
 
+## Local Review
+
+CodeCanary can also review your changes locally, without CI:
+
+```sh
+codecanary review          # auto-detects PR or diffs against main
+codecanary review --post   # auto-detect PR + post findings to GitHub
+```
+
+**How it works:**
+1. If your branch has an open PR, CodeCanary auto-detects it and runs the same review as CI
+2. If no PR exists, it diffs your branch against the default branch (main/master) and reviews locally
+3. Local reviews track state in `.codecanary/.state/` for incremental reviews on subsequent runs
+
+**Rails 8.1 Local CI integration:**
+
+```ruby
+# config/ci.rb
+CI.run do
+  step "Code Review", "codecanary", "review"
+end
+```
+
 ## Config
 
-CodeCanary uses a `.codecanary.yml` file at your repo root:
+CodeCanary uses a `.codecanary/config.yml` file in your repo:
 
 ```yaml
 version: 1

@@ -17,8 +17,12 @@ func BuildPrompt(pr *PRData, cfg *ReviewConfig, startIndex int, projectDocs map[
 	b.WriteString("You will be given the full contents of changed files for context, along with the diff. Only report issues that are directly related to the changes in the diff — do not flag pre-existing issues in unchanged code. Do not report a finding if your analysis concludes that the code is correct and no action is needed — only report findings that require the author to make a change or consider a specific alternative.\n")
 	b.WriteString("Also consider whether the changes could cause side effects in other files that depend on or interact with the modified code (e.g. callers, importers, shared state). If you identify a potential side effect, anchor your finding to the relevant line in the diff and describe the affected downstream code in the description.\n\n")
 
-	// PR metadata.
-	fmt.Fprintf(&b, "## Pull Request #%d\n", pr.Number)
+	// PR / branch metadata.
+	if pr.Number > 0 {
+		fmt.Fprintf(&b, "## Pull Request #%d\n", pr.Number)
+	} else {
+		fmt.Fprintf(&b, "## Branch Review: %s\n", pr.HeadBranch)
+	}
 	fmt.Fprintf(&b, "**Title:** %s\n", pr.Title)
 	fmt.Fprintf(&b, "**Author:** %s\n", pr.Author)
 	if pr.Body != "" {
@@ -89,14 +93,18 @@ func BuildPrompt(pr *PRData, cfg *ReviewConfig, startIndex int, projectDocs map[
 	b.WriteString("- `description` (string): A detailed explanation of the issue.\n")
 	b.WriteString("- `suggestion` (string, optional): A suggested fix or improvement. For suggestions about broader patterns, structural concerns, or improvements that go beyond the scope of the current PR, recommend that the author discuss with the team or open a separate PR — do not imply they should fix it in this PR.\n")
 	first := startIndex + 1
-	fmt.Fprintf(&b, "- `fix_ref` (string): A reference ID in the format `%d-<index>` where index starts at %d (e.g. `%d-%d`, `%d-%d`).\n", pr.Number, first, pr.Number, first, pr.Number, first+1)
+	fixRefPrefix := fmt.Sprintf("%d", pr.Number)
+	if pr.Number == 0 {
+		fixRefPrefix = "local"
+	}
+	fmt.Fprintf(&b, "- `fix_ref` (string): A reference ID in the format `%s-<index>` where index starts at %d (e.g. `%s-%d`, `%s-%d`).\n", fixRefPrefix, first, fixRefPrefix, first, fixRefPrefix, first+1)
 	b.WriteString("- `actionable` (boolean): Set to `false` if your analysis concludes the code is correct and no change is needed. Set to `true` if the finding requires the author to act. **Prefer returning an empty array over emitting findings with `actionable: false`.**\n")
 	b.WriteString("\n**IMPORTANT — JSON escaping:** When your description or suggestion references code containing backslash sequences (e.g. `\\n`, `\\t`, `\\\"`), you MUST double-escape the backslash in the JSON string value. For example, to mention `fmt.Print(\"\\n\")` in a JSON string, write `fmt.Print(\"\\\\n\")`. A single `\\n` in JSON is a newline character, not the literal text `\\n`.\n")
 	b.WriteString("\n**Do not include findings where your conclusion is that the code is correct or no action is needed.** If you evaluate something and determine it is fine, omit it entirely rather than reporting it. Specifically: if you begin analyzing a potential issue but then realize the code handles it correctly, do NOT emit a finding that walks through the concern and then concludes \"this is actually fine\" or \"no bug here\" — simply drop it. Every finding you emit must represent a real, actionable problem.\n")
 	b.WriteString("\n**CRITICAL: Do NOT invent or hallucinate file paths, function names, or code that does not appear in the diff or the provided file contents. If a file or function is not shown above, do not reference it.**\n")
 	b.WriteString("\nIf there are no findings, return an empty array: `[]`.\n")
 	b.WriteString("\nExample:\n```json\n[\n  {\n    \"id\": \"rule-id\",\n    \"file\": \"src/main.go\",\n    \"line\": 42,\n    \"severity\": \"warning\",\n    \"title\": \"Short title\",\n    \"description\": \"Detailed description.\",\n    \"suggestion\": \"Consider doing X instead.\",\n")
-	fmt.Fprintf(&b, "    \"fix_ref\": \"%d-%d\",\n    \"actionable\": true\n  }\n]\n```\n", pr.Number, first)
+	fmt.Fprintf(&b, "    \"fix_ref\": \"%s-%d\",\n    \"actionable\": true\n  }\n]\n```\n", fixRefPrefix, first)
 
 	return b.String()
 }
@@ -261,14 +269,18 @@ func BuildIncrementalPrompt(diff string, cfg *ReviewConfig, knownIssues []Review
 	b.WriteString("- `description` (string): A detailed explanation of the issue.\n")
 	b.WriteString("- `suggestion` (string, optional): A suggested fix or improvement. For suggestions about broader patterns, structural concerns, or improvements that go beyond the scope of the current PR, recommend that the author discuss with the team or open a separate PR — do not imply they should fix it in this PR.\n")
 	first := startIndex + 1
-	fmt.Fprintf(&b, "- `fix_ref` (string): A reference ID in the format `%d-<index>` where index starts at %d (e.g. `%d-%d`, `%d-%d`).\n", prNumber, first, prNumber, first, prNumber, first+1)
+	fixRefPrefix := fmt.Sprintf("%d", prNumber)
+	if prNumber == 0 {
+		fixRefPrefix = "local"
+	}
+	fmt.Fprintf(&b, "- `fix_ref` (string): A reference ID in the format `%s-<index>` where index starts at %d (e.g. `%s-%d`, `%s-%d`).\n", fixRefPrefix, first, fixRefPrefix, first, fixRefPrefix, first+1)
 	b.WriteString("- `actionable` (boolean): Set to `false` if your analysis concludes the code is correct and no change is needed. Set to `true` if the finding requires the author to act. **Prefer returning an empty array over emitting findings with `actionable: false`.**\n")
 	b.WriteString("\n**IMPORTANT — JSON escaping:** When your description or suggestion references code containing backslash sequences (e.g. `\\n`, `\\t`, `\\\"`), you MUST double-escape the backslash in the JSON string value. For example, to mention `fmt.Print(\"\\n\")` in a JSON string, write `fmt.Print(\"\\\\n\")`. A single `\\n` in JSON is a newline character, not the literal text `\\n`.\n")
 	b.WriteString("\n**Do not include findings where your conclusion is that the code is correct or no action is needed.** If you evaluate something and determine it is fine, omit it entirely rather than reporting it. Specifically: if you begin analyzing a potential issue but then realize the code handles it correctly, do NOT emit a finding that walks through the concern and then concludes \"this is actually fine\" or \"no bug here\" — simply drop it. Every finding you emit must represent a real, actionable problem.\n")
 	b.WriteString("\n**CRITICAL: Do NOT invent or hallucinate file paths, function names, or code that does not appear in the diff or the provided file contents. If a file or function is not shown above, do not reference it.**\n")
 	b.WriteString("\nOnly report NEW issues found in the incremental diff. If there are no new findings, return an empty array: `[]`.\n")
 	b.WriteString("\nExample:\n```json\n[\n  {\n    \"id\": \"rule-id\",\n    \"file\": \"src/main.go\",\n    \"line\": 42,\n    \"severity\": \"warning\",\n    \"title\": \"Short title\",\n    \"description\": \"Detailed description.\",\n    \"suggestion\": \"Consider doing X instead.\",\n")
-	fmt.Fprintf(&b, "    \"fix_ref\": \"%d-%d\",\n    \"actionable\": true\n  }\n]\n```\n", prNumber, first)
+	fmt.Fprintf(&b, "    \"fix_ref\": \"%s-%d\",\n    \"actionable\": true\n  }\n]\n```\n", fixRefPrefix, first)
 
 	return b.String()
 }

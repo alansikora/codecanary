@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
@@ -346,6 +347,24 @@ func DetectRepo() (string, error) {
 		return "", fmt.Errorf("gh repo view: %w", err)
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// DetectPRNumber detects the PR number for the current branch using gh.
+// If repo is non-empty, it is passed as --repo to scope the lookup.
+func DetectPRNumber(repo string) (int, error) {
+	args := []string{"pr", "view", "--json", "number", "--jq", ".number"}
+	if repo != "" {
+		args = append(args, "--repo", repo)
+	}
+	out, err := exec.Command("gh", args...).Output()
+	if err != nil {
+		return 0, fmt.Errorf("no open pull request found for the current branch")
+	}
+	num, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return 0, fmt.Errorf("unexpected PR number from gh: %w", err)
+	}
+	return num, nil
 }
 
 // ThreadReply represents a reply to a review thread (i.e. any comment after the first).

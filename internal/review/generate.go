@@ -301,7 +301,7 @@ func abs64(n int64) int64 {
 func buildGeneratePrompt(info *RepoInfo) string {
 	var b strings.Builder
 
-	b.WriteString("You are a code review configuration expert. Analyze the following project and generate a `.codecanary.yml` configuration file.\n\n")
+	b.WriteString("You are a code review configuration expert. Analyze the following project and generate a `.codecanary/config.yml` configuration file.\n\n")
 
 	b.WriteString("## Project Info\n")
 	if len(info.Languages) > 0 {

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/alansikora/codecanary/internal/review"
@@ -17,7 +18,7 @@ var generateCmd = &cobra.Command{
 		dryRun, _ := cmd.InheritedFlags().GetBool("dry-run")
 		force, _ := cmd.Flags().GetBool("force")
 
-		configPath := ".codecanary.yml"
+		configPath := filepath.Join(".codecanary", "config.yml")
 
 		// If config exists and not --force, ask for confirmation.
 		if !dryRun && !force {
@@ -42,6 +43,11 @@ var generateCmd = &cobra.Command{
 		if dryRun {
 			fmt.Print(yamlStr)
 			return nil
+		}
+
+		// Ensure .codecanary/ directory exists.
+		if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+			return fmt.Errorf("creating .codecanary directory: %w", err)
 		}
 
 		if err := os.WriteFile(configPath, []byte(yamlStr+"\n"), 0644); err != nil {

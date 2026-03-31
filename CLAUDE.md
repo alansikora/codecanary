@@ -44,7 +44,7 @@ Version is set via ldflags: `-X main.version=v{version}`
 
 ## Architecture notes
 
-- **Config** is `.codecanary.yml` at the repo root (flat file, no directory)
+- **Config** is `.codecanary/config.yml` (directory structure). Legacy `.codecanary.yml` at repo root is still supported with a deprecation warning.
 - **Review flow**: fetch PR data via `gh` CLI → build prompt → call Claude via `claude` CLI → parse findings → post as PR review
 - **Incremental reviews**: on re-push, triage existing threads (Go-driven classifier), only re-evaluate changed threads via Claude (haiku), then review only new code
 - **Dual marker detection**: reads both `codecanary:review` and legacy `clanopy:review` HTML markers for backward compatibility

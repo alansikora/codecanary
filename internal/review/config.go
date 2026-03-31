@@ -144,8 +144,9 @@ func LoadConfig(path string) (*ReviewConfig, error) {
 	return &cfg, nil
 }
 
-// FindConfig looks for .codecanary.yml starting from the current directory
-// and walking up the directory tree until it finds one or reaches the root.
+// FindConfig looks for review config starting from the current directory and
+// walking up the directory tree. It checks .codecanary/config.yml first, then
+// falls back to the legacy .codecanary.yml with a deprecation warning.
 func FindConfig() (string, error) {
 	dir, err := os.Getwd()
 	if err != nil {
@@ -153,9 +154,17 @@ func FindConfig() (string, error) {
 	}
 
 	for {
-		candidate := filepath.Join(dir, ".codecanary.yml")
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate, nil
+		// Prefer new location: .codecanary/config.yml
+		newPath := filepath.Join(dir, ".codecanary", "config.yml")
+		if _, err := os.Stat(newPath); err == nil {
+			return newPath, nil
+		}
+
+		// Legacy fallback: .codecanary.yml
+		legacyPath := filepath.Join(dir, ".codecanary.yml")
+		if _, err := os.Stat(legacyPath); err == nil {
+			fmt.Fprintf(os.Stderr, "Warning: .codecanary.yml is deprecated — move to .codecanary/config.yml\n")
+			return legacyPath, nil
 		}
 
 		parent := filepath.Dir(dir)
@@ -165,5 +174,5 @@ func FindConfig() (string, error) {
 		dir = parent
 	}
 
-	return "", fmt.Errorf("no .codecanary.yml found")
+	return "", fmt.Errorf("no .codecanary/config.yml found")
 }
