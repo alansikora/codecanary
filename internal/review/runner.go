@@ -19,9 +19,10 @@ type RunOptions struct {
 	Output     string // "markdown" or "json"
 	Post       bool
 	DryRun     bool
-	ReplyOnly  bool    // evaluate thread replies only, skip new findings
-	Local      bool    // local mode: no PR, no GitHub interaction
-	PR         *PRData // pre-fetched PRData (used in local mode)
+	ReplyOnly   bool    // evaluate thread replies only, skip new findings
+	Local       bool    // local mode: no PR, no GitHub interaction
+	LocalDetect bool    // PR was auto-detected locally (save state)
+	PR          *PRData // pre-fetched PRData (used in local mode)
 }
 
 // allowedEnvPrefixes lists environment variable prefixes passed to the Claude subprocess.
@@ -573,6 +574,20 @@ func Run(opts RunOptions) error {
 				return fmt.Errorf("posting review: %w", err)
 			}
 			fmt.Fprintf(os.Stderr, "Review posted to PR #%d\n", opts.PRNumber)
+		}
+	}
+
+	// Save local state when running locally (auto-detected PR, not in CI).
+	if opts.LocalDetect && !opts.DryRun {
+		branch, branchErr := currentBranch()
+		if branchErr == nil {
+			if saveErr := SaveLocalState(branch, &LocalState{
+				SHA:      result.SHA,
+				Branch:   branch,
+				Findings: findings,
+			}); saveErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not save local state: %v\n", saveErr)
+			}
 		}
 	}
 

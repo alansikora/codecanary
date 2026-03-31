@@ -44,13 +44,14 @@ var reviewCmd = &cobra.Command{
 		if prNumber, err := review.DetectPRNumber(repo); err == nil {
 			fmt.Fprintf(os.Stderr, "Auto-detected PR #%d from current branch\n", prNumber)
 			return review.Run(review.RunOptions{
-				Repo:       repo,
-				PRNumber:   prNumber,
-				ConfigPath: configPath,
-				Output:     output,
-				Post:       post,
-				DryRun:     dryRun,
-				ReplyOnly:  replyOnly,
+				Repo:        repo,
+				PRNumber:    prNumber,
+				ConfigPath:  configPath,
+				Output:      output,
+				Post:        post,
+				DryRun:      dryRun,
+				ReplyOnly:   replyOnly,
+				LocalDetect: true,
 			})
 		}
 
