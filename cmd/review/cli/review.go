@@ -84,7 +84,7 @@ var reviewCmd = &cobra.Command{
 
 func init() {
 	reviewCmd.Flags().StringP("repo", "r", "", "GitHub repo (owner/name)")
-	reviewCmd.Flags().StringP("output", "o", "markdown", "Output format: markdown, terminal, or json (default: auto-detect)")
+	reviewCmd.Flags().StringP("output", "o", "markdown", "Output format: markdown, terminal, or json; auto-upgrades to terminal when stdout is a TTY")
 	reviewCmd.Flags().Bool("post", false, "Post findings as a PR comment")
 	reviewCmd.Flags().StringP("config", "c", ".codecanary/config.yml", "Path to review config")
 	reviewCmd.Flags().Bool("reply-only", false, "Evaluate thread replies only, skip new findings")

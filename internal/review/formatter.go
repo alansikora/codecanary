@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 // severityIcon returns the emoji icon for a severity level.
@@ -419,11 +420,11 @@ func writeCodeBlock(b *strings.Builder, code string, colors bool) {
 	code = strings.TrimRight(code, "\n")
 	lines := strings.Split(code, "\n")
 
-	// Determine box width from longest line.
+	// Determine box width from longest line (rune count, not byte count).
 	maxLen := 40
 	for _, line := range lines {
-		if len(line) > maxLen {
-			maxLen = len(line)
+		if w := utf8.RuneCountInString(line); w > maxLen {
+			maxLen = w
 		}
 	}
 	boxW := maxLen + 2 // padding

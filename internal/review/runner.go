@@ -587,12 +587,17 @@ func Run(opts RunOptions) error {
 	if opts.LocalDetect && !opts.DryRun && !opts.ReplyOnly {
 		branch, branchErr := currentBranch()
 		if branchErr == nil {
+			// Merge with existing findings to avoid losing earlier incremental results.
+			allFindings := findings
+			if existingState, _ := LoadLocalState(branch); existingState != nil {
+				allFindings = append(existingState.Findings, findings...)
+			}
 			if saveErr := SaveLocalState(branch, &LocalState{
 				SHA:      result.SHA,
 				Branch:   branch,
-				Findings: findings,
+				Findings: allFindings,
 			}); saveErr != nil {
-				fmt.Fprintf(os.Stderr, "Warning: could not save local state: %v\n", saveErr)
+				Stderrf(ansiYellow, "Warning: could not save local state: %v\n", saveErr)
 			}
 		}
 	}
