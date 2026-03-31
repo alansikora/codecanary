@@ -589,7 +589,11 @@ func Run(opts RunOptions) error {
 		if branchErr == nil {
 			// Merge with existing findings to avoid losing earlier incremental results.
 			allFindings := findings
-			if existingState, _ := LoadLocalState(branch); existingState != nil {
+			existingState, loadErr := LoadLocalState(branch)
+			if loadErr != nil {
+				Stderrf(ansiYellow, "Warning: could not load local state for merge: %v\n", loadErr)
+			}
+			if existingState != nil {
 				allFindings = append(existingState.Findings, findings...)
 			}
 			if saveErr := SaveLocalState(branch, &LocalState{
