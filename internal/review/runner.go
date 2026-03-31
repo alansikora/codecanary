@@ -664,7 +664,7 @@ func runLocal(opts RunOptions) error {
 		incrementalDiff, diffErr := GetIncrementalDiff(state.SHA)
 		if diffErr != nil {
 			fmt.Fprintf(os.Stderr, "Could not compute incremental diff, falling back to full review\n")
-			prompt = BuildPrompt(pr, cfg, 0, projectDocs)
+			prompt = BuildPrompt(pr, cfg, startIndex, projectDocs)
 		} else if strings.TrimSpace(incrementalDiff) == "" {
 			fmt.Fprintf(os.Stderr, "No new changes since last review\n")
 			return nil
@@ -738,11 +738,15 @@ func runLocal(opts RunOptions) error {
 	}
 
 	// Build result.
-	headSHA, _ := exec.Command("git", "rev-parse", "HEAD").Output()
+	headSHAOut, err := exec.Command("git", "rev-parse", "HEAD").Output()
+	if err != nil {
+		return fmt.Errorf("resolving HEAD: %w", err)
+	}
+	headSHA := strings.TrimSpace(string(headSHAOut))
 	reviewResult := &ReviewResult{
 		PRNumber: 0,
 		Findings: findings,
-		SHA:      strings.TrimSpace(string(headSHA)),
+		SHA:      headSHA,
 	}
 
 	// Format output.
@@ -773,7 +777,7 @@ func runLocal(opts RunOptions) error {
 		allFindings = append(state.Findings, findings...)
 	}
 	if saveErr := SaveLocalState(branch, &LocalState{
-		SHA:      strings.TrimSpace(string(headSHA)),
+		SHA:      headSHA,
 		Branch:   branch,
 		Findings: allFindings,
 	}); saveErr != nil {
