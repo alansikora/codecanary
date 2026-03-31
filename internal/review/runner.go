@@ -447,7 +447,7 @@ func Run(opts RunOptions) error {
 			if state != nil && state.SHA != "" && isAncestor(state.SHA) {
 				isIncremental = true
 				startIndex = len(state.Findings)
-				fmt.Fprintf(os.Stderr, "Found previous local review at %s (%d findings)\n", state.SHA[:8], len(state.Findings))
+				fmt.Fprintf(os.Stderr, "Found previous local review at %s (%d findings)\n", shortSHA(state.SHA), len(state.Findings))
 
 				incrementalDiff, diffErr := GetIncrementalDiff(state.SHA)
 				if diffErr != nil {
@@ -736,7 +736,7 @@ func runLocal(opts RunOptions) error {
 	if isIncremental {
 		// Incremental local review.
 		startIndex = len(state.Findings)
-		fmt.Fprintf(os.Stderr, "Found previous local review at %s (%d findings)\n", state.SHA[:8], len(state.Findings))
+		fmt.Fprintf(os.Stderr, "Found previous local review at %s (%d findings)\n", shortSHA(state.SHA), len(state.Findings))
 
 		incrementalDiff, diffErr := GetIncrementalDiff(state.SHA)
 		if diffErr != nil {
@@ -928,6 +928,14 @@ func loadReviewConfig(configPath string) (*ReviewConfig, error) {
 // isAncestor checks if the given SHA is an ancestor of HEAD.
 func isAncestor(sha string) bool {
 	return exec.Command("git", "merge-base", "--is-ancestor", sha, "HEAD").Run() == nil
+}
+
+// shortSHA returns the first 8 characters of a SHA, or the full string if shorter.
+func shortSHA(sha string) string {
+	if len(sha) > 8 {
+		return sha[:8]
+	}
+	return sha
 }
 
 // acknowledgmentMessage returns a reply body for non-code-change resolutions.
