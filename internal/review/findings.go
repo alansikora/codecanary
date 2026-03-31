@@ -18,15 +18,17 @@ type Finding struct {
 	Suggestion  string `json:"suggestion,omitempty"`
 	FixRef      string `json:"fix_ref"`
 	Actionable  *bool  `json:"actionable,omitempty"`
+	Status      string `json:"status,omitempty"` // "new", "still open", or "" (first review)
 }
 
 // ReviewResult holds the complete output of a review run.
 type ReviewResult struct {
-	PRNumber int       `json:"pr_number"`
-	Repo     string    `json:"repo"`
-	Findings []Finding `json:"findings"`
-	Summary  string    `json:"summary"`
-	SHA      string    `json:"sha,omitempty"`
+	PRNumber  int       `json:"pr_number"`
+	Repo      string    `json:"repo"`
+	Findings  []Finding `json:"findings"`
+	StillOpen []Finding `json:"still_open,omitempty"` // Unresolved findings from previous reviews
+	Summary   string    `json:"summary"`
+	SHA       string    `json:"sha,omitempty"`
 }
 
 // jsonFenceRe matches a ```json ... ``` code fence.
