@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strings"
 )
 
 // Finding represents a single review issue found in the code.
@@ -37,13 +38,14 @@ var jsonFenceRe = regexp.MustCompile("(?s)```json\\s*\n(.*?)\n```")
 // ParseFindings extracts findings from Claude's output by looking for a JSON
 // array inside a ```json code fence. It tries all matches in case an earlier
 // fence contains non-JSON content (e.g. a code example).
+//
+// When the suggestion or description fields contain embedded markdown code
+// fences (```bash, ```go, etc.), the non-greedy regex may match too early.
+// A bracket-matching fallback handles this case.
 func ParseFindings(output string) ([]Finding, error) {
 	allMatches := jsonFenceRe.FindAllStringSubmatch(output, -1)
-	if len(allMatches) == 0 {
-		return nil, fmt.Errorf("no ```json code fence found in output:\n%s", output)
-	}
 
-	// Try each match — the actual findings array may not be the first fence.
+	// Try each regex match — the actual findings array may not be the first fence.
 	var lastErr error
 	for _, matches := range allMatches {
 		raw := matches[1]
@@ -55,7 +57,75 @@ func ParseFindings(output string) ([]Finding, error) {
 		return findings, nil
 	}
 
+	// Fallback: when embedded ``` in string values cause the regex to match
+	// too early, extract the JSON array by bracket-matching.
+	if raw, ok := extractJSONArray(output); ok {
+		var findings []Finding
+		if err := json.Unmarshal([]byte(raw), &findings); err != nil {
+			lastErr = err
+		} else {
+			return findings, nil
+		}
+	}
+
+	if len(allMatches) == 0 && lastErr == nil {
+		return nil, fmt.Errorf("no ```json code fence found in output:\n%s", output)
+	}
 	return nil, fmt.Errorf("parsing findings JSON: %w\nClaude output:\n%s", lastErr, output)
+}
+
+// extractJSONArray finds the first top-level JSON array in the output by
+// tracking bracket depth and string boundaries. This handles cases where
+// the content contains embedded triple backticks that confuse fence detection.
+func extractJSONArray(output string) (string, bool) {
+	// Only search within a ```json fence region to avoid matching unrelated arrays.
+	fenceStart := strings.Index(output, "```json")
+	if fenceStart < 0 {
+		return "", false
+	}
+	// Skip past the ```json line.
+	searchFrom := strings.Index(output[fenceStart:], "\n")
+	if searchFrom < 0 {
+		return "", false
+	}
+	searchFrom += fenceStart + 1
+
+	start := strings.Index(output[searchFrom:], "[")
+	if start < 0 {
+		return "", false
+	}
+	start += searchFrom
+
+	depth := 0
+	inString := false
+	escape := false
+	for i := start; i < len(output); i++ {
+		ch := output[i]
+		if escape {
+			escape = false
+			continue
+		}
+		if ch == '\\' && inString {
+			escape = true
+			continue
+		}
+		if ch == '"' {
+			inString = !inString
+			continue
+		}
+		if inString {
+			continue
+		}
+		if ch == '[' {
+			depth++
+		} else if ch == ']' {
+			depth--
+			if depth == 0 {
+				return output[start : i+1], true
+			}
+		}
+	}
+	return "", false
 }
 
 // FilterNonActionable removes findings that Claude explicitly marked as not
