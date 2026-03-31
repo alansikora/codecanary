@@ -19,9 +19,10 @@ type RunOptions struct {
 	Output     string // "markdown" or "json"
 	Post       bool
 	DryRun     bool
-	ReplyOnly  bool    // evaluate thread replies only, skip new findings
-	Local      bool    // local mode: no PR, no GitHub interaction
-	PR         *PRData // pre-fetched PRData (used in local mode)
+	ReplyOnly   bool    // evaluate thread replies only, skip new findings
+	Local       bool    // local mode: no PR, no GitHub interaction
+	LocalDetect bool    // PR was auto-detected locally (save state)
+	PR          *PRData // pre-fetched PRData (used in local mode)
 }
 
 // allowedEnvPrefixes lists environment variable prefixes passed to the Claude subprocess.
@@ -239,25 +240,9 @@ func Run(opts RunOptions) error {
 	}
 
 	// 3. Load review config.
-	var cfg *ReviewConfig
-	configPath := opts.ConfigPath
-	if configPath == "" {
-		configPath = ".codecanary/config.yml"
-	}
-	loaded, err := LoadConfig(configPath)
+	cfg, err := loadReviewConfig(opts.ConfigPath)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) || os.IsNotExist(err) {
-			cfg = &ReviewConfig{}
-		} else {
-			var pathErr *os.PathError
-			if errors.As(err, &pathErr) {
-				cfg = &ReviewConfig{}
-			} else {
-				return fmt.Errorf("loading config: %w", err)
-			}
-		}
-	} else {
-		cfg = loaded
+		return err
 	}
 
 	// Read project documentation (CLAUDE.md files).
@@ -592,6 +577,21 @@ func Run(opts RunOptions) error {
 		}
 	}
 
+	// Save local state when running locally (auto-detected PR, not in CI).
+	// Skip in reply-only mode to avoid overwriting previous findings with an empty slice.
+	if opts.LocalDetect && !opts.DryRun && !opts.ReplyOnly {
+		branch, branchErr := currentBranch()
+		if branchErr == nil {
+			if saveErr := SaveLocalState(branch, &LocalState{
+				SHA:      result.SHA,
+				Branch:   branch,
+				Findings: findings,
+			}); saveErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not save local state: %v\n", saveErr)
+			}
+		}
+	}
+
 	// Export usage data for the costs step.
 	if report := tracker.Report(repo, opts.PRNumber); len(report.Calls) > 0 {
 		if err := WriteUsageEnv(report); err != nil {
@@ -607,25 +607,9 @@ func runLocal(opts RunOptions) error {
 	pr := opts.PR
 
 	// Load review config.
-	var cfg *ReviewConfig
-	configPath := opts.ConfigPath
-	if configPath == "" {
-		configPath = ".codecanary/config.yml"
-	}
-	loaded, err := LoadConfig(configPath)
+	cfg, err := loadReviewConfig(opts.ConfigPath)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) || os.IsNotExist(err) {
-			cfg = &ReviewConfig{}
-		} else {
-			var pathErr *os.PathError
-			if errors.As(err, &pathErr) {
-				cfg = &ReviewConfig{}
-			} else {
-				return fmt.Errorf("loading config: %w", err)
-			}
-		}
-	} else {
-		cfg = loaded
+		return err
 	}
 
 	// Read project documentation (CLAUDE.md files).
@@ -785,6 +769,48 @@ func runLocal(opts RunOptions) error {
 	}
 
 	return nil
+}
+
+// loadReviewConfig loads the review config from the given path (or default).
+// When the specified path does not exist, it falls back to FindConfig which
+// discovers both the new (.codecanary/config.yml) and legacy (.codecanary.yml)
+// locations. Returns an empty config if no config file is found anywhere.
+func loadReviewConfig(configPath string) (*ReviewConfig, error) {
+	if configPath == "" {
+		configPath = ".codecanary/config.yml"
+	}
+	cfg, err := LoadConfig(configPath)
+	if err == nil {
+		return cfg, nil
+	}
+
+	// If the explicit path doesn't exist, try discovery.
+	if errors.Is(err, os.ErrNotExist) || os.IsNotExist(err) {
+		if found, findErr := FindConfig(); findErr == nil {
+			cfg, err = LoadConfig(found)
+			if err != nil {
+				return nil, fmt.Errorf("loading config: %w", err)
+			}
+			return cfg, nil
+		}
+		// No config found anywhere — use empty defaults.
+		return &ReviewConfig{}, nil
+	}
+
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		// Path error (e.g. permission denied on missing dir) — try discovery.
+		if found, findErr := FindConfig(); findErr == nil {
+			cfg, err = LoadConfig(found)
+			if err != nil {
+				return nil, fmt.Errorf("loading config: %w", err)
+			}
+			return cfg, nil
+		}
+		return &ReviewConfig{}, nil
+	}
+
+	return nil, fmt.Errorf("loading config: %w", err)
 }
 
 // isAncestor checks if the given SHA is an ancestor of HEAD.
