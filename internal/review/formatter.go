@@ -257,6 +257,7 @@ func FormatTerminal(result *ReviewResult) string {
 	colors := colorsEnabled()
 
 	sortFindings(result.Findings)
+	sortFindings(result.StillOpen)
 
 	// Header.
 	b.WriteString("\n")
@@ -269,8 +270,8 @@ func FormatTerminal(result *ReviewResult) string {
 	// Summary.
 	if result.Summary != "" {
 		fmt.Fprintf(&b, "  %s\n\n", result.Summary)
-	} else if len(result.Findings) > 0 {
-		fmt.Fprintf(&b, "  %s\n\n", buildColorSeveritySummary(result.Findings, colors))
+	} else if len(result.Findings) > 0 || len(result.StillOpen) > 0 {
+		fmt.Fprintf(&b, "  %s\n\n", buildTerminalSummary(result.Findings, result.StillOpen, colors))
 	} else {
 		fmt.Fprintf(&b, "  %s\n\n", applyStyle(colors, ansiGreen, "No issues found"))
 	}
@@ -280,14 +281,55 @@ func FormatTerminal(result *ReviewResult) string {
 	b.WriteString(sep)
 	b.WriteString("\n")
 
-	// Findings.
+	// New findings.
 	for _, f := range result.Findings {
 		writeTerminalFinding(&b, &f, colors)
 		b.WriteString(sep)
 		b.WriteString("\n")
 	}
 
+	// Still-open findings from previous reviews.
+	for _, f := range result.StillOpen {
+		writeTerminalFinding(&b, &f, colors)
+		b.WriteString(sep)
+		b.WriteString("\n")
+	}
+
 	return b.String()
+}
+
+// buildTerminalSummary builds a summary with severity counts and status breakdown.
+func buildTerminalSummary(findings, stillOpen []Finding, colors bool) string {
+	total := len(findings) + len(stillOpen)
+	counts := map[string]int{}
+	for _, f := range findings {
+		counts[strings.ToLower(f.Severity)]++
+	}
+	for _, f := range stillOpen {
+		counts[strings.ToLower(f.Severity)]++
+	}
+
+	levels := []string{"critical", "bug", "warning", "suggestion", "nitpick"}
+	var parts []string
+	for _, sev := range levels {
+		if n := counts[sev]; n > 0 {
+			label := severityLabel(sev, n)
+			parts = append(parts, applyStyle(colors, severityColor(sev), label))
+		}
+	}
+	summary := fmt.Sprintf("Found %d issues (%s)", total, strings.Join(parts, ", "))
+
+	// Add status breakdown when there are both new and still-open findings.
+	if len(findings) > 0 && len(stillOpen) > 0 {
+		newTag := applyStyle(colors, ansiGreen, fmt.Sprintf("%d new", len(findings)))
+		openTag := applyStyle(colors, ansiYellow, fmt.Sprintf("%d still open", len(stillOpen)))
+		summary += fmt.Sprintf(" — %s, %s", newTag, openTag)
+	} else if len(stillOpen) > 0 && len(findings) == 0 {
+		openTag := applyStyle(colors, ansiYellow, fmt.Sprintf("%d still open", len(stillOpen)))
+		summary += fmt.Sprintf(" — %s", openTag)
+	}
+
+	return summary
 }
 
 // applyStyle wraps text in an ANSI style code if colors are enabled.
@@ -312,37 +354,34 @@ func terminalSeparator() string {
 	return "  " + strings.Repeat("━", lineW)
 }
 
-// buildColorSeveritySummary builds a summary with colorized severity counts.
-func buildColorSeveritySummary(findings []Finding, colors bool) string {
-	counts := map[string]int{}
-	for _, f := range findings {
-		counts[strings.ToLower(f.Severity)]++
+// statusTag returns a colored status label for terminal display.
+func statusTag(status string, colors bool) string {
+	switch status {
+	case "new":
+		return applyStyle(colors, ansiGreen, "new")
+	case "still open":
+		return applyStyle(colors, ansiYellow, "still open")
+	default:
+		return ""
 	}
-	total := len(findings)
-
-	levels := []string{"critical", "bug", "warning", "suggestion", "nitpick"}
-	var parts []string
-	for _, sev := range levels {
-		if n := counts[sev]; n > 0 {
-			label := severityLabel(sev, n)
-			parts = append(parts, applyStyle(colors, severityColor(sev), label))
-		}
-	}
-	return fmt.Sprintf("Found %d issues (%s)", total, strings.Join(parts, ", "))
 }
 
 // writeTerminalFinding writes a single finding block with ANSI formatting.
 func writeTerminalFinding(b *strings.Builder, f *Finding, colors bool) {
 	b.WriteString("\n")
 
-	// Finding header: ● severity  finding-id
+	// Finding header: ● severity  finding-id  [status]
 	dot := "●"
 	if colors {
 		dot = severityDot(f.Severity)
 	}
 	sevLabel := applyStyle(colors, severityColor(f.Severity), f.Severity)
 	findingID := applyStyle(colors, ansiCyan, f.ID)
-	fmt.Fprintf(b, "  %s %s  %s\n", dot, sevLabel, findingID)
+	header := fmt.Sprintf("  %s %s  %s", dot, sevLabel, findingID)
+	if tag := statusTag(f.Status, colors); tag != "" {
+		header += "  " + tag
+	}
+	fmt.Fprintf(b, "%s\n", header)
 
 	// File location.
 	if f.File != "" {

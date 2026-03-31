@@ -783,6 +783,62 @@ func FindingIDFromThread(body string) string {
 	return firstLine[start : start+end]
 }
 
+// severityFromThreadBody extracts the severity string from a thread body.
+// Thread bodies follow the format: {icon} **severity** — `id`
+var threadSeverityRe = regexp.MustCompile(`\*\*(\w+)\*\*`)
+
+func severityFromThreadBody(body string) string {
+	firstLine := body
+	if idx := strings.Index(body, "\n"); idx >= 0 {
+		firstLine = body[:idx]
+	}
+	if m := threadSeverityRe.FindStringSubmatch(firstLine); len(m) > 1 {
+		return strings.ToLower(m[1])
+	}
+	return "warning"
+}
+
+// titleFromThreadBody extracts the finding title from a thread body.
+// The title is the first non-empty line after the header and any blank lines.
+func titleFromThreadBody(body string) string {
+	lines := strings.Split(body, "\n")
+	// Skip marker lines and the header line.
+	started := false
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "<!--") {
+			if started {
+				continue
+			}
+			continue
+		}
+		if !started {
+			// First non-empty non-marker line is the header (icon **sev** — `id`), skip it.
+			started = true
+			continue
+		}
+		// First content line after header is the title/description start.
+		if runes := []rune(line); len(runes) > 100 {
+			line = string(runes[:97]) + "..."
+		}
+		return line
+	}
+	return ""
+}
+
+// FindingFromThread extracts a partial Finding from a ReviewThread.
+// Used to display still-open findings in terminal output.
+func FindingFromThread(t ReviewThread) Finding {
+	return Finding{
+		ID:       FindingIDFromThread(t.Body),
+		File:     t.Path,
+		Line:     t.Line,
+		Severity: severityFromThreadBody(t.Body),
+		Title:    titleFromThreadBody(t.Body),
+		Status:   "still open",
+	}
+}
+
 // ReviewInfo represents a review with its node ID and finding IDs.
 type ReviewInfo struct {
 	NodeID     string

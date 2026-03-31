@@ -283,7 +283,9 @@ func Run(opts RunOptions) error {
 
 	var prompt string
 	var fixed []fixedThread
-	if len(reviewThreads) > 0 && previousSHA != "" {
+	var stillOpenFindings []Finding
+	isIncremental := len(reviewThreads) > 0 && previousSHA != ""
+	if isIncremental {
 		// Incremental review.
 		Stderrf(ansiBold, "Re-reviewing PR #%d (%d unresolved threads, base %s)\n", opts.PRNumber, len(reviewThreads), previousSHA[:8])
 		incrementalDiff, diffErr := GetIncrementalDiff(previousSHA)
@@ -382,6 +384,11 @@ func Run(opts RunOptions) error {
 				}
 			}
 
+			// Convert unresolved threads to findings for terminal display.
+			for _, t := range unresolved {
+				stillOpenFindings = append(stillOpenFindings, FindingFromThread(t))
+			}
+
 			// Build resolved context for the incremental review prompt (anti-ping-pong).
 			// Only code_change threads are added — acknowledged/dismissed/rebutted
 			// threads stay open and should be re-checked if related code changes.
@@ -473,6 +480,13 @@ func Run(opts RunOptions) error {
 		findings = FilterNonActionable(findings)
 	}
 
+	// Tag new findings with status in incremental reviews.
+	if isIncremental {
+		for i := range findings {
+			findings[i].Status = "new"
+		}
+	}
+
 	if len(findings) == 0 {
 		Stderrf(ansiGreen, "No new findings\n")
 	} else {
@@ -484,10 +498,11 @@ func Run(opts RunOptions) error {
 
 	// 8. Build result.
 	result := &ReviewResult{
-		PRNumber: opts.PRNumber,
-		Repo:     repo,
-		Findings: findings,
-		SHA:      strings.TrimSpace(string(headSHA)),
+		PRNumber:  opts.PRNumber,
+		Repo:      repo,
+		Findings:  findings,
+		StillOpen: stillOpenFindings,
+		SHA:       strings.TrimSpace(string(headSHA)),
 	}
 
 	// 9. Format output.
@@ -606,21 +621,6 @@ func Run(opts RunOptions) error {
 		}
 	}
 
-	// Save local state when running locally (auto-detected PR, not in CI).
-	// Skip in reply-only mode to avoid overwriting previous findings with an empty slice.
-	if opts.LocalDetect && !opts.DryRun && !opts.ReplyOnly {
-		branch, branchErr := currentBranch()
-		if branchErr == nil {
-			if saveErr := SaveLocalState(branch, &LocalState{
-				SHA:      result.SHA,
-				Branch:   branch,
-				Findings: findings,
-			}); saveErr != nil {
-				fmt.Fprintf(os.Stderr, "Warning: could not save local state: %v\n", saveErr)
-			}
-		}
-	}
-
 	// Export usage data for the costs step.
 	if report := tracker.Report(repo, opts.PRNumber); len(report.Calls) > 0 {
 		if err := WriteUsageEnv(report); err != nil {
@@ -668,8 +668,10 @@ func runLocal(opts RunOptions) error {
 	}
 
 	var prompt string
+	var stillOpenFindings []Finding
 	startIndex := 0
-	if state != nil && state.SHA != "" && isAncestor(state.SHA) {
+	isIncremental := state != nil && state.SHA != "" && isAncestor(state.SHA)
+	if isIncremental {
 		// Incremental local review.
 		startIndex = len(state.Findings)
 		fmt.Fprintf(os.Stderr, "Found previous local review at %s (%d findings)\n", state.SHA[:8], len(state.Findings))
@@ -698,6 +700,12 @@ func runLocal(opts RunOptions) error {
 			}
 
 			knownIssues := findingsToKnownIssues(state.Findings)
+			// Mark previous findings as still open for terminal display.
+			for _, f := range state.Findings {
+				sf := f
+				sf.Status = "still open"
+				stillOpenFindings = append(stillOpenFindings, sf)
+			}
 			Stderrf(ansiBold, "Reviewing incremental changes (%d known issues excluded)...\n", len(knownIssues))
 			prompt = BuildIncrementalPrompt(incrementalDiff, cfg, knownIssues, 0, startIndex, incContents, incFiles, nil, projectDocs)
 		}
@@ -744,6 +752,13 @@ func runLocal(opts RunOptions) error {
 	findings = filteredFindings
 	findings = FilterNonActionable(findings)
 
+	// Tag new findings with status in incremental reviews.
+	if isIncremental {
+		for i := range findings {
+			findings[i].Status = "new"
+		}
+	}
+
 	if len(findings) == 0 {
 		Stderrf(ansiGreen, "No new findings\n")
 	} else {
@@ -757,9 +772,10 @@ func runLocal(opts RunOptions) error {
 	}
 	headSHA := strings.TrimSpace(string(headSHAOut))
 	reviewResult := &ReviewResult{
-		PRNumber: 0,
-		Findings: findings,
-		SHA:      headSHA,
+		PRNumber:  0,
+		Findings:  findings,
+		StillOpen: stillOpenFindings,
+		SHA:       headSHA,
 	}
 
 	// Format output.
