@@ -445,7 +445,15 @@ func Generate(cfg *ReviewConfig) (string, error) {
 
 	prompt := buildGeneratePrompt(info)
 	env := resolveEnv()
-	provider := NewProvider(cfg, env)
+
+	// Config generation runs before a config exists, so we use the Claude
+	// CLI directly rather than going through NewProvider (which requires config).
+	var provider ModelProvider
+	if cfg != nil {
+		provider = NewProvider(cfg, env)
+	} else {
+		provider = &claudeCLIProvider{env: env}
+	}
 
 	result, err := provider.Run(context.Background(), prompt, RunOpts{
 		Model: cfg.EffectiveReviewModel(),

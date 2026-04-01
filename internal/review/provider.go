@@ -36,11 +36,9 @@ var providers = map[string]func(cfg *ReviewConfig, env []string) ModelProvider{
 
 // NewProvider constructs the appropriate ModelProvider based on config.
 // The provider field is required — config validation rejects empty/unknown values.
-// When cfg is nil (e.g. config generation before a config exists), falls back to
-// the Claude CLI provider.
 func NewProvider(cfg *ReviewConfig, env []string) ModelProvider {
 	if cfg == nil {
-		return &claudeCLIProvider{env: env}
+		panic("NewProvider called with nil config")
 	}
 	factory, ok := providers[cfg.Provider]
 	if !ok {
