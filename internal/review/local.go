@@ -8,8 +8,13 @@ import (
 
 // FetchLocalDiff computes a diff of the current branch against the default
 // branch and returns a PRData suitable for review without a GitHub PR.
-func FetchLocalDiff() (*PRData, error) {
-	base := detectDefaultBranch()
+// If baseBranch is non-empty it is used directly; otherwise the default branch
+// is auto-detected (tries main, then master).
+func FetchLocalDiff(baseBranch string) (*PRData, error) {
+	base := baseBranch
+	if base == "" {
+		base = detectDefaultBranch()
+	}
 	if base == "" {
 		return nil, fmt.Errorf("could not detect default branch (tried main, master)")
 	}

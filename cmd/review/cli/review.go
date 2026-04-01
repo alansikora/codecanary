@@ -21,12 +21,48 @@ var reviewCmd = &cobra.Command{
 		configPath, _ := cmd.Flags().GetString("config")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		replyOnly, _ := cmd.Flags().GetBool("reply-only")
+		local, _ := cmd.Flags().GetBool("local")
+		baseBranch, _ := cmd.Flags().GetString("base-branch")
+
+		// --local is incompatible with an explicit PR number.
+		if local && len(args) > 0 {
+			return fmt.Errorf("cannot use --local with a PR number")
+		}
+
+		// --local forces local mode, skipping PR detection entirely.
+		if local {
+			pr, err := review.FetchLocalDiff(baseBranch)
+			if err != nil {
+				return fmt.Errorf("local diff failed: %w", err)
+			}
+			review.Stderrf(review.ColorCyan, "Local mode — reviewing changes on %s\n", pr.HeadBranch)
+			if post {
+				review.Stderrf(review.ColorYellow, "Warning: --post ignored in local mode (no PR to post to)\n")
+				post = false
+			}
+			if replyOnly {
+				review.Stderrf(review.ColorYellow, "Warning: --reply-only ignored in local mode\n")
+				replyOnly = false
+			}
+			return review.Run(review.RunOptions{
+				PR:         pr,
+				Local:      true,
+				ConfigPath: configPath,
+				Output:     output,
+				Post:       post,
+				DryRun:     dryRun,
+				ReplyOnly:  replyOnly,
+			})
+		}
 
 		// Explicit PR number — GitHub mode.
 		if len(args) > 0 {
 			prNumber, err := strconv.Atoi(args[0])
 			if err != nil {
 				return fmt.Errorf("invalid PR number %q: %w", args[0], err)
+			}
+			if baseBranch != "" {
+				review.Stderrf(review.ColorYellow, "Warning: --base-branch is ignored when reviewing a PR\n")
 			}
 			return review.Run(review.RunOptions{
 				Repo:       repo,
@@ -42,6 +78,9 @@ var reviewCmd = &cobra.Command{
 		// Try auto-detecting PR from current branch.
 		if prNumber, err := review.DetectPRNumber(repo); err == nil {
 			review.Stderrf(review.ColorCyan, "Auto-detected PR #%d from current branch\n", prNumber)
+			if baseBranch != "" {
+				review.Stderrf(review.ColorYellow, "Warning: --base-branch is ignored when reviewing a PR\n")
+			}
 			return review.Run(review.RunOptions{
 				Repo:        repo,
 				PRNumber:    prNumber,
@@ -54,8 +93,8 @@ var reviewCmd = &cobra.Command{
 			})
 		}
 
-		// No PR — local mode.
-		pr, err := review.FetchLocalDiff()
+		// No PR — local mode (auto-fallback).
+		pr, err := review.FetchLocalDiff(baseBranch)
 		if err != nil {
 			return fmt.Errorf("no PR found and local diff failed: %w", err)
 		}
@@ -89,5 +128,7 @@ func init() {
 	reviewCmd.Flags().StringP("config", "c", ".codecanary/config.yml", "Path to review config")
 	reviewCmd.Flags().Bool("reply-only", false, "Evaluate thread replies only, skip new findings")
 	reviewCmd.PersistentFlags().Bool("dry-run", false, "Show prompt without running Claude")
+	reviewCmd.Flags().BoolP("local", "l", false, "Force local diff review, skip PR detection")
+	reviewCmd.Flags().String("base-branch", "", "Base branch for local diff (default: auto-detect main/master)")
 	rootCmd.AddCommand(reviewCmd)
 }
