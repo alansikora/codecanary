@@ -60,8 +60,16 @@ func run() error {
 	repo := strings.TrimSpace(string(repoOut))
 	fmt.Fprintf(os.Stderr, "Repository: %s\n\n", repo)
 
-	// 3. Preflight: check the setup branch doesn't already exist.
+	// 3. Detect default branch and preflight.
 	branch := "codecanary/review-setup"
+	defaultBranchOut, err := exec.Command("gh", "repo", "view", "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name").Output()
+	if err != nil {
+		return fmt.Errorf("could not detect default branch: %w", err)
+	}
+	defaultBranch := strings.TrimSpace(string(defaultBranchOut))
+	if defaultBranch == "" {
+		return fmt.Errorf("could not detect default branch — is the repository empty?")
+	}
 	if err := exec.Command("git", "show-ref", "--verify", "refs/heads/"+branch).Run(); err == nil {
 		return fmt.Errorf("branch %s already exists — delete it with `git branch -D %s` to retry", branch, branch)
 	}
@@ -265,6 +273,7 @@ jobs:
 		"--title", "Add CodeCanary PR review",
 		"--body", prBody,
 		"--repo", repo,
+		"--base", defaultBranch,
 	).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("creating PR: %s\n%s", err, string(prOut))
