@@ -17,6 +17,7 @@ const (
 	TriageHasReply                                     // thread has human replies
 	TriageCodeChangedReply                             // both code changed AND has replies
 	TriageCrossFileChange                              // diff has changes but NOT in this thread's file
+	TriageFileDeleted                                  // finding's file was deleted — auto-resolve
 )
 
 // TriagedThread pairs a ReviewThread with its classification and context.
@@ -89,9 +90,14 @@ func ClassifyThreads(threads []ReviewThread, fullDiff, botLogin string) []Triage
 	for i, t := range threads {
 		hasReply := hasNewHumanReply(t, botLogin)
 		outdated := t.Outdated
+		deleted := fileDeletedInDiff(fullDiff, t.Path)
 
 		var class ThreadClassification
 		switch {
+		case deleted:
+			// File was deleted — the finding's target no longer exists.
+			// Auto-resolve regardless of replies (the code is gone).
+			class = TriageFileDeleted
 		case outdated && hasReply:
 			class = TriageCodeChangedReply
 		case outdated:
@@ -135,6 +141,30 @@ func ClassifyThreads(threads []ReviewThread, fullDiff, botLogin string) []Triage
 func fileInDiff(diff, path string) bool {
 	target := "+++ b/" + path
 	return strings.Contains(diff, target+"\n") || strings.Contains(diff, target+"\t") || strings.HasSuffix(diff, target)
+}
+
+// fileDeletedInDiff checks if the diff shows the given file was deleted.
+// A deleted file has "--- a/<path>" followed by "+++ /dev/null".
+func fileDeletedInDiff(diff, path string) bool {
+	marker := "--- a/" + path
+	idx := strings.Index(diff, marker)
+	if idx < 0 {
+		return false
+	}
+	// Find the next line after the "--- a/<path>" marker.
+	rest := diff[idx+len(marker):]
+	nl := strings.Index(rest, "\n")
+	if nl < 0 {
+		return false
+	}
+	nextLine := ""
+	rest = rest[nl+1:]
+	if eol := strings.Index(rest, "\n"); eol >= 0 {
+		nextLine = rest[:eol]
+	} else {
+		nextLine = rest
+	}
+	return nextLine == "+++ /dev/null"
 }
 
 // hasHumanReply checks if a thread has at least one reply from a non-bot author.
@@ -372,6 +402,10 @@ func EvaluateThreadsParallel(triaged []TriagedThread, env []string, cfg *ReviewC
 			results[i] = ThreadResolution{Index: t.Index, Resolved: false}
 			continue
 		}
+		if t.Class == TriageFileDeleted {
+			results[i] = ThreadResolution{Index: t.Index, Resolved: true, Reason: "code_change"}
+			continue
+		}
 
 		wg.Add(1)
 		go func(idx int, tt TriagedThread) {
@@ -441,6 +475,8 @@ func LogTriage(triaged []TriagedThread) {
 		switch t.Class {
 		case TriageSkip:
 			fmt.Fprintf(os.Stderr, "  [skip]     %s — no code changes, no human replies\n", label)
+		case TriageFileDeleted:
+			fmt.Fprintf(os.Stderr, "  [resolved] %s — file deleted\n", label)
 		case TriageCodeChanged:
 			fmt.Fprintf(os.Stderr, "  [evaluate] %s — code changes detected\n", label)
 		case TriageHasReply:
@@ -453,22 +489,30 @@ func LogTriage(triaged []TriagedThread) {
 	}
 
 	skipped := 0
+	autoResolved := 0
 	needsEval := 0
 	for _, t := range triaged {
-		if t.Class == TriageSkip {
+		switch t.Class {
+		case TriageSkip:
 			skipped++
-		} else {
+		case TriageFileDeleted:
+			autoResolved++
+		default:
 			needsEval++
 		}
 	}
-	fmt.Fprintf(os.Stderr, "\nTriage result: %d skipped, %d need evaluation\n", skipped, needsEval)
+	if autoResolved > 0 {
+		fmt.Fprintf(os.Stderr, "\nTriage result: %d skipped, %d auto-resolved (file deleted), %d need evaluation\n", skipped, autoResolved, needsEval)
+	} else {
+		fmt.Fprintf(os.Stderr, "\nTriage result: %d skipped, %d need evaluation\n", skipped, needsEval)
+	}
 }
 
 // LogResolutions prints structured evaluation results to stderr.
 func LogResolutions(triaged []TriagedThread, resolutions []ThreadResolution) {
 	fmt.Fprintf(os.Stderr, "\n")
 	for i, r := range resolutions {
-		if triaged[i].Class == TriageSkip {
+		if triaged[i].Class == TriageSkip || triaged[i].Class == TriageFileDeleted {
 			continue
 		}
 		label := threadLabel(triaged[i].Thread)
@@ -497,7 +541,7 @@ func LogResolutions(triaged []TriagedThread, resolutions []ThreadResolution) {
 func countNonSkipped(triaged []TriagedThread) int {
 	n := 0
 	for _, t := range triaged {
-		if t.Class != TriageSkip {
+		if t.Class != TriageSkip && t.Class != TriageFileDeleted {
 			n++
 		}
 	}
