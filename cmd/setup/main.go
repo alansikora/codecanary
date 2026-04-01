@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 
@@ -349,8 +350,8 @@ func authenticateClaude(repo string, reader *bufio.Reader) (string, string, erro
 			return "", "", fmt.Errorf("reading input: %w", err)
 		}
 		name = strings.TrimSpace(name)
-		if name == "" {
-			return "", "", fmt.Errorf("secret name cannot be empty")
+		if !regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`).MatchString(name) {
+			return "", "", fmt.Errorf("invalid secret name %q — must be uppercase letters, digits, and underscores (e.g. OPENAI_API_KEY)", name)
 		}
 		fmt.Fprintf(os.Stderr, "Paste your API key: ")
 		keyBytes, err := term.ReadPassword(int(syscall.Stdin))
