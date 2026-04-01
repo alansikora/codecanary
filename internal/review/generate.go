@@ -436,8 +436,23 @@ func parseGeneratedConfig(output string) (string, error) {
 // StarterConfig is the static template used when creating a new config.
 const StarterConfig = `version: 1
 
-# Required — pick your LLM provider: anthropic, openai, openrouter, or claude
-# provider:
+# Required — uncomment one provider block:
+#
+# provider: anthropic
+# review_model: claude-sonnet-4-6
+# triage_model: claude-haiku-4-5-20251001
+#
+# provider: openai
+# review_model: gpt-5.4
+# triage_model: gpt-5.4-mini
+#
+# provider: openrouter
+# review_model: anthropic/claude-sonnet-4-6
+# triage_model: anthropic/claude-haiku-4-5-20251001
+#
+# provider: claude
+# review_model: claude-sonnet-4-6
+# triage_model: claude-haiku-4-5-20251001
 
 # rules:
 #   - id: example-rule
