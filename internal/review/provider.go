@@ -2,6 +2,8 @@ package review
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 )
 
@@ -13,43 +15,42 @@ type RunOpts struct {
 }
 
 // ModelProvider is the interface for running prompts against an LLM.
+// Each provider adapter implements this interface in its own file.
+//
+// To add a new provider:
+//  1. Create provider_<name>.go implementing ModelProvider
+//  2. Add a constructor to the providers map below
+//  3. Add the name to validProviders in config.go
 type ModelProvider interface {
 	// Run sends a prompt and returns the result text plus usage metadata.
 	Run(ctx context.Context, prompt string, opts RunOpts) (*claudeResult, error)
 }
 
+// providers maps provider names to their constructor functions.
+var providers = map[string]func(cfg *ReviewConfig, env []string) ModelProvider{
+	"anthropic":  newAnthropicProvider,
+	"openai":     newOpenAIProvider,
+	"openrouter": newOpenRouterProvider,
+	"claude":     newClaudeCLIProvider,
+}
+
 // NewProvider constructs the appropriate ModelProvider based on config.
-//   - "anthropic": native Anthropic Messages API with prompt caching
-//   - "api": OpenAI-compatible HTTP provider (OpenRouter, OpenAI, Ollama, etc.)
-//   - "claude": Claude CLI (requires claude binary in PATH and OAuth token)
-//
-// The provider field is required — config validation rejects empty values.
+// The provider field is required — config validation rejects empty/unknown values.
 func NewProvider(cfg *ReviewConfig, env []string) ModelProvider {
-	switch cfg.Provider {
-	case "anthropic":
-		keyEnv := cfg.APIKeyEnv
-		if keyEnv == "" {
-			keyEnv = "ANTHROPIC_API_KEY"
-		}
-		return &anthropicProvider{
-			keyEnv: keyEnv,
-			env:    env,
-		}
-	case "api":
-		apiBase := cfg.APIBase
-		if apiBase == "" {
-			apiBase = "https://openrouter.ai/api/v1"
-		}
-		keyEnv := cfg.APIKeyEnv
-		if keyEnv == "" {
-			keyEnv = "OPENROUTER_API_KEY"
-		}
-		return &apiProvider{
-			apiBase: apiBase,
-			keyEnv:  keyEnv,
-			env:     env,
-		}
-	default: // "claude"
-		return &claudeCLIProvider{env: env}
+	factory, ok := providers[cfg.Provider]
+	if !ok {
+		panic(fmt.Sprintf("unknown provider %q (should have been caught by config validation)", cfg.Provider))
 	}
+	return factory(cfg, env)
+}
+
+// lookupEnvVar finds a variable by name in the filtered environment.
+func lookupEnvVar(env []string, key string) string {
+	for _, e := range env {
+		k, v, ok := strings.Cut(e, "=")
+		if ok && k == key {
+			return v
+		}
+	}
+	return ""
 }

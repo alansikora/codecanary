@@ -104,7 +104,7 @@ func TestValidate_ProviderRequired(t *testing.T) {
 }
 
 func TestValidate_InvalidProvider(t *testing.T) {
-	cfg := &ReviewConfig{Provider: "openai"}
+	cfg := &ReviewConfig{Provider: "gemini"}
 	if err := cfg.Validate(); err == nil {
 		t.Error("expected error for invalid provider")
 	}
@@ -138,7 +138,7 @@ func TestValidate_ValidCLIModels(t *testing.T) {
 }
 
 func TestValidate_ValidProviders(t *testing.T) {
-	for _, p := range []string{"anthropic", "api", "claude"} {
+	for _, p := range []string{"anthropic", "openai", "openrouter", "claude"} {
 		cfg := &ReviewConfig{Provider: p}
 		if err := cfg.Validate(); err != nil {
 			t.Errorf("unexpected error for provider %q: %v", p, err)

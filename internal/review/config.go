@@ -26,8 +26,8 @@ type ReviewConfig struct {
 	TimeoutMins  int               `yaml:"timeout_minutes"` // per-invocation timeout in minutes (default 5)
 	ReviewModel  string            `yaml:"review_model"`    // model for main review (default: sonnet)
 	TriageModel  string            `yaml:"triage_model"`    // model for thread re-evaluation (default: haiku)
-	Provider     string            `yaml:"provider"`        // "claude" (default), "anthropic", or "api"
-	APIBase      string            `yaml:"api_base"`        // base URL for API provider (default: https://openrouter.ai/api/v1)
+	Provider     string            `yaml:"provider"`        // "anthropic", "openai", "openrouter", or "claude"
+	APIBase      string            `yaml:"api_base"`        // override base URL (openai provider only)
 	APIKeyEnv    string            `yaml:"api_key_env"`     // env var name for API key (default depends on provider)
 	Evaluation   *EvaluationConfig `yaml:"evaluation"`
 }
@@ -47,8 +47,10 @@ func (c *ReviewConfig) EffectiveReviewModel() string {
 		switch c.Provider {
 		case "claude":
 			return "sonnet"
-		case "api":
+		case "openrouter":
 			return "anthropic/claude-sonnet-4-20250514"
+		case "openai":
+			return "gpt-4.1"
 		}
 	}
 	return "claude-sonnet-4-20250514" // anthropic
@@ -64,8 +66,10 @@ func (c *ReviewConfig) EffectiveTriageModel() string {
 		switch c.Provider {
 		case "claude":
 			return "haiku"
-		case "api":
+		case "openrouter":
 			return "anthropic/claude-haiku-4-5-20251001"
+		case "openai":
+			return "gpt-4.1-mini"
 		}
 	}
 	return "claude-haiku-4-5-20251001" // anthropic
@@ -137,15 +141,15 @@ func (c *ReviewConfig) Validate() error {
 		return fmt.Errorf("max_budget_usd must be non-negative, got %f", c.MaxBudgetUSD)
 	}
 	switch c.Provider {
-	case "anthropic":
-		// Anthropic provider accepts any model string.
-	case "api":
-		// OpenAI-compatible provider accepts any model string.
+	case "anthropic", "openrouter":
+		// Accept any model string.
+	case "openai":
+		// Accept any model string; api_base can override the endpoint.
 		if c.APIBase != "" && !isValidURL(c.APIBase) {
 			return fmt.Errorf("invalid api_base %q: must be an HTTP(S) URL", c.APIBase)
 		}
 	case "claude":
-		// Claude CLI provider only accepts known shorthand model names.
+		// Claude CLI only accepts known shorthand model names.
 		if c.ReviewModel != "" && !validCLIModels[c.ReviewModel] {
 			return fmt.Errorf("invalid review_model %q for claude provider (valid: haiku, sonnet, opus)", c.ReviewModel)
 		}
@@ -153,9 +157,9 @@ func (c *ReviewConfig) Validate() error {
 			return fmt.Errorf("invalid triage_model %q for claude provider (valid: haiku, sonnet, opus)", c.TriageModel)
 		}
 	case "":
-		return fmt.Errorf("provider is required (valid: anthropic, api, claude)")
+		return fmt.Errorf("provider is required (valid: anthropic, openai, openrouter, claude)")
 	default:
-		return fmt.Errorf("invalid provider %q (valid: anthropic, api, claude)", c.Provider)
+		return fmt.Errorf("invalid provider %q (valid: anthropic, openai, openrouter, claude)", c.Provider)
 	}
 	for i, r := range c.Rules {
 		if r.Severity != "" && !validSeverities[r.Severity] {

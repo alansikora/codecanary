@@ -18,6 +18,14 @@ type anthropicProvider struct {
 	env    []string // filtered environment
 }
 
+func newAnthropicProvider(cfg *ReviewConfig, env []string) ModelProvider {
+	keyEnv := "ANTHROPIC_API_KEY"
+	if cfg.APIKeyEnv != "" {
+		keyEnv = cfg.APIKeyEnv
+	}
+	return &anthropicProvider{keyEnv: keyEnv, env: env}
+}
+
 // anthropicRequest is the Anthropic /v1/messages request format.
 type anthropicRequest struct {
 	Model        string                   `json:"model"`
@@ -66,7 +74,7 @@ type anthropicResponse struct {
 }
 
 func (p *anthropicProvider) Run(ctx context.Context, prompt string, opts RunOpts) (*claudeResult, error) {
-	apiKey := p.lookupEnv(p.keyEnv)
+	apiKey := lookupEnvVar(p.env, p.keyEnv)
 	if apiKey == "" {
 		return nil, fmt.Errorf("API key not found: set %s environment variable", p.keyEnv)
 	}
@@ -157,13 +165,3 @@ func (p *anthropicProvider) Run(ctx context.Context, prompt string, opts RunOpts
 	}, nil
 }
 
-// lookupEnv finds a variable by name in the filtered environment.
-func (p *anthropicProvider) lookupEnv(key string) string {
-	for _, e := range p.env {
-		k, v, ok := strings.Cut(e, "=")
-		if ok && k == key {
-			return v
-		}
-	}
-	return ""
-}

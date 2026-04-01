@@ -10,8 +10,13 @@ import (
 )
 
 // claudeCLIProvider implements ModelProvider using the Claude CLI binary.
+// Requires the `claude` binary in PATH and an OAuth token.
 type claudeCLIProvider struct {
 	env []string
+}
+
+func newClaudeCLIProvider(_ *ReviewConfig, env []string) ModelProvider {
+	return &claudeCLIProvider{env: env}
 }
 
 func (p *claudeCLIProvider) Run(ctx context.Context, prompt string, opts RunOpts) (*claudeResult, error) {
