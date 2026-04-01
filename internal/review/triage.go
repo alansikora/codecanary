@@ -385,9 +385,7 @@ func EvaluateThreadsParallel(triaged []TriagedThread, env []string, cfg *ReviewC
 				results[idx] = ThreadResolution{Index: tt.Index, Error: err}
 				return
 			}
-			usage := result.Usage
-			usage.Phase = "triage"
-			tracker.Add(usage)
+			trackUsage(tracker, result, "triage")
 			res := parseThreadResolution(result.Text, tt.Index)
 			res = validateResolutionReason(res, tt.Class)
 			results[idx] = res
