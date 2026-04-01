@@ -17,7 +17,6 @@ const (
 	TriageHasReply                                     // thread has human replies
 	TriageCodeChangedReply                             // both code changed AND has replies
 	TriageCrossFileChange                              // diff has changes but NOT in this thread's file
-	TriageFileDeleted                                  // finding's file was deleted — auto-resolve
 )
 
 // TriagedThread pairs a ReviewThread with its classification and context.
@@ -95,9 +94,9 @@ func ClassifyThreads(threads []ReviewThread, fullDiff, botLogin string) []Triage
 		var class ThreadClassification
 		switch {
 		case deleted:
-			// File was deleted — the finding's target no longer exists.
-			// Auto-resolve regardless of replies (the code is gone).
-			class = TriageFileDeleted
+			// File was deleted — evaluate with full diff so Claude can check
+			// whether the code moved to a replacement file with the fix applied.
+			class = TriageCrossFileChange
 		case outdated && hasReply:
 			class = TriageCodeChangedReply
 		case outdated:
@@ -402,11 +401,6 @@ func EvaluateThreadsParallel(triaged []TriagedThread, env []string, cfg *ReviewC
 			results[i] = ThreadResolution{Index: t.Index, Resolved: false}
 			continue
 		}
-		if t.Class == TriageFileDeleted {
-			results[i] = ThreadResolution{Index: t.Index, Resolved: true, Reason: "code_change"}
-			continue
-		}
-
 		wg.Add(1)
 		go func(idx int, tt TriagedThread) {
 			defer wg.Done()
@@ -475,8 +469,6 @@ func LogTriage(triaged []TriagedThread) {
 		switch t.Class {
 		case TriageSkip:
 			fmt.Fprintf(os.Stderr, "  [skip]     %s — no code changes, no human replies\n", label)
-		case TriageFileDeleted:
-			fmt.Fprintf(os.Stderr, "  [resolved] %s — file deleted\n", label)
 		case TriageCodeChanged:
 			fmt.Fprintf(os.Stderr, "  [evaluate] %s — code changes detected\n", label)
 		case TriageHasReply:
@@ -489,30 +481,22 @@ func LogTriage(triaged []TriagedThread) {
 	}
 
 	skipped := 0
-	autoResolved := 0
 	needsEval := 0
 	for _, t := range triaged {
-		switch t.Class {
-		case TriageSkip:
+		if t.Class == TriageSkip {
 			skipped++
-		case TriageFileDeleted:
-			autoResolved++
-		default:
+		} else {
 			needsEval++
 		}
 	}
-	if autoResolved > 0 {
-		fmt.Fprintf(os.Stderr, "\nTriage result: %d skipped, %d auto-resolved (file deleted), %d need evaluation\n", skipped, autoResolved, needsEval)
-	} else {
-		fmt.Fprintf(os.Stderr, "\nTriage result: %d skipped, %d need evaluation\n", skipped, needsEval)
-	}
+	fmt.Fprintf(os.Stderr, "\nTriage result: %d skipped, %d need evaluation\n", skipped, needsEval)
 }
 
 // LogResolutions prints structured evaluation results to stderr.
 func LogResolutions(triaged []TriagedThread, resolutions []ThreadResolution) {
 	fmt.Fprintf(os.Stderr, "\n")
 	for i, r := range resolutions {
-		if triaged[i].Class == TriageSkip || triaged[i].Class == TriageFileDeleted {
+		if triaged[i].Class == TriageSkip {
 			continue
 		}
 		label := threadLabel(triaged[i].Thread)
@@ -541,7 +525,7 @@ func LogResolutions(triaged []TriagedThread, resolutions []ThreadResolution) {
 func countNonSkipped(triaged []TriagedThread) int {
 	n := 0
 	for _, t := range triaged {
-		if t.Class != TriageSkip && t.Class != TriageFileDeleted {
+		if t.Class != TriageSkip {
 			n++
 		}
 	}
