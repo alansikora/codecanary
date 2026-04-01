@@ -19,6 +19,17 @@ import (
 // to body (PostReview). A single constant ensures both checks stay in sync.
 const MaxFindingDistance = 20
 
+// HTML comment markers for embedding and detecting review data.
+// Dual prefixes support both current (codecanary) and legacy (clanopy) markers.
+var reviewMarkerPrefixes = []string{"<!-- codecanary:review ", "<!-- clanopy:review "}
+
+const (
+	reviewMarkerSuffix = " -->"
+	findingMarkerPrefix = "<!-- codecanary:finding "
+	ackMarkerPrefix     = "<!-- codecanary:ack:"
+	legacyAckPrefix     = "<!-- clanopy:ack:"
+)
+
 // PRData holds PR metadata and diff.
 type PRData struct {
 	Number       int
@@ -260,7 +271,7 @@ func FetchReviewFromPR(repo string, prNumber int) (*ReviewResult, error) {
 		return nil, fmt.Errorf("parsing PR reviews: %w", err)
 	}
 
-	prefixes := []string{"<!-- codecanary:review ", "<!-- clanopy:review "}
+	prefixes := reviewMarkerPrefixes
 	const suffix = " -->"
 
 	// Search from most recent to oldest.
@@ -308,7 +319,7 @@ func FetchFindingFromPR(repo string, prNumber int, fixRef string) (*Finding, err
 		return nil, fmt.Errorf("parsing PR reviews: %w", err)
 	}
 
-	prefixes := []string{"<!-- codecanary:review ", "<!-- clanopy:review "}
+	prefixes := reviewMarkerPrefixes
 	const suffix = " -->"
 
 	for _, rev := range reviews {
@@ -460,7 +471,7 @@ func FetchReviewThreads(repo string, prNumber int) ([]ReviewThread, error) {
 		comment := node.Comments.Nodes[0]
 
 		// Filter to review threads only (new marker + legacy markers for backward compat).
-		if !strings.Contains(comment.Body, "codecanary:finding") &&
+		if !strings.Contains(comment.Body, findingMarkerPrefix) &&
 			!strings.Contains(comment.Body, "codecanary fix") &&
 			!strings.Contains(comment.Body, "clanopy fix") {
 			continue
@@ -538,7 +549,7 @@ func FetchPreviousReviewSHA(repo string, prNumber int) string {
 		return ""
 	}
 
-	prefixes := []string{"<!-- codecanary:review ", "<!-- clanopy:review "}
+	prefixes := reviewMarkerPrefixes
 	const suffix = " -->"
 
 	// Search from most recent to oldest.
@@ -747,7 +758,7 @@ func FindReviewNodeIDs(repo string, prNumber int) ([]string, error) {
 		return nil, fmt.Errorf("parsing PR reviews: %w", err)
 	}
 
-	prefixes := []string{"<!-- codecanary:review ", "<!-- clanopy:review "}
+	prefixes := reviewMarkerPrefixes
 
 	var nodeIDs []string
 	for _, rev := range reviews {
@@ -762,13 +773,23 @@ func FindReviewNodeIDs(repo string, prNumber int) ([]string, error) {
 	return nodeIDs, nil
 }
 
+// threadHeaderLine returns the first non-empty, non-HTML-comment line from
+// a thread body. This is the header line containing severity and finding ID.
+func threadHeaderLine(body string) string {
+	for _, line := range strings.SplitN(body, "\n", 5) {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "<!--") {
+			continue
+		}
+		return line
+	}
+	return ""
+}
+
 // FindingIDFromThread extracts the finding ID from a thread body.
 // Thread bodies follow the format: 🟠 **bug** — `finding-id`
 func FindingIDFromThread(body string) string {
-	firstLine := body
-	if idx := strings.Index(body, "\n"); idx >= 0 {
-		firstLine = body[:idx]
-	}
+	firstLine := threadHeaderLine(body)
 	// The separator is " — `" (space, em-dash U+2014, space, backtick).
 	marker := " \u2014 `"
 	start := strings.Index(firstLine, marker)
@@ -788,55 +809,142 @@ func FindingIDFromThread(body string) string {
 var threadSeverityRe = regexp.MustCompile(`\*\*(\w+)\*\*`)
 
 func severityFromThreadBody(body string) string {
-	firstLine := body
-	if idx := strings.Index(body, "\n"); idx >= 0 {
-		firstLine = body[:idx]
-	}
+	firstLine := threadHeaderLine(body)
 	if m := threadSeverityRe.FindStringSubmatch(firstLine); len(m) > 1 {
 		return strings.ToLower(m[1])
 	}
 	return "warning"
 }
 
-// titleFromThreadBody extracts the finding title from a thread body.
-// The title is the first non-empty line after the header and any blank lines.
-func titleFromThreadBody(body string) string {
+// findingFromEmbeddedJSON tries to parse a Finding from the JSON embedded in the
+// codecanary:finding HTML comment marker. Returns the finding and true if successful.
+func findingFromEmbeddedJSON(body string) (Finding, bool) {
+	prefix := findingMarkerPrefix
+	suffix := reviewMarkerSuffix
+	start := strings.Index(body, prefix)
+	if start < 0 {
+		return Finding{}, false
+	}
+	start += len(prefix)
+	end := strings.Index(body[start:], suffix)
+	if end < 0 {
+		return Finding{}, false
+	}
+	raw := body[start : start+end]
+	if len(raw) == 0 || raw[0] != '{' {
+		return Finding{}, false
+	}
+	var f Finding
+	if err := json.Unmarshal([]byte(raw), &f); err != nil {
+		return Finding{}, false
+	}
+	return f, true
+}
+
+// parseThreadBody extracts the description and suggestion from a thread comment
+// body. This is the fallback parser for older comments that don't embed JSON.
+func parseThreadBody(body string) (description, suggestion string) {
 	lines := strings.Split(body, "\n")
-	// Skip marker lines and the header line.
-	started := false
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "<!--") {
-			if started {
-				continue
+
+	// Skip leading HTML markers and the header line (icon **sev** — `id`).
+	contentStart := 0
+	pastHeader := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "<!--") {
+			continue
+		}
+		if !pastHeader {
+			// First non-empty non-marker line is the header — skip it.
+			pastHeader = true
+			contentStart = i + 1
+			continue
+		}
+		contentStart = i
+		break
+	}
+
+	if contentStart >= len(lines) {
+		return "", ""
+	}
+
+	// Split content into description and suggestion.
+	var descLines []string
+	var suggLines []string
+	inSuggestion := false
+	suggestionPrefix := "> **Suggestion**: "
+
+	for _, line := range lines[contentStart:] {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, suggestionPrefix) {
+			inSuggestion = true
+			suggLines = append(suggLines, strings.TrimPrefix(trimmed, suggestionPrefix))
+			continue
+		}
+		if inSuggestion {
+			// Continuation of suggestion (blockquote lines).
+			if strings.HasPrefix(trimmed, "> ") {
+				suggLines = append(suggLines, strings.TrimPrefix(trimmed, "> "))
+			} else if trimmed == ">" {
+				suggLines = append(suggLines, "")
+			} else {
+				suggLines = append(suggLines, line)
 			}
 			continue
 		}
-		if !started {
-			// First non-empty non-marker line is the header (icon **sev** — `id`), skip it.
-			started = true
-			continue
-		}
-		// First content line after header is the title/description start.
-		if runes := []rune(line); len(runes) > 100 {
-			line = string(runes[:97]) + "..."
-		}
-		return line
+		descLines = append(descLines, line)
 	}
-	return ""
+
+	description = strings.TrimSpace(strings.Join(descLines, "\n"))
+	suggestion = strings.TrimSpace(strings.Join(suggLines, "\n"))
+	return description, suggestion
 }
 
-// FindingFromThread extracts a partial Finding from a ReviewThread.
-// Used to display still-open findings in terminal output.
+// FindingFromThread extracts a Finding from a ReviewThread. It first tries to
+// parse the embedded JSON (new format), then falls back to body parsing.
 func FindingFromThread(t ReviewThread) Finding {
-	return Finding{
-		ID:       FindingIDFromThread(t.Body),
-		File:     t.Path,
-		Line:     t.Line,
-		Severity: severityFromThreadBody(t.Body),
-		Title:    titleFromThreadBody(t.Body),
-		Status:   "still open",
+	// Try embedded JSON first (lossless roundtrip).
+	if f, ok := findingFromEmbeddedJSON(t.Body); ok {
+		f.File = t.Path
+		f.Line = t.Line
+		f.Status = "still open"
+		return f
 	}
+
+	// Fallback: parse the markdown body.
+	desc, suggestion := parseThreadBody(t.Body)
+	return Finding{
+		ID:          FindingIDFromThread(t.Body),
+		File:        t.Path,
+		Line:        t.Line,
+		Severity:    severityFromThreadBody(t.Body),
+		Title:       firstSentence(desc),
+		Description: desc,
+		Suggestion:  suggestion,
+		Status:      "still open",
+	}
+}
+
+// firstSentence returns the first sentence (or first line) of text as a title.
+func firstSentence(text string) string {
+	if text == "" {
+		return ""
+	}
+	// Use first line.
+	line := text
+	if idx := strings.IndexByte(text, '\n'); idx >= 0 {
+		line = text[:idx]
+	}
+	line = strings.TrimSpace(line)
+	// Truncate to 120 runes if very long.
+	runes := []rune(line)
+	if len(runes) > 120 {
+		return string(runes[:117]) + "..."
+	}
+	return line
 }
 
 // ReviewInfo represents a review with its node ID and finding IDs.
@@ -863,7 +971,7 @@ func FindReviews(repo string, prNumber int) ([]ReviewInfo, error) {
 		return nil, fmt.Errorf("parsing PR reviews: %w", err)
 	}
 
-	prefixes := []string{"<!-- codecanary:review ", "<!-- clanopy:review "}
+	prefixes := reviewMarkerPrefixes
 	const suffix = " -->"
 
 	var result []ReviewInfo

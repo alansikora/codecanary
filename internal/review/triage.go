@@ -36,26 +36,17 @@ type ThreadResolution struct {
 	Error    error
 }
 
-// threadLabel returns a short label for logging: "path:line — title".
+// threadLabel returns a short label for logging: "path:line — severity — id".
+// It extracts the severity and finding ID from the thread body's header line
+// and formats them cleanly without raw markdown syntax.
 func threadLabel(t ReviewThread) string {
-	body := t.Body
-	// Skip leading HTML marker lines (e.g. "<!-- codecanary:finding -->").
-	for strings.HasPrefix(body, "<!--") {
-		if idx := strings.Index(body, "\n"); idx >= 0 {
-			body = strings.TrimLeft(body[idx+1:], "\n")
-		} else {
-			break
-		}
+	sev := severityFromThreadBody(t.Body)
+	id := FindingIDFromThread(t.Body)
+	icon := severityIcon(sev)
+	if id != "" {
+		return fmt.Sprintf("%s:%d \u2014 %s %s \u2014 %s", t.Path, t.Line, icon, sev, id)
 	}
-	firstLine := body
-	if idx := strings.Index(body, "\n"); idx >= 0 {
-		firstLine = body[:idx]
-	}
-	// Truncate long titles for readability.
-	if len(firstLine) > 80 {
-		firstLine = firstLine[:77] + "..."
-	}
-	return fmt.Sprintf("%s:%d — %s", t.Path, t.Line, firstLine)
+	return fmt.Sprintf("%s:%d", t.Path, t.Line)
 }
 
 // ExtractFileDiff extracts all diff hunks for a specific file from a unified diff.
@@ -156,12 +147,9 @@ func hasHumanReply(t ReviewThread, botLogin string) bool {
 	return false
 }
 
-const ackMarker = "<!-- codecanary:ack:"
-const legacyAckMarker = "<!-- clanopy:ack:"
-
 // isAckReply checks if a reply body contains an acknowledgment marker.
 func isAckReply(body string) bool {
-	return strings.Contains(body, ackMarker) || strings.Contains(body, legacyAckMarker)
+	return strings.Contains(body, ackMarkerPrefix) || strings.Contains(body, legacyAckPrefix)
 }
 
 // hasNewHumanReply checks if a thread has a human reply AFTER the last

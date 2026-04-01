@@ -104,24 +104,32 @@ func FormatMarkdown(result *ReviewResult) string {
 	// Embed review data as hidden HTML comment for review data extraction.
 	jsonData, err := json.Marshal(result)
 	if err == nil {
-		fmt.Fprintf(&b, "\n<!-- codecanary:review %s -->\n", string(jsonData))
+		fmt.Fprintf(&b, "\n%s%s%s\n", reviewMarkerPrefixes[0], string(jsonData), reviewMarkerSuffix)
 	}
 
 	return b.String()
 }
 
+// severityLevels defines the canonical ordering of severity levels.
+var severityLevels = []string{"critical", "bug", "warning", "suggestion", "nitpick"}
+
+// countSeverities counts findings by severity across one or more lists.
+func countSeverities(lists ...[]Finding) (counts map[string]int, total int) {
+	counts = map[string]int{}
+	for _, list := range lists {
+		for _, f := range list {
+			counts[strings.ToLower(f.Severity)]++
+			total++
+		}
+	}
+	return counts, total
+}
+
 // buildSeveritySummary builds a default summary line from severity counts.
 func buildSeveritySummary(findings []Finding) string {
-	counts := map[string]int{}
-	for _, f := range findings {
-		counts[strings.ToLower(f.Severity)]++
-	}
-	total := len(findings)
-
-	// Ordered severity levels for consistent output.
-	levels := []string{"critical", "bug", "warning", "suggestion", "nitpick"}
+	counts, total := countSeverities(findings)
 	var parts []string
-	for _, sev := range levels {
+	for _, sev := range severityLevels {
 		if n := counts[sev]; n > 0 {
 			parts = append(parts, severityLabel(sev, n))
 		}
@@ -186,7 +194,7 @@ func FormatReviewBody(result *ReviewResult, canInline func(Finding) bool) string
 	// Embed review data as hidden HTML comment for review data extraction.
 	jsonData, err := json.Marshal(result)
 	if err == nil {
-		fmt.Fprintf(&b, "\n<!-- codecanary:review %s -->\n", string(jsonData))
+		fmt.Fprintf(&b, "\n%s%s%s\n", reviewMarkerPrefixes[0], string(jsonData), reviewMarkerSuffix)
 	}
 
 	return b.String()
@@ -235,11 +243,17 @@ func codeFence(content string) string {
 }
 
 // FormatFindingComment renders a single finding as markdown for an inline PR
-// review comment.
+// review comment. The finding data is embedded as JSON in the HTML marker so it
+// can be round-tripped without lossy body parsing.
 func FormatFindingComment(f *Finding) string {
 	var b strings.Builder
 
-	b.WriteString("<!-- codecanary:finding -->\n")
+	// Embed finding JSON for lossless roundtripping.
+	if jsonData, err := json.Marshal(f); err == nil {
+		fmt.Fprintf(&b, "%s%s%s\n", findingMarkerPrefix, string(jsonData), reviewMarkerSuffix)
+	} else {
+		fmt.Fprintf(&b, "%s%s\n", findingMarkerPrefix, reviewMarkerSuffix)
+	}
 	icon := severityIcon(f.Severity)
 	fmt.Fprintf(&b, "%s **%s** \u2014 `%s`\n\n", icon, f.Severity, f.ID)
 	fmt.Fprintf(&b, "%s\n", f.Description)
@@ -300,18 +314,10 @@ func FormatTerminal(result *ReviewResult) string {
 
 // buildTerminalSummary builds a summary with severity counts and status breakdown.
 func buildTerminalSummary(findings, stillOpen []Finding, colors bool) string {
-	total := len(findings) + len(stillOpen)
-	counts := map[string]int{}
-	for _, f := range findings {
-		counts[strings.ToLower(f.Severity)]++
-	}
-	for _, f := range stillOpen {
-		counts[strings.ToLower(f.Severity)]++
-	}
+	counts, total := countSeverities(findings, stillOpen)
 
-	levels := []string{"critical", "bug", "warning", "suggestion", "nitpick"}
 	var parts []string
-	for _, sev := range levels {
+	for _, sev := range severityLevels {
 		if n := counts[sev]; n > 0 {
 			label := severityLabel(sev, n)
 			parts = append(parts, applyStyle(colors, severityColor(sev), label))
@@ -389,14 +395,29 @@ func writeTerminalFinding(b *strings.Builder, f *Finding, colors bool) {
 		fmt.Fprintf(b, "  %s\n", applyStyle(colors, ansiDim, loc))
 	}
 
-	// Title.
-	title := stripInlineMarkdown(f.Title, colors)
-	fmt.Fprintf(b, "  %s\n", applyStyle(colors, ansiBold, title))
-	b.WriteString("\n")
+	// Title — skip if empty or if it duplicates the start of the description
+	// (e.g. findings reconstructed from thread bodies where title = first line of description).
+	title := strings.TrimSpace(f.Title)
+	if title != "" {
+		titleRendered := stripInlineMarkdown(title, colors)
+		showTitle := true
+		if f.Description != "" {
+			compareTitle := strings.TrimSuffix(title, "...")
+			if strings.HasPrefix(strings.TrimSpace(f.Description), compareTitle) {
+				showTitle = false
+			}
+		}
+		if showTitle {
+			fmt.Fprintf(b, "  %s\n", applyStyle(colors, ansiBold, titleRendered))
+			b.WriteString("\n")
+		}
+	}
 
 	// Description.
-	writeFormattedText(b, f.Description, colors)
-	b.WriteString("\n")
+	if f.Description != "" {
+		writeFormattedText(b, f.Description, colors)
+		b.WriteString("\n")
+	}
 
 	// Suggestion.
 	if f.Suggestion != "" {
@@ -500,6 +521,116 @@ func stripInlineMarkdown(text string, colors bool) string {
 		return applyStyle(colors, ansiCyan, inner)
 	})
 	return text
+}
+
+// FormatUsageTable renders a usage table with per-model token counts and costs.
+func FormatUsageTable(calls []CallUsage, colors bool) string {
+	if len(calls) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+
+	// Determine model column width from longest model name.
+	modelW := 5 // minimum "Model"
+	for _, c := range calls {
+		if w := utf8.RuneCountInString(c.Model); w > modelW {
+			modelW = w
+		}
+	}
+	if modelW > 40 {
+		modelW = 40
+	}
+
+	lineW := modelW + 52 // model + numeric columns + spacing
+	sep := "  " + applyStyle(colors, ansiDim, strings.Repeat("─", lineW))
+
+	b.WriteString("\n")
+	b.WriteString(sep + "\n")
+	header := fmt.Sprintf("  %-*s  %8s  %8s  %8s  %10s", modelW, "Model", "Input", "Output", "Cache", "Cost")
+	b.WriteString(applyStyle(colors, ansiBold, header) + "\n")
+	b.WriteString(sep + "\n")
+
+	// Rows.
+	var totalInput, totalOutput, totalCache int
+	var totalCost float64
+	var totalDuration int
+	for _, c := range calls {
+		cache := c.CacheReadTokens + c.CacheCreateTokens
+		model := c.Model
+		if utf8.RuneCountInString(model) > modelW {
+			model = string([]rune(model)[:modelW-1]) + "…"
+		}
+		fmt.Fprintf(&b, "  %-*s  %8s  %8s  %8s  %10s\n",
+			modelW, model,
+			formatTokenCount(c.InputTokens),
+			formatTokenCount(c.OutputTokens),
+			formatTokenCount(cache),
+			formatCostUSD(c.CostUSD),
+		)
+		totalInput += c.InputTokens
+		totalOutput += c.OutputTokens
+		totalCache += cache
+		totalCost += c.CostUSD
+		totalDuration += c.DurationMS
+	}
+
+	// Total row when there are multiple models.
+	if len(calls) > 1 {
+		b.WriteString(sep + "\n")
+		total := fmt.Sprintf("  %-*s  %8s  %8s  %8s  %10s",
+			modelW, "Total",
+			formatTokenCount(totalInput),
+			formatTokenCount(totalOutput),
+			formatTokenCount(totalCache),
+			formatCostUSD(totalCost),
+		)
+		b.WriteString(applyStyle(colors, ansiBold, total) + "\n")
+	}
+
+	// Duration footer.
+	if totalDuration > 0 {
+		durStr := formatDurationMS(totalDuration)
+		fmt.Fprintf(&b, "  %s\n", applyStyle(colors, ansiDim, fmt.Sprintf("Duration: %s", durStr)))
+	}
+
+	b.WriteString("\n")
+	return b.String()
+}
+
+// formatTokenCount formats a token count with thousand separators.
+func formatTokenCount(n int) string {
+	if n == 0 {
+		return "–"
+	}
+	s := fmt.Sprintf("%d", n)
+	if len(s) <= 3 {
+		return s
+	}
+	var result strings.Builder
+	for i, ch := range s {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			result.WriteByte(',')
+		}
+		result.WriteRune(ch)
+	}
+	return result.String()
+}
+
+// formatCostUSD formats a USD cost value.
+func formatCostUSD(cost float64) string {
+	if cost == 0 {
+		return "–"
+	}
+	return fmt.Sprintf("$%.4f", cost)
+}
+
+// formatDurationMS formats milliseconds as a human-readable duration.
+func formatDurationMS(ms int) string {
+	if ms < 1000 {
+		return fmt.Sprintf("%dms", ms)
+	}
+	return fmt.Sprintf("%.1fs", float64(ms)/1000)
 }
 
 // FormatJSON formats review findings as a JSON string.

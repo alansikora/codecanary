@@ -60,8 +60,10 @@ func resolveEnv() []string {
 
 // claudeResult holds the text output and usage metadata from a Claude CLI call.
 type claudeResult struct {
-	Text  string
-	Usage CallUsage
+	Text        string
+	Usage       CallUsage
+	ModelUsages []CallUsage // per-model breakdown from modelUsage map
+	DurationMS  int
 }
 
 // runClaude executes Claude with the given prompt and environment.
@@ -107,7 +109,7 @@ func runClaude(prompt string, env []string, model string, maxBudgetUSD float64, 
 		return nil, fmt.Errorf("claude returned error: %s", resp.Result)
 	}
 
-	return &claudeResult{
+	result := &claudeResult{
 		Text: resp.Result,
 		Usage: CallUsage{
 			Model:             resp.firstModel(),
@@ -118,7 +120,19 @@ func runClaude(prompt string, env []string, model string, maxBudgetUSD float64, 
 			CostUSD:           resp.CostUSD,
 			DurationMS:        resp.DurationMS,
 		},
-	}, nil
+		DurationMS: resp.DurationMS,
+	}
+	for model, mu := range resp.ModelUsage {
+		result.ModelUsages = append(result.ModelUsages, CallUsage{
+			Model:             model,
+			InputTokens:       mu.InputTokens,
+			OutputTokens:      mu.OutputTokens,
+			CacheReadTokens:   mu.CacheReadInputTokens,
+			CacheCreateTokens: mu.CacheCreationInputTokens,
+			CostUSD:           mu.CostUSD,
+		})
+	}
+	return result, nil
 }
 
 // fixedThread holds the index and resolution reason for a fixed thread.
@@ -204,6 +218,145 @@ func minimizeFullyResolvedReviews(repo string, prNumber int, resolvedIDs map[str
 	}
 }
 
+// ── Shared review pipeline ──
+
+// reviewContext holds shared resources prepared at the start of any review.
+type reviewContext struct {
+	Config      *ReviewConfig
+	ProjectDocs map[string]string
+	Env         []string
+	Tracker     *UsageTracker
+}
+
+// prepareReview loads config, project docs, file contents, and resolves the
+// Claude environment. Both the PR and local paths use this.
+func prepareReview(pr *PRData, configPath string) (*reviewContext, error) {
+	cfg, err := loadReviewConfig(configPath)
+	if err != nil {
+		return nil, err
+	}
+
+	projectDocs := ReadProjectDocs()
+	if len(projectDocs) > 0 {
+		fmt.Fprintf(os.Stderr, "Loaded %d project doc(s) for review context\n", len(projectDocs))
+	}
+
+	fileContents, skippedFiles := FetchFileContents(pr.Files, cfg.Ignore, cfg.EffectiveMaxFileSize(), cfg.EffectiveMaxTotalSize())
+	pr.FileContents = fileContents
+	if len(skippedFiles) > 0 {
+		fmt.Fprintf(os.Stderr, "Skipped %d large/ignored files: %s\n", len(skippedFiles), strings.Join(skippedFiles, ", "))
+	}
+
+	return &reviewContext{
+		Config:      cfg,
+		ProjectDocs: projectDocs,
+		Env:         resolveEnv(),
+		Tracker:     &UsageTracker{},
+	}, nil
+}
+
+// scopedIncrementalDiff holds the result of preparing an incremental diff.
+type scopedIncrementalDiff struct {
+	Diff     string
+	Files    []string
+	Contents map[string]string
+}
+
+// prepareIncrementalDiff computes the incremental diff from prevSHA, scopes it
+// to the PR/branch files, and returns the scoped diff, file list, and contents.
+func prepareIncrementalDiff(prevSHA string, prFiles []string, fileContents map[string]string) (*scopedIncrementalDiff, error) {
+	diff, err := GetIncrementalDiff(prevSHA)
+	if err != nil {
+		return nil, err
+	}
+
+	allowed := make(map[string]bool, len(prFiles))
+	for _, f := range prFiles {
+		allowed[f] = true
+	}
+	diff = ScopeDiffToFiles(diff, allowed)
+
+	files := FilesFromDiff(diff)
+	contents := make(map[string]string, len(files))
+	for _, f := range files {
+		if content, ok := fileContents[f]; ok {
+			contents[f] = content
+		}
+	}
+
+	return &scopedIncrementalDiff{Diff: diff, Files: files, Contents: contents}, nil
+}
+
+// processFindings parses Claude's output, filters findings to diff files,
+// removes non-actionable findings, and tags status for incremental reviews.
+func processFindings(claudeText string, diffFiles []string, incremental bool) ([]Finding, error) {
+	findings, err := ParseFindings(claudeText)
+	if err != nil {
+		return nil, fmt.Errorf("parsing findings: %w", err)
+	}
+
+	fileSet := make(map[string]bool, len(diffFiles))
+	for _, f := range diffFiles {
+		fileSet[f] = true
+	}
+	var filtered []Finding
+	for _, f := range findings {
+		if f.File == "" || fileSet[f.File] {
+			filtered = append(filtered, f)
+		} else {
+			fmt.Fprintf(os.Stderr, "Dropped finding on file outside diff: %s\n", f.File)
+		}
+	}
+	findings = FilterNonActionable(filtered)
+
+	if incremental {
+		for i := range findings {
+			findings[i].Status = "new"
+		}
+	}
+
+	if len(findings) == 0 {
+		Stderrf(ansiGreen, "No new findings\n")
+	} else {
+		Stderrf(ansiYellow, "Found %d new findings\n", len(findings))
+	}
+
+	return findings, nil
+}
+
+// resolveOutputFormat determines the output format based on user preference and
+// whether stdout is a TTY.
+func resolveOutputFormat(pref string) string {
+	if pref == "" {
+		pref = "markdown"
+	}
+	if pref == "markdown" && stdoutIsTTY() {
+		return "terminal"
+	}
+	return pref
+}
+
+// formatResult renders the ReviewResult in the given format.
+func formatResult(result *ReviewResult, format string) (string, error) {
+	switch format {
+	case "json":
+		return FormatJSON(result)
+	case "terminal":
+		return FormatTerminal(result), nil
+	default:
+		return FormatMarkdown(result), nil
+	}
+}
+
+// currentHEAD returns the current HEAD SHA.
+func currentHEAD() (string, error) {
+	out, err := exec.Command("git", "rev-parse", "HEAD").Output()
+	if err != nil {
+		return "", fmt.Errorf("resolving HEAD: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // Run orchestrates the full review flow.
 func Run(opts RunOptions) error {
 	if opts.Local {
@@ -239,30 +392,14 @@ func Run(opts RunOptions) error {
 		return nil
 	}
 
-	// 3. Load review config.
-	cfg, err := loadReviewConfig(opts.ConfigPath)
+	// 3. Prepare shared review context.
+	rctx, err := prepareReview(pr, opts.ConfigPath)
 	if err != nil {
 		return err
 	}
-
-	// Read project documentation (CLAUDE.md files).
-	projectDocs := ReadProjectDocs()
-	if len(projectDocs) > 0 {
-		fmt.Fprintf(os.Stderr, "Loaded %d project doc(s) for review context\n", len(projectDocs))
-	}
-
-	// Fetch full file contents for context.
-	fileContents, skippedFiles := FetchFileContents(pr.Files, cfg.Ignore, cfg.EffectiveMaxFileSize(), cfg.EffectiveMaxTotalSize())
-	pr.FileContents = fileContents
-	if len(skippedFiles) > 0 {
-		fmt.Fprintf(os.Stderr, "Skipped %d large/ignored files: %s\n", len(skippedFiles), strings.Join(skippedFiles, ", "))
-	}
-
-	// Resolve Claude environment once for reuse.
-	env := resolveEnv()
-
-	// Usage tracker accumulates token/cost data across all Claude calls.
-	tracker := &UsageTracker{}
+	cfg := rctx.Config
+	env := rctx.Env
+	tracker := rctx.Tracker
 
 	// Check for previous review threads.
 	threads, _ := FetchReviewThreads(repo, opts.PRNumber)
@@ -416,7 +553,7 @@ func Run(opts RunOptions) error {
 					fbPlural = ""
 				}
 				fmt.Fprintf(os.Stderr, "Falling back to full review (%d known issue%s excluded)...\n", len(unresolved), fbPlural)
-				prompt = BuildPrompt(pr, cfg, startIndex, projectDocs)
+				prompt = BuildPrompt(pr, cfg, startIndex, rctx.ProjectDocs)
 			} else {
 				// Scope file contents to only files in the incremental diff to
 				// prevent hallucinations about unrelated files from the full PR.
@@ -432,75 +569,23 @@ func Run(opts RunOptions) error {
 					plural = ""
 				}
 				fmt.Fprintf(os.Stderr, "Reviewing new changes (%d known issue%s excluded)...\n", len(unresolved), plural)
-				prompt = BuildIncrementalPrompt(incrementalDiff, cfg, unresolved, opts.PRNumber, startIndex, incContents, incFiles, resolvedCtx, projectDocs)
+				prompt = BuildIncrementalPrompt(incrementalDiff, cfg, unresolved, opts.PRNumber, startIndex, incContents, incFiles, resolvedCtx, rctx.ProjectDocs)
 			}
 		}
 	} else if opts.LocalDetect && !isIncremental {
 		// LocalDetect mode: no GitHub threads but may have local state from a
 		// previous local run. Use local state for incremental detection.
-		branch, branchErr := currentBranch()
-		if branchErr == nil {
-			state, stateErr := LoadLocalState(branch)
-			if stateErr != nil {
-				fmt.Fprintf(os.Stderr, "Warning: could not load local state: %v\n", stateErr)
-			}
-			if state != nil && state.SHA != "" && isAncestor(state.SHA) {
-				isIncremental = true
-				startIndex = len(state.Findings)
-				fmt.Fprintf(os.Stderr, "Found previous local review at %s (%d findings)\n", shortSHA(state.SHA), len(state.Findings))
-
-				incrementalDiff, diffErr := GetIncrementalDiff(state.SHA)
-				if diffErr != nil {
-					fmt.Fprintf(os.Stderr, "Could not compute incremental diff, falling back to full review\n")
-					prompt = BuildPrompt(pr, cfg, startIndex, projectDocs)
-				} else if strings.TrimSpace(incrementalDiff) == "" {
-					// No new changes — show previous findings as still-open.
-					for _, f := range state.Findings {
-						sf := f
-						sf.Status = "still open"
-						stillOpenFindings = append(stillOpenFindings, sf)
-					}
-					Stderrf(ansiGreen, "No new changes since last review\n")
-					prompt = "" // skip Claude call
-				} else {
-					// Scope incremental diff to branch files.
-					allowed := make(map[string]bool, len(pr.Files))
-					for _, f := range pr.Files {
-						allowed[f] = true
-					}
-					incrementalDiff = ScopeDiffToFiles(incrementalDiff, allowed)
-
-					incFiles := FilesFromDiff(incrementalDiff)
-					incContents := make(map[string]string, len(incFiles))
-					for _, f := range incFiles {
-						if content, ok := pr.FileContents[f]; ok {
-							incContents[f] = content
-						}
-					}
-
-					knownIssues := findingsToKnownIssues(state.Findings)
-					// Mark previous findings as still open for terminal display.
-					for _, f := range state.Findings {
-						sf := f
-						sf.Status = "still open"
-						stillOpenFindings = append(stillOpenFindings, sf)
-					}
-					Stderrf(ansiBold, "Reviewing new changes (%d known issues excluded)...\n", len(knownIssues))
-					prompt = BuildIncrementalPrompt(incrementalDiff, cfg, knownIssues, opts.PRNumber, startIndex, incContents, incFiles, nil, projectDocs)
-				}
-			} else {
-				// No local state — first review.
-				Stderrf(ansiBold, "Reviewing PR #%d...\n", opts.PRNumber)
-				prompt = BuildPrompt(pr, cfg, startIndex, projectDocs)
-			}
-		} else {
+		prompt, stillOpenFindings, isIncremental, startIndex = buildLocalIncrementalPrompt(
+			pr, cfg, rctx.ProjectDocs, opts.PRNumber, startIndex,
+		)
+		if prompt == "" && !isIncremental {
 			Stderrf(ansiBold, "Reviewing PR #%d...\n", opts.PRNumber)
-			prompt = BuildPrompt(pr, cfg, startIndex, projectDocs)
+			prompt = BuildPrompt(pr, cfg, startIndex, rctx.ProjectDocs)
 		}
 	} else {
 		// First review — full PR diff.
 		Stderrf(ansiBold, "Reviewing PR #%d...\n", opts.PRNumber)
-		prompt = BuildPrompt(pr, cfg, startIndex, projectDocs)
+		prompt = BuildPrompt(pr, cfg, startIndex, rctx.ProjectDocs)
 	}
 
 	// 5. Dry run — print prompt and return.
@@ -512,51 +597,23 @@ func Run(opts RunOptions) error {
 	var findings []Finding
 	if !opts.ReplyOnly && prompt != "" {
 		// 6. Run Claude.
-		result, err := runClaude(prompt, env, cfg.EffectiveReviewModel(), cfg.MaxBudgetUSD, cfg.EffectiveTimeout())
+		claudeOut, err := runClaude(prompt, env, cfg.EffectiveReviewModel(), cfg.MaxBudgetUSD, cfg.EffectiveTimeout())
 		if err != nil {
 			return err
 		}
-		usage := result.Usage
+		usage := claudeOut.Usage
 		usage.Phase = "review"
 		tracker.Add(usage)
 
-		// 7. Parse findings.
-		findings, err = ParseFindings(result.Text)
+		// 7. Process findings.
+		findings, err = processFindings(claudeOut.Text, pr.Files, isIncremental)
 		if err != nil {
-			return fmt.Errorf("parsing findings: %w", err)
+			return err
 		}
-		// Safety net: drop findings on files not in the PR.
-		prFileSet := make(map[string]bool, len(pr.Files))
-		for _, f := range pr.Files {
-			prFileSet[f] = true
-		}
-		var filteredFindings []Finding
-		for _, f := range findings {
-			if f.File == "" || prFileSet[f.File] {
-				filteredFindings = append(filteredFindings, f)
-			} else {
-				fmt.Fprintf(os.Stderr, "Dropped finding on non-PR file: %s\n", f.File)
-			}
-		}
-		findings = filteredFindings
-		findings = FilterNonActionable(findings)
-	}
-
-	// Tag new findings with status in incremental reviews.
-	if isIncremental {
-		for i := range findings {
-			findings[i].Status = "new"
-		}
-	}
-
-	if len(findings) == 0 {
-		Stderrf(ansiGreen, "No new findings\n")
-	} else {
-		Stderrf(ansiYellow, "Found %d new findings\n", len(findings))
 	}
 
 	// Get current HEAD SHA for tracking.
-	headSHA, _ := exec.Command("git", "rev-parse", "HEAD").Output()
+	headSHA, _ := currentHEAD()
 
 	// 8. Build result.
 	result := &ReviewResult{
@@ -564,34 +621,16 @@ func Run(opts RunOptions) error {
 		Repo:      repo,
 		Findings:  findings,
 		StillOpen: stillOpenFindings,
-		SHA:       strings.TrimSpace(string(headSHA)),
+		SHA:       headSHA,
 	}
 
-	// 9. Format output.
-	outputFormat := opts.Output
-	if outputFormat == "" {
-		outputFormat = "markdown"
-	}
-	if outputFormat == "markdown" && stdoutIsTTY() {
-		outputFormat = "terminal"
-	}
-
-	var formatted string
-	switch outputFormat {
-	case "json":
-		jsonOut, err := FormatJSON(result)
-		if err != nil {
-			return fmt.Errorf("formatting JSON: %w", err)
-		}
-		formatted = jsonOut
-	case "terminal":
-		formatted = FormatTerminal(result)
-	default:
-		formatted = FormatMarkdown(result)
-	}
-
-	// 10. Print to stdout (skip when posting to avoid noisy CI logs).
+	// 9. Format and print output (skip when posting to avoid noisy CI logs).
+	outputFormat := resolveOutputFormat(opts.Output)
 	if !opts.Post {
+		formatted, err := formatResult(result, outputFormat)
+		if err != nil {
+			return err
+		}
 		fmt.Print(formatted)
 	}
 
@@ -693,183 +732,153 @@ func Run(opts RunOptions) error {
 	return nil
 }
 
-// runLocal handles the local review flow (no PR, no GitHub interaction).
-func runLocal(opts RunOptions) error {
-	pr := opts.PR
+// buildLocalIncrementalPrompt checks for a previous local state and builds
+// the appropriate prompt (incremental or empty). Returns the prompt, still-open
+// findings, whether the review is incremental, and the start index.
+// Used by both Run (LocalDetect mode) and runLocal.
+func buildLocalIncrementalPrompt(
+	pr *PRData, cfg *ReviewConfig, projectDocs map[string]string, prNumber int, startIndex int,
+) (prompt string, stillOpen []Finding, incremental bool, newStartIndex int) {
+	newStartIndex = startIndex
 
-	// Load review config.
-	cfg, err := loadReviewConfig(opts.ConfigPath)
-	if err != nil {
-		return err
+	branch, branchErr := currentBranch()
+	if branchErr != nil {
+		return "", nil, false, newStartIndex
 	}
 
-	// Read project documentation (CLAUDE.md files).
-	projectDocs := ReadProjectDocs()
-	if len(projectDocs) > 0 {
-		fmt.Fprintf(os.Stderr, "Loaded %d project doc(s) for review context\n", len(projectDocs))
-	}
-
-	// Fetch full file contents for context.
-	fileContents, skippedFiles := FetchFileContents(pr.Files, cfg.Ignore, cfg.EffectiveMaxFileSize(), cfg.EffectiveMaxTotalSize())
-	pr.FileContents = fileContents
-	if len(skippedFiles) > 0 {
-		fmt.Fprintf(os.Stderr, "Skipped %d large/ignored files: %s\n", len(skippedFiles), strings.Join(skippedFiles, ", "))
-	}
-
-	// Resolve Claude environment.
-	env := resolveEnv()
-
-	// Usage tracker.
-	tracker := &UsageTracker{}
-
-	// Check for previous local review state.
-	branch := pr.HeadBranch
 	state, stateErr := LoadLocalState(branch)
 	if stateErr != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not load local state: %v\n", stateErr)
 	}
+	if state == nil || state.SHA == "" || !isAncestor(state.SHA) {
+		return "", nil, false, newStartIndex
+	}
 
+	incremental = true
+	newStartIndex = len(state.Findings)
+	fmt.Fprintf(os.Stderr, "Found previous local review at %s (%d findings)\n", shortSHA(state.SHA), len(state.Findings))
+
+	inc, err := prepareIncrementalDiff(state.SHA, pr.Files, pr.FileContents)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Could not compute incremental diff, falling back to full review\n")
+		return BuildPrompt(pr, cfg, newStartIndex, projectDocs), nil, true, newStartIndex
+	}
+	if strings.TrimSpace(inc.Diff) == "" {
+		// No new changes — show previous findings as still-open.
+		for _, f := range state.Findings {
+			sf := f
+			sf.Status = "still open"
+			stillOpen = append(stillOpen, sf)
+		}
+		Stderrf(ansiGreen, "No new changes since last review\n")
+		return "", stillOpen, true, newStartIndex
+	}
+
+	knownIssues := findingsToKnownIssues(state.Findings)
+	for _, f := range state.Findings {
+		sf := f
+		sf.Status = "still open"
+		stillOpen = append(stillOpen, sf)
+	}
+	Stderrf(ansiBold, "Reviewing incremental changes (%d known issues excluded)...\n", len(knownIssues))
+	prompt = BuildIncrementalPrompt(inc.Diff, cfg, knownIssues, prNumber, newStartIndex, inc.Contents, inc.Files, nil, projectDocs)
+	return prompt, stillOpen, true, newStartIndex
+}
+
+// runLocal handles the local review flow (no PR, no GitHub interaction).
+func runLocal(opts RunOptions) error {
+	pr := opts.PR
+
+	// Prepare shared review context.
+	rctx, err := prepareReview(pr, opts.ConfigPath)
+	if err != nil {
+		return err
+	}
+
+	// Build prompt (incremental or full).
+	branch := pr.HeadBranch
 	var prompt string
 	var stillOpenFindings []Finding
-	startIndex := 0
-	isIncremental := state != nil && state.SHA != "" && isAncestor(state.SHA)
-	if isIncremental {
-		// Incremental local review.
-		startIndex = len(state.Findings)
-		fmt.Fprintf(os.Stderr, "Found previous local review at %s (%d findings)\n", shortSHA(state.SHA), len(state.Findings))
+	var isIncremental bool
 
-		incrementalDiff, diffErr := GetIncrementalDiff(state.SHA)
-		if diffErr != nil {
-			fmt.Fprintf(os.Stderr, "Could not compute incremental diff, falling back to full review\n")
-			prompt = BuildPrompt(pr, cfg, startIndex, projectDocs)
-		} else if strings.TrimSpace(incrementalDiff) == "" {
-			fmt.Fprintf(os.Stderr, "No new changes since last review\n")
-			return nil
-		} else {
-			// Scope incremental diff to branch files.
-			allowed := make(map[string]bool, len(pr.Files))
-			for _, f := range pr.Files {
-				allowed[f] = true
-			}
-			incrementalDiff = ScopeDiffToFiles(incrementalDiff, allowed)
-
-			incFiles := FilesFromDiff(incrementalDiff)
-			incContents := make(map[string]string, len(incFiles))
-			for _, f := range incFiles {
-				if content, ok := pr.FileContents[f]; ok {
-					incContents[f] = content
-				}
-			}
-
-			knownIssues := findingsToKnownIssues(state.Findings)
-			// Mark previous findings as still open for terminal display.
-			for _, f := range state.Findings {
-				sf := f
-				sf.Status = "still open"
-				stillOpenFindings = append(stillOpenFindings, sf)
-			}
-			Stderrf(ansiBold, "Reviewing incremental changes (%d known issues excluded)...\n", len(knownIssues))
-			prompt = BuildIncrementalPrompt(incrementalDiff, cfg, knownIssues, 0, startIndex, incContents, incFiles, nil, projectDocs)
-		}
-	} else {
+	prompt, stillOpenFindings, isIncremental, _ = buildLocalIncrementalPrompt(
+		pr, rctx.Config, rctx.ProjectDocs, 0, 0,
+	)
+	if prompt == "" && !isIncremental {
 		// First local review — full diff.
 		Stderrf(ansiBold, "Reviewing local changes on %s...\n", branch)
-		prompt = BuildPrompt(pr, cfg, 0, projectDocs)
+		prompt = BuildPrompt(pr, rctx.Config, 0, rctx.ProjectDocs)
+	} else if prompt == "" && isIncremental && len(stillOpenFindings) > 0 {
+		// No new changes — still-open findings returned, but no Claude call needed.
+		// Fall through to display.
+	}
+
+	// Handle early return for "no new changes since last review" when there are no open findings.
+	if prompt == "" && len(stillOpenFindings) == 0 && isIncremental {
+		return nil
 	}
 
 	// Dry run — print prompt and return.
 	if opts.DryRun {
-		fmt.Print(prompt)
+		if prompt != "" {
+			fmt.Print(prompt)
+		}
 		return nil
 	}
 
-	// Run Claude.
-	result, err := runClaude(prompt, env, cfg.EffectiveReviewModel(), cfg.MaxBudgetUSD, cfg.EffectiveTimeout())
-	if err != nil {
-		return err
-	}
-	usage := result.Usage
-	usage.Phase = "review"
-	tracker.Add(usage)
-
-	// Parse findings.
-	findings, err := ParseFindings(result.Text)
-	if err != nil {
-		return fmt.Errorf("parsing findings: %w", err)
-	}
-
-	// Safety net: drop findings on files not in the diff.
-	prFileSet := make(map[string]bool, len(pr.Files))
-	for _, f := range pr.Files {
-		prFileSet[f] = true
-	}
-	var filteredFindings []Finding
-	for _, f := range findings {
-		if f.File == "" || prFileSet[f.File] {
-			filteredFindings = append(filteredFindings, f)
+	// Run Claude and process findings.
+	var findings []Finding
+	if prompt != "" {
+		claudeOut, err := runClaude(prompt, rctx.Env, rctx.Config.EffectiveReviewModel(), rctx.Config.MaxBudgetUSD, rctx.Config.EffectiveTimeout())
+		if err != nil {
+			return err
+		}
+		if len(claudeOut.ModelUsages) > 0 {
+			for i := range claudeOut.ModelUsages {
+				claudeOut.ModelUsages[i].Phase = "review"
+				claudeOut.ModelUsages[i].DurationMS = claudeOut.DurationMS
+				rctx.Tracker.Add(claudeOut.ModelUsages[i])
+			}
 		} else {
-			fmt.Fprintf(os.Stderr, "Dropped finding on non-diff file: %s\n", f.File)
+			usage := claudeOut.Usage
+			usage.Phase = "review"
+			rctx.Tracker.Add(usage)
 		}
-	}
-	findings = filteredFindings
-	findings = FilterNonActionable(findings)
 
-	// Tag new findings with status in incremental reviews.
-	if isIncremental {
-		for i := range findings {
-			findings[i].Status = "new"
+		findings, err = processFindings(claudeOut.Text, pr.Files, isIncremental)
+		if err != nil {
+			return err
 		}
-	}
-
-	if len(findings) == 0 {
-		Stderrf(ansiGreen, "No new findings\n")
-	} else {
-		Stderrf(ansiYellow, "Found %d new findings\n", len(findings))
 	}
 
 	// Build result.
-	headSHAOut, err := exec.Command("git", "rev-parse", "HEAD").Output()
+	headSHA, err := currentHEAD()
 	if err != nil {
-		return fmt.Errorf("resolving HEAD: %w", err)
+		return err
 	}
-	headSHA := strings.TrimSpace(string(headSHAOut))
-	reviewResult := &ReviewResult{
-		PRNumber:  0,
+	result := &ReviewResult{
 		Findings:  findings,
 		StillOpen: stillOpenFindings,
 		SHA:       headSHA,
 	}
 
-	// Format output.
-	outputFormat := opts.Output
-	if outputFormat == "" {
-		outputFormat = "markdown"
+	// Format and print.
+	outputFormat := resolveOutputFormat(opts.Output)
+	formatted, err := formatResult(result, outputFormat)
+	if err != nil {
+		return err
 	}
-	if outputFormat == "markdown" && stdoutIsTTY() {
-		outputFormat = "terminal"
-	}
-
-	var formatted string
-	switch outputFormat {
-	case "json":
-		jsonOut, err := FormatJSON(reviewResult)
-		if err != nil {
-			return fmt.Errorf("formatting JSON: %w", err)
-		}
-		formatted = jsonOut
-	case "terminal":
-		formatted = FormatTerminal(reviewResult)
-	default:
-		formatted = FormatMarkdown(reviewResult)
-	}
-
 	fmt.Print(formatted)
 
+	// Print usage table to stderr for terminal output.
+	if outputFormat == "terminal" {
+		fmt.Fprint(os.Stderr, FormatUsageTable(rctx.Tracker.Calls(), colorsEnabled()))
+	}
+
 	// Save local state for future incremental reviews.
-	// Merge new findings with previous findings (from incremental) or just use new findings.
 	allFindings := findings
+	state, _ := LoadLocalState(branch)
 	if state != nil && state.SHA != "" && isAncestor(state.SHA) {
-		// Incremental: keep old findings and merge new ones (dedup by ID+file+line).
 		allFindings = mergeFindings(state.Findings, findings)
 	}
 	if saveErr := SaveLocalState(branch, &LocalState{
@@ -941,23 +950,24 @@ func shortSHA(sha string) string {
 // acknowledgmentMessage returns a reply body for non-code-change resolutions.
 // Each message includes a hidden HTML marker for dedup detection.
 func acknowledgmentMessage(reason string) string {
+	marker := fmt.Sprintf("%s%s -->", ackMarkerPrefix, reason)
 	switch reason {
 	case "dismissed":
-		return "<!-- codecanary:ack:dismissed -->\nAuthor dismissed this finding. Keeping open \u2014 will re-check if related code changes."
+		return marker + "\nAuthor dismissed this finding. Keeping open \u2014 will re-check if related code changes."
 	case "acknowledged":
-		return "<!-- codecanary:ack:acknowledged -->\nAuthor acknowledged this finding. Keeping open \u2014 will re-check on future pushes."
+		return marker + "\nAuthor acknowledged this finding. Keeping open \u2014 will re-check on future pushes."
 	case "rebutted":
-		return "<!-- codecanary:ack:rebutted -->\nAuthor provided a technical rebuttal. Keeping open \u2014 will re-check if related code changes."
+		return marker + "\nAuthor provided a technical rebuttal. Keeping open \u2014 will re-check if related code changes."
 	default:
-		return "<!-- codecanary:ack:unknown -->\nFinding acknowledged. Keeping open \u2014 will re-check on future pushes."
+		return fmt.Sprintf("%sunknown -->", ackMarkerPrefix) + "\nFinding acknowledged. Keeping open \u2014 will re-check on future pushes."
 	}
 }
 
 // hasAcknowledgmentReply checks if an acknowledgment reply already exists
 // on the thread for the given reason, to avoid posting duplicate replies.
 func hasAcknowledgmentReply(t ReviewThread, reason string) bool {
-	newMarker := fmt.Sprintf("<!-- codecanary:ack:%s -->", reason)
-	oldMarker := fmt.Sprintf("<!-- clanopy:ack:%s -->", reason)
+	newMarker := fmt.Sprintf("%s%s -->", ackMarkerPrefix, reason)
+	oldMarker := fmt.Sprintf("%s%s -->", legacyAckPrefix, reason)
 	for _, r := range t.Replies {
 		if strings.Contains(r.Body, newMarker) || strings.Contains(r.Body, oldMarker) {
 			return true

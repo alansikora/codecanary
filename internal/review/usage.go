@@ -43,6 +43,15 @@ func (u *UsageTracker) Add(call CallUsage) {
 	u.calls = append(u.calls, call)
 }
 
+// Calls returns a copy of the accumulated call usages.
+func (u *UsageTracker) Calls() []CallUsage {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	out := make([]CallUsage, len(u.calls))
+	copy(out, u.calls)
+	return out
+}
+
 // Report builds a UsageReport from accumulated calls.
 func (u *UsageTracker) Report(repo string, prNumber int) *UsageReport {
 	u.mu.Lock()
@@ -118,7 +127,11 @@ type claudeJSONResponse struct {
 		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 	} `json:"usage"`
 	ModelUsage map[string]struct {
-		CostUSD float64 `json:"costUSD"`
+		InputTokens              int     `json:"inputTokens"`
+		OutputTokens             int     `json:"outputTokens"`
+		CacheReadInputTokens     int     `json:"cacheReadInputTokens"`
+		CacheCreationInputTokens int     `json:"cacheCreationInputTokens"`
+		CostUSD                  float64 `json:"costUSD"`
 	} `json:"modelUsage"`
 }
 
