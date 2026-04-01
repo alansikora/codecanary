@@ -139,7 +139,7 @@ triage_model: claude-haiku-4-5-20251001  # model for thread re-evaluation
 api_key_env: ANTHROPIC_API_KEY  # env var holding the API key (default per provider)
 api_base: https://...           # override base URL (openai provider only)
 
-max_budget_usd: 0.50            # per-invocation spending limit (claude provider only)
+max_budget_usd: 0.50            # per-review spending limit in USD
 timeout_minutes: 5              # per-invocation timeout
 max_file_size: 102400           # per-file content limit in bytes (default 100KB)
 max_total_size: 512000          # total file content limit in bytes (default 500KB)
