@@ -321,9 +321,10 @@ func authenticateClaude(repo string, reader *bufio.Reader) (string, string, erro
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "How would you like to authenticate Claude?\n")
-	fmt.Fprintf(os.Stderr, "  [1] OAuth (default)\n")
-	fmt.Fprintf(os.Stderr, "  [2] API key\n")
+	fmt.Fprintf(os.Stderr, "How would you like to authenticate?\n")
+	fmt.Fprintf(os.Stderr, "  [1] Claude OAuth (default)\n")
+	fmt.Fprintf(os.Stderr, "  [2] Anthropic API key\n")
+	fmt.Fprintf(os.Stderr, "  [3] Other API key (OpenAI, OpenRouter, etc.)\n")
 	fmt.Fprintf(os.Stderr, "Choice [1]: ")
 
 	choice, err := reader.ReadString('\n')
@@ -332,8 +333,9 @@ func authenticateClaude(repo string, reader *bufio.Reader) (string, string, erro
 	}
 	choice = strings.TrimSpace(choice)
 
-	if choice == "2" {
-		// API key flow.
+	switch choice {
+	case "2":
+		// Anthropic API key flow.
 		fmt.Fprintf(os.Stderr, "\nPaste your Anthropic API key: ")
 		keyBytes, err := term.ReadPassword(int(syscall.Stdin))
 		fmt.Fprintf(os.Stderr, "\n")
@@ -346,19 +348,44 @@ func authenticateClaude(repo string, reader *bufio.Reader) (string, string, erro
 		}
 		fmt.Fprintf(os.Stderr, "\n")
 		return "ANTHROPIC_API_KEY", key, nil
-	}
 
-	// OAuth flow (default).
-	if err := auth.InstallGitHubApp(repo, reader); err != nil {
-		return "", "", fmt.Errorf("installing Claude GitHub App: %w", err)
-	}
+	case "3":
+		// Custom provider API key flow.
+		fmt.Fprintf(os.Stderr, "\nSecret name (e.g. OPENAI_API_KEY, OPENROUTER_API_KEY): ")
+		name, err := reader.ReadString('\n')
+		if err != nil {
+			return "", "", fmt.Errorf("reading input: %w", err)
+		}
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return "", "", fmt.Errorf("secret name cannot be empty")
+		}
+		fmt.Fprintf(os.Stderr, "Paste your API key: ")
+		keyBytes, err := term.ReadPassword(int(syscall.Stdin))
+		fmt.Fprintf(os.Stderr, "\n")
+		if err != nil {
+			return "", "", fmt.Errorf("reading API key: %w", err)
+		}
+		key := strings.TrimSpace(string(keyBytes))
+		if key == "" {
+			return "", "", fmt.Errorf("API key cannot be empty")
+		}
+		fmt.Fprintf(os.Stderr, "\n")
+		return name, key, nil
 
-	token, err := auth.OAuthToken()
-	if err != nil {
-		return "", "", fmt.Errorf("OAuth authentication failed: %w", err)
-	}
+	default:
+		// OAuth flow (default).
+		if err := auth.InstallGitHubApp(repo, reader); err != nil {
+			return "", "", fmt.Errorf("installing Claude GitHub App: %w", err)
+		}
 
-	return "CLAUDE_CODE_OAUTH_TOKEN", token, nil
+		token, err := auth.OAuthToken()
+		if err != nil {
+			return "", "", fmt.Errorf("OAuth authentication failed: %w", err)
+		}
+
+		return "CLAUDE_CODE_OAUTH_TOKEN", token, nil
+	}
 }
 
 func confirm(reader *bufio.Reader) (bool, error) {

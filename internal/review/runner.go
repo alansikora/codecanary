@@ -865,8 +865,8 @@ func loadReviewConfig(configPath string) (*ReviewConfig, error) {
 			}
 			return cfg, nil
 		}
-		// No config found anywhere — use empty defaults.
-		return &ReviewConfig{}, nil
+		// No config found anywhere.
+		return nil, fmt.Errorf("no config file found — create .codecanary/config.yml with at minimum:\n\n  version: 1\n  provider: anthropic  # or: openai, openrouter, claude\n\nSee https://github.com/alansikora/codecanary for setup instructions")
 	}
 
 	var pathErr *os.PathError
