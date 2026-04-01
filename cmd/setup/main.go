@@ -223,18 +223,10 @@ jobs:
 		}
 	}
 	if generateConfig {
-		configContent := review.StarterConfig
-		fmt.Fprintf(os.Stderr, "Generating review config...\n")
-		if generated, err := review.Generate(nil); err != nil {
-			fmt.Fprintf(os.Stderr, "  Warning: could not generate config with Claude: %v\n", err)
-			fmt.Fprintf(os.Stderr, "  Using starter template instead\n")
-		} else {
-			configContent = generated + "\n"
-		}
 		if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 			return fmt.Errorf("creating .codecanary directory: %w", err)
 		}
-		if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		if err := os.WriteFile(configPath, []byte(review.StarterConfig), 0644); err != nil {
 			return fmt.Errorf("writing review config: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, "  Created %s\n", configPath)

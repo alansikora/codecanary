@@ -1,7 +1,6 @@
 package review
 
 import (
-	"context"
 	"fmt"
 	"maps"
 	"os"
@@ -434,44 +433,11 @@ func parseGeneratedConfig(output string) (string, error) {
 	return strings.TrimSpace(raw), nil
 }
 
-// Generate analyzes the repo and uses an LLM to produce a review config.
-// If cfg is non-nil, its provider settings are used; otherwise defaults to Claude CLI.
-// Returns the YAML string. Does not write to disk.
-func Generate(cfg *ReviewConfig) (string, error) {
-	info, err := GatherRepoInfo()
-	if err != nil {
-		return "", fmt.Errorf("gathering repo info: %w", err)
-	}
-
-	prompt := buildGeneratePrompt(info)
-	env := resolveEnv()
-
-	// Config generation runs before a config exists, so we use the Claude
-	// CLI directly rather than going through NewProvider (which requires config).
-	var provider ModelProvider
-	if cfg != nil {
-		provider = NewProvider(cfg, env)
-	} else {
-		provider = &claudeCLIProvider{env: env}
-	}
-
-	result, err := provider.Run(context.Background(), prompt, RunOpts{
-		Model: cfg.EffectiveReviewModel(),
-	})
-	if err != nil {
-		return "", fmt.Errorf("running LLM: %w", err)
-	}
-
-	yamlStr, err := parseGeneratedConfig(result.Text)
-	if err != nil {
-		return "", fmt.Errorf("parsing generated config: %w", err)
-	}
-
-	return yamlStr, nil
-}
-
-// StarterConfig is the static fallback template used when Claude is unavailable.
+// StarterConfig is the static template used when creating a new config.
 const StarterConfig = `version: 1
+
+# Provider is required. Options: anthropic, openai, openrouter, claude
+provider: anthropic
 
 # Add review rules for your project.
 # See https://github.com/alansikora/codecanary for documentation.
