@@ -613,7 +613,10 @@ func Run(opts RunOptions) error {
 	}
 
 	// Get current HEAD SHA for tracking.
-	headSHA, _ := currentHEAD()
+	headSHA, err := currentHEAD()
+	if err != nil {
+		return fmt.Errorf("resolving HEAD: %w", err)
+	}
 
 	// 8. Build result.
 	result := &ReviewResult{
