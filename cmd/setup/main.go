@@ -17,6 +17,8 @@ import (
 
 var version = "dev"
 
+var secretNameRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -350,7 +352,7 @@ func authenticateClaude(repo string, reader *bufio.Reader) (string, string, erro
 			return "", "", fmt.Errorf("reading input: %w", err)
 		}
 		name = strings.TrimSpace(name)
-		if !regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`).MatchString(name) {
+		if !secretNameRe.MatchString(name) {
 			return "", "", fmt.Errorf("invalid secret name %q — must be uppercase letters, digits, and underscores (e.g. OPENAI_API_KEY)", name)
 		}
 		fmt.Fprintf(os.Stderr, "Paste your API key: ")
