@@ -29,9 +29,15 @@ func FetchLocalDiff(baseBranch string) (*PRData, error) {
 	}
 
 	// Find the merge-base to get only branch-specific changes.
+	// In shallow clones the base ref may exist but lack enough history for
+	// merge-base to work. Fetch the base branch and retry once before failing.
 	mergeBaseOut, err := exec.Command("git", "merge-base", "HEAD", base).Output()
 	if err != nil {
-		return nil, fmt.Errorf("computing merge-base against %s: %w", base, err)
+		exec.Command("git", "fetch", "origin", strings.TrimPrefix(base, "origin/")).Run() //nolint:errcheck
+		mergeBaseOut, err = exec.Command("git", "merge-base", "HEAD", base).Output()
+		if err != nil {
+			return nil, fmt.Errorf("computing merge-base against %s: %w", base, err)
+		}
 	}
 	mergeBase := strings.TrimSpace(string(mergeBaseOut))
 
