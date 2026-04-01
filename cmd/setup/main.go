@@ -113,16 +113,18 @@ func run() error {
 		actionRef = "canary"
 	}
 
-	var authEnv string
+	// Build the action step's with: inputs and optional step-level env: block.
+	// Known providers use action inputs (with:); custom providers use step env:.
+	var withAuth, stepEnv string
 	switch secretName {
 	case "ANTHROPIC_API_KEY":
-		authEnv = "          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}"
+		withAuth = "          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}"
 	case "CLAUDE_CODE_OAUTH_TOKEN":
-		authEnv = "          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}"
+		withAuth = "          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}"
 	default:
-		// Custom provider (openai, openrouter, etc.) — inject the secret
-		// under the generic env key so the action passes it through.
-		authEnv = fmt.Sprintf("        env:\n          %s: ${{ secrets.%s }}", secretName, secretName)
+		// Custom provider (openai, openrouter, etc.) — pass the key as a
+		// step-level env var so the action forwards it to the subprocess.
+		stepEnv = fmt.Sprintf("\n        env:\n          %s: ${{ secrets.%s }}", secretName, secretName)
 		fmt.Fprintf(os.Stderr, "\nNote: using custom provider key %s.\n", secretName)
 		fmt.Fprintf(os.Stderr, "Add it as a repository secret: Settings → Secrets → Actions → New secret\n")
 	}
@@ -180,14 +182,14 @@ jobs:
         with:
 %s
           config_path: .codecanary/config.yml
-          reply_only: ${{ github.event_name == 'pull_request_review_comment' }}
+          reply_only: ${{ github.event_name == 'pull_request_review_comment' }}%s
 
       - name: Usage
         if: always() && env.skip != 'true' && env.CODECANARY_USAGE != ''
         env:
           USAGE_DATA: ${{ env.CODECANARY_USAGE }}
         run: codecanary review costs --data "$USAGE_DATA"
-`, actionRef, authEnv)
+`, actionRef, withAuth, stepEnv)
 
 	if err := os.MkdirAll(workflowDir, 0755); err != nil {
 		return fmt.Errorf("creating workflow directory: %w", err)
