@@ -67,7 +67,7 @@ func run() error {
 		return fmt.Errorf("could not detect default branch: %w", err)
 	}
 	defaultBranch := strings.TrimSpace(string(defaultBranchOut))
-	if defaultBranch == "" {
+	if defaultBranch == "" || defaultBranch == "null" {
 		return fmt.Errorf("could not detect default branch — is the repository empty?")
 	}
 	if err := exec.Command("git", "show-ref", "--verify", "refs/heads/"+branch).Run(); err == nil {
