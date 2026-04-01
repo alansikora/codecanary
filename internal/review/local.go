@@ -18,6 +18,7 @@ func FetchLocalDiff(baseBranch string) (*PRData, error) {
 	if base == "" {
 		return nil, fmt.Errorf("could not detect default branch (tried main, master)")
 	}
+	base = resolveRef(base)
 
 	head, err := currentBranch()
 	if err != nil {
@@ -74,6 +75,27 @@ func detectDefaultBranch() string {
 		return "master"
 	}
 	return ""
+}
+
+// resolveRef resolves a branch name to a usable git ref:
+//  1. Local branch — used as-is
+//  2. Already-fetched remote tracking ref (origin/<ref>)
+//  3. Fetch origin/<ref> on demand, then use the tracking ref
+//  4. Return original name unchanged so git surfaces a clear error
+func resolveRef(ref string) string {
+	if err := exec.Command("git", "rev-parse", "--verify", ref).Run(); err == nil {
+		return ref
+	}
+	remote := "origin/" + ref
+	if err := exec.Command("git", "rev-parse", "--verify", remote).Run(); err == nil {
+		return remote
+	}
+	// Branch not found locally — try fetching it from origin.
+	exec.Command("git", "fetch", "origin", ref).Run() //nolint:errcheck
+	if err := exec.Command("git", "rev-parse", "--verify", remote).Run(); err == nil {
+		return remote
+	}
+	return ref
 }
 
 // currentBranch returns the name of the current git branch.
