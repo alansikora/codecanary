@@ -2,8 +2,10 @@ package auth
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -37,17 +39,26 @@ func CheckAppInstalled(repo, appSlug string) bool {
 	owner := strings.SplitN(repo, "/", 2)[0]
 
 	// List installations that the current user can see.
+	// gh api --paginate concatenates one JSON object per page ({...}{...}),
+	// so we decode each page separately.
 	out, err := exec.Command("gh", "api", "/user/installations", "--paginate").Output()
 	if err != nil {
 		return false
 	}
 
-	var resp installationsResponse
-	if err := json.Unmarshal(out, &resp); err != nil {
-		return false
+	var allInstallations []installation
+	dec := json.NewDecoder(bytes.NewReader(out))
+	for {
+		var page installationsResponse
+		if err := dec.Decode(&page); err == io.EOF {
+			break
+		} else if err != nil {
+			return false
+		}
+		allInstallations = append(allInstallations, page.Installations...)
 	}
 
-	for _, inst := range resp.Installations {
+	for _, inst := range allInstallations {
 		if inst.AppSlug != appSlug || !strings.EqualFold(inst.Account.Login, owner) {
 			continue
 		}
@@ -63,13 +74,18 @@ func CheckAppInstalled(repo, appSlug string) bool {
 		if err != nil {
 			continue
 		}
-		var repoResp reposResponse
-		if err := json.Unmarshal(repoOut, &repoResp); err != nil {
-			continue
-		}
-		for _, r := range repoResp.Repositories {
-			if r.FullName == repo {
-				return true
+		repoDec := json.NewDecoder(bytes.NewReader(repoOut))
+		for {
+			var page reposResponse
+			if err := repoDec.Decode(&page); err == io.EOF {
+				break
+			} else if err != nil {
+				break
+			}
+			for _, r := range page.Repositories {
+				if r.FullName == repo {
+					return true
+				}
 			}
 		}
 	}
@@ -87,7 +103,9 @@ func InstallCodeCanaryApp(repo string, reader *bufio.Reader) error {
 	}
 
 	fmt.Printf("Press Enter after installing the app...")
-	reader.ReadString('\n')
+	if _, err := reader.ReadString('\n'); err != nil {
+		return fmt.Errorf("reading input: %w", err)
+	}
 	fmt.Println()
 	return nil
 }
