@@ -52,6 +52,9 @@ type chatUsage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
+	PromptTokensDetails *struct {
+		CachedTokens int `json:"cached_tokens"`
+	} `json:"prompt_tokens_details"`
 }
 
 func (p *apiProvider) Run(ctx context.Context, prompt string, opts RunOpts) (*claudeResult, error) {
@@ -128,8 +131,13 @@ func (p *apiProvider) Run(ctx context.Context, prompt string, opts RunOpts) (*cl
 		DurationMS: durationMS,
 	}
 	if chatResp.Usage != nil {
-		usage.InputTokens = chatResp.Usage.PromptTokens
 		usage.OutputTokens = chatResp.Usage.CompletionTokens
+		if chatResp.Usage.PromptTokensDetails != nil && chatResp.Usage.PromptTokensDetails.CachedTokens > 0 {
+			usage.CacheReadTokens = chatResp.Usage.PromptTokensDetails.CachedTokens
+			usage.InputTokens = chatResp.Usage.PromptTokens - usage.CacheReadTokens
+		} else {
+			usage.InputTokens = chatResp.Usage.PromptTokens
+		}
 	}
 	usage.CostUSD = estimateCost(usage)
 
