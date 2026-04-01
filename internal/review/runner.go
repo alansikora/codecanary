@@ -348,6 +348,22 @@ func formatResult(result *ReviewResult, format string) (string, error) {
 	}
 }
 
+// trackUsage records the usage from a Claude call. It prefers per-model
+// breakdowns from ModelUsages, falling back to the aggregate Usage.
+func trackUsage(tracker *UsageTracker, result *claudeResult, phase string) {
+	if len(result.ModelUsages) > 0 {
+		for i := range result.ModelUsages {
+			result.ModelUsages[i].Phase = phase
+			result.ModelUsages[i].DurationMS = result.DurationMS
+			tracker.Add(result.ModelUsages[i])
+		}
+	} else {
+		usage := result.Usage
+		usage.Phase = phase
+		tracker.Add(usage)
+	}
+}
+
 // currentHEAD returns the current HEAD SHA.
 func currentHEAD() (string, error) {
 	out, err := exec.Command("git", "rev-parse", "HEAD").Output()
@@ -601,9 +617,7 @@ func Run(opts RunOptions) error {
 		if err != nil {
 			return err
 		}
-		usage := claudeOut.Usage
-		usage.Phase = "review"
-		tracker.Add(usage)
+		trackUsage(tracker, claudeOut, "review")
 
 		// 7. Process findings.
 		findings, err = processFindings(claudeOut.Text, pr.Files, isIncremental)
@@ -635,6 +649,9 @@ func Run(opts RunOptions) error {
 			return err
 		}
 		fmt.Print(formatted)
+		if outputFormat == "terminal" {
+			fmt.Fprint(os.Stderr, FormatUsageTable(tracker.Calls(), colorsEnabled()))
+		}
 	}
 
 	// 11. Post review if requested.
@@ -836,17 +853,7 @@ func runLocal(opts RunOptions) error {
 		if err != nil {
 			return err
 		}
-		if len(claudeOut.ModelUsages) > 0 {
-			for i := range claudeOut.ModelUsages {
-				claudeOut.ModelUsages[i].Phase = "review"
-				claudeOut.ModelUsages[i].DurationMS = claudeOut.DurationMS
-				rctx.Tracker.Add(claudeOut.ModelUsages[i])
-			}
-		} else {
-			usage := claudeOut.Usage
-			usage.Phase = "review"
-			rctx.Tracker.Add(usage)
-		}
+		trackUsage(rctx.Tracker, claudeOut, "review")
 
 		findings, err = processFindings(claudeOut.Text, pr.Files, isIncremental)
 		if err != nil {
