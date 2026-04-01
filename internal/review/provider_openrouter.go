@@ -42,13 +42,18 @@ func (p *openrouterProvider) Run(ctx context.Context, prompt string, opts RunOpt
 		// OpenRouter reports cached tokens the same way as OpenAI.
 		if chatResp.Usage.PromptTokensDetails != nil && chatResp.Usage.PromptTokensDetails.CachedTokens > 0 {
 			usage.CacheReadTokens = chatResp.Usage.PromptTokensDetails.CachedTokens
-			usage.InputTokens = chatResp.Usage.PromptTokens - usage.CacheReadTokens
+			usage.InputTokens = max(0, chatResp.Usage.PromptTokens-usage.CacheReadTokens)
 		}
 	}
 	usage.CostUSD = estimateCost(usage)
 
+	text := ""
+	if len(chatResp.Choices) > 0 {
+		text = chatResp.Choices[0].Message.Content
+	}
+
 	return &claudeResult{
-		Text:  chatResp.Choices[0].Message.Content,
+		Text:  text,
 		Usage: usage,
 	}, nil
 }

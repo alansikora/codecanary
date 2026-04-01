@@ -143,6 +143,9 @@ func (c *ReviewConfig) Validate() error {
 	switch c.Provider {
 	case "anthropic", "openrouter":
 		// Accept any model string.
+		if c.APIBase != "" {
+			return fmt.Errorf("api_base is not supported by the %s provider", c.Provider)
+		}
 	case "openai":
 		// Accept any model string; api_base can override the endpoint.
 		if c.APIBase != "" && !isValidURL(c.APIBase) {

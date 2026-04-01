@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 )
 
 // modelPricing holds per-million-token prices for a model.
@@ -64,7 +65,10 @@ var knownPricing = []struct {
 }
 
 // warnedModels tracks models we've already warned about to avoid spam.
-var warnedModels = make(map[string]bool)
+var (
+	warnedMu     sync.Mutex
+	warnedModels = make(map[string]bool)
+)
 
 // lookupPricing returns the pricing for a model, or nil if unknown.
 func lookupPricing(model string) *modelPricing {
@@ -83,9 +87,16 @@ func lookupPricing(model string) *modelPricing {
 func estimateCost(usage CallUsage) float64 {
 	p := lookupPricing(usage.Model)
 	if p == nil {
-		if usage.Model != "" && !warnedModels[usage.Model] {
-			warnedModels[usage.Model] = true
-			fmt.Fprintf(os.Stderr, "Warning: unknown model %q — cost estimate unavailable (pricing table may be outdated)\n", usage.Model)
+		if usage.Model != "" {
+			warnedMu.Lock()
+			alreadyWarned := warnedModels[usage.Model]
+			if !alreadyWarned {
+				warnedModels[usage.Model] = true
+			}
+			warnedMu.Unlock()
+			if !alreadyWarned {
+				fmt.Fprintf(os.Stderr, "Warning: unknown model %q — cost estimate unavailable (pricing table may be outdated)\n", usage.Model)
+			}
 		}
 		return 0
 	}

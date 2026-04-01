@@ -28,11 +28,10 @@ func newAnthropicProvider(cfg *ReviewConfig, env []string) ModelProvider {
 
 // anthropicRequest is the Anthropic /v1/messages request format.
 type anthropicRequest struct {
-	Model        string                   `json:"model"`
-	MaxTokens    int                      `json:"max_tokens"`
-	System       []anthropicContentBlock  `json:"system,omitempty"`
-	Messages     []anthropicMessage       `json:"messages"`
-	CacheControl *anthropicCacheControl   `json:"cache_control,omitempty"`
+	Model     string                  `json:"model"`
+	MaxTokens int                     `json:"max_tokens"`
+	System    []anthropicContentBlock `json:"system,omitempty"`
+	Messages  []anthropicMessage      `json:"messages"`
 }
 
 type anthropicMessage struct {
@@ -86,13 +85,21 @@ func (p *anthropicProvider) Run(ctx context.Context, prompt string, opts RunOpts
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// Use top-level cache_control for automatic caching of the entire prompt.
+	// Place cache_control on the content block so the prompt is cached.
 	reqBody := anthropicRequest{
 		Model:     opts.Model,
 		MaxTokens: 16384,
-		CacheControl: &anthropicCacheControl{Type: "ephemeral"},
 		Messages: []anthropicMessage{
-			{Role: "user", Content: prompt},
+			{
+				Role: "user",
+				Content: []anthropicContentBlock{
+					{
+						Type:         "text",
+						Text:         prompt,
+						CacheControl: &anthropicCacheControl{Type: "ephemeral"},
+					},
+				},
+			},
 		},
 	}
 

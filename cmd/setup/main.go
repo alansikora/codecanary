@@ -114,10 +114,17 @@ func run() error {
 	}
 
 	var authEnv string
-	if secretName == "ANTHROPIC_API_KEY" {
+	switch secretName {
+	case "ANTHROPIC_API_KEY":
 		authEnv = "          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}"
-	} else {
+	case "CLAUDE_CODE_OAUTH_TOKEN":
 		authEnv = "          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}"
+	default:
+		// Custom provider (openai, openrouter, etc.) — inject the secret
+		// under the generic env key so the action passes it through.
+		authEnv = fmt.Sprintf("        env:\n          %s: ${{ secrets.%s }}", secretName, secretName)
+		fmt.Fprintf(os.Stderr, "\nNote: using custom provider key %s.\n", secretName)
+		fmt.Fprintf(os.Stderr, "Add it as a repository secret: Settings → Secrets → Actions → New secret\n")
 	}
 
 	workflow := fmt.Sprintf(`name: CodeCanary
