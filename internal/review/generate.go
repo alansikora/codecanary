@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"os"
@@ -433,9 +434,10 @@ func parseGeneratedConfig(output string) (string, error) {
 	return strings.TrimSpace(raw), nil
 }
 
-// Generate analyzes the repo and uses Claude to produce a review config.
+// Generate analyzes the repo and uses an LLM to produce a review config.
+// If cfg is non-nil, its provider settings are used; otherwise defaults to Claude CLI.
 // Returns the YAML string. Does not write to disk.
-func Generate() (string, error) {
+func Generate(cfg *ReviewConfig) (string, error) {
 	info, err := GatherRepoInfo()
 	if err != nil {
 		return "", fmt.Errorf("gathering repo info: %w", err)
@@ -443,10 +445,13 @@ func Generate() (string, error) {
 
 	prompt := buildGeneratePrompt(info)
 	env := resolveEnv()
+	provider := NewProvider(cfg, env)
 
-	result, err := runClaude(prompt, env, "", 0, 0)
+	result, err := provider.Run(context.Background(), prompt, RunOpts{
+		Model: cfg.EffectiveReviewModel(),
+	})
 	if err != nil {
-		return "", fmt.Errorf("running Claude: %w", err)
+		return "", fmt.Errorf("running LLM: %w", err)
 	}
 
 	yamlStr, err := parseGeneratedConfig(result.Text)

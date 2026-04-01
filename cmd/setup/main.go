@@ -216,7 +216,7 @@ jobs:
 	if generateConfig {
 		configContent := review.StarterConfig
 		fmt.Fprintf(os.Stderr, "Generating review config...\n")
-		if generated, err := review.Generate(); err != nil {
+		if generated, err := review.Generate(nil); err != nil {
 			fmt.Fprintf(os.Stderr, "  Warning: could not generate config with Claude: %v\n", err)
 			fmt.Fprintf(os.Stderr, "  Using starter template instead\n")
 		} else {

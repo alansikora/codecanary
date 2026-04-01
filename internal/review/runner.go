@@ -2,13 +2,11 @@ package review
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
-	"time"
 )
 
 // RunOptions configures a review run.
@@ -25,11 +23,13 @@ type RunOptions struct {
 	PR          *PRData // pre-fetched PRData (used in local mode)
 }
 
-// allowedEnvPrefixes lists environment variable prefixes passed to the Claude subprocess.
+// allowedEnvPrefixes lists environment variable prefixes passed to the LLM subprocess.
 var allowedEnvPrefixes = []string{
 	"ANTHROPIC_",
 	"CLAUDE_",
 	"GITHUB_",
+	"OPENAI_",
+	"OPENROUTER_",
 }
 
 // allowedEnvKeys lists exact environment variable names passed to the Claude subprocess.
@@ -58,81 +58,12 @@ func resolveEnv() []string {
 	return filtered
 }
 
-// claudeResult holds the text output and usage metadata from a Claude CLI call.
+// claudeResult holds the text output and usage metadata from an LLM call.
 type claudeResult struct {
 	Text        string
 	Usage       CallUsage
 	ModelUsages []CallUsage // per-model breakdown from modelUsage map
 	DurationMS  int
-}
-
-// runClaude executes Claude with the given prompt and environment.
-// When model is non-empty, it is passed via --model (e.g. "haiku", "sonnet").
-// When maxBudgetUSD is > 0, it is passed via --max-budget-usd.
-// When timeout is 0, defaults to EffectiveTimeout() (5 minutes).
-func runClaude(prompt string, env []string, model string, maxBudgetUSD float64, timeout time.Duration) (*claudeResult, error) {
-	if timeout <= 0 {
-		timeout = (&ReviewConfig{}).EffectiveTimeout()
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	args := []string{"--print", "--output-format", "json", "--no-session-persistence"}
-	if model != "" {
-		args = append(args, "--model", model)
-	}
-	if maxBudgetUSD > 0 {
-		args = append(args, "--max-budget-usd", fmt.Sprintf("%.2f", maxBudgetUSD))
-	}
-	cmd := exec.CommandContext(ctx, "claude", args...)
-	cmd.Env = env
-	cmd.Stdin = strings.NewReader(prompt)
-	output, err := cmd.Output()
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("claude timed out after %s", timeout)
-		}
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return nil, fmt.Errorf("claude failed: %s\n%s", string(exitErr.Stderr), string(output))
-		}
-		return nil, fmt.Errorf("running claude: %w", err)
-	}
-
-	var resp claudeJSONResponse
-	if err := json.Unmarshal(output, &resp); err != nil {
-		// Fallback: treat entire output as plain text (e.g. older CLI version).
-		return &claudeResult{Text: string(output)}, nil
-	}
-
-	if resp.IsError {
-		return nil, fmt.Errorf("claude returned error: %s", resp.Result)
-	}
-
-	result := &claudeResult{
-		Text: resp.Result,
-		Usage: CallUsage{
-			Model:             resp.firstModel(),
-			InputTokens:       resp.Usage.InputTokens,
-			OutputTokens:      resp.Usage.OutputTokens,
-			CacheReadTokens:   resp.Usage.CacheReadInputTokens,
-			CacheCreateTokens: resp.Usage.CacheCreationInputTokens,
-			CostUSD:           resp.CostUSD,
-			DurationMS:        resp.DurationMS,
-		},
-		DurationMS: resp.DurationMS,
-	}
-	for model, mu := range resp.ModelUsage {
-		result.ModelUsages = append(result.ModelUsages, CallUsage{
-			Model:             model,
-			InputTokens:       mu.InputTokens,
-			OutputTokens:      mu.OutputTokens,
-			CacheReadTokens:   mu.CacheReadInputTokens,
-			CacheCreateTokens: mu.CacheCreationInputTokens,
-			CostUSD:           mu.CostUSD,
-		})
-	}
-	return result, nil
 }
 
 // fixedThread holds the index and resolution reason for a fixed thread.
@@ -415,6 +346,7 @@ func Run(opts RunOptions) error {
 	}
 	cfg := rctx.Config
 	env := rctx.Env
+	provider := NewProvider(cfg, env)
 	tracker := rctx.Tracker
 
 	// Check for previous review threads.
@@ -485,7 +417,7 @@ func Run(opts RunOptions) error {
 			LogTriage(triaged)
 			needsEval := countNonSkipped(triaged)
 			if needsEval > 0 {
-				resolutions := EvaluateThreadsParallel(triaged, env, cfg, 3, cfg.EffectiveTriageModel(), tracker)
+				resolutions := EvaluateThreadsParallel(triaged, provider, cfg, 3, cfg.EffectiveTriageModel(), tracker)
 				LogResolutions(triaged, resolutions)
 				fixed = toFixedThreads(resolutions)
 
@@ -612,8 +544,12 @@ func Run(opts RunOptions) error {
 
 	var findings []Finding
 	if !opts.ReplyOnly && prompt != "" {
-		// 6. Run Claude.
-		claudeOut, err := runClaude(prompt, env, cfg.EffectiveReviewModel(), cfg.MaxBudgetUSD, cfg.EffectiveTimeout())
+		// 6. Run LLM.
+		claudeOut, err := provider.Run(context.Background(), prompt, RunOpts{
+			Model:        cfg.EffectiveReviewModel(),
+			MaxBudgetUSD: cfg.MaxBudgetUSD,
+			Timeout:      cfg.EffectiveTimeout(),
+		})
 		if err != nil {
 			return err
 		}
@@ -846,10 +782,15 @@ func runLocal(opts RunOptions) error {
 		return nil
 	}
 
-	// Run Claude and process findings.
+	// Run LLM and process findings.
+	provider := NewProvider(rctx.Config, rctx.Env)
 	var findings []Finding
 	if prompt != "" {
-		claudeOut, err := runClaude(prompt, rctx.Env, rctx.Config.EffectiveReviewModel(), rctx.Config.MaxBudgetUSD, rctx.Config.EffectiveTimeout())
+		claudeOut, err := provider.Run(context.Background(), prompt, RunOpts{
+			Model:        rctx.Config.EffectiveReviewModel(),
+			MaxBudgetUSD: rctx.Config.MaxBudgetUSD,
+			Timeout:      rctx.Config.EffectiveTimeout(),
+		})
 		if err != nil {
 			return err
 		}

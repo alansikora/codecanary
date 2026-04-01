@@ -35,7 +35,7 @@ var generateCmd = &cobra.Command{
 
 		fmt.Fprintf(os.Stderr, "Analyzing project...\n")
 
-		yamlStr, err := review.Generate()
+		yamlStr, err := review.Generate(nil)
 		if err != nil {
 			return fmt.Errorf("generating config: %w", err)
 		}
