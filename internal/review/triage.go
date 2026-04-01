@@ -89,9 +89,14 @@ func ClassifyThreads(threads []ReviewThread, fullDiff, botLogin string) []Triage
 	for i, t := range threads {
 		hasReply := hasNewHumanReply(t, botLogin)
 		outdated := t.Outdated
+		deleted := fileDeletedInDiff(fullDiff, t.Path)
 
 		var class ThreadClassification
 		switch {
+		case deleted:
+			// File was deleted — evaluate with full diff so Claude can check
+			// whether the code moved to a replacement file with the fix applied.
+			class = TriageCrossFileChange
 		case outdated && hasReply:
 			class = TriageCodeChangedReply
 		case outdated:
@@ -135,6 +140,33 @@ func ClassifyThreads(threads []ReviewThread, fullDiff, botLogin string) []Triage
 func fileInDiff(diff, path string) bool {
 	target := "+++ b/" + path
 	return strings.Contains(diff, target+"\n") || strings.Contains(diff, target+"\t") || strings.HasSuffix(diff, target)
+}
+
+// fileDeletedInDiff checks if the diff shows the given file was deleted.
+// A deleted file has "--- a/<path>" followed by "+++ /dev/null".
+func fileDeletedInDiff(diff, path string) bool {
+	marker := "--- a/" + path
+	idx := strings.Index(diff, marker)
+	if idx < 0 {
+		return false
+	}
+	// Ensure full path match (not a prefix of a longer filename).
+	rest := diff[idx+len(marker):]
+	if len(rest) > 0 && rest[0] != '\n' && rest[0] != '\r' {
+		return false
+	}
+	nl := strings.Index(rest, "\n")
+	if nl < 0 {
+		return false
+	}
+	nextLine := ""
+	rest = rest[nl+1:]
+	if eol := strings.Index(rest, "\n"); eol >= 0 {
+		nextLine = rest[:eol]
+	} else {
+		nextLine = rest
+	}
+	return nextLine == "+++ /dev/null"
 }
 
 // hasHumanReply checks if a thread has at least one reply from a non-bot author.
@@ -372,7 +404,6 @@ func EvaluateThreadsParallel(triaged []TriagedThread, env []string, cfg *ReviewC
 			results[i] = ThreadResolution{Index: t.Index, Resolved: false}
 			continue
 		}
-
 		wg.Add(1)
 		go func(idx int, tt TriagedThread) {
 			defer wg.Done()
