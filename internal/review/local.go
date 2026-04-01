@@ -77,20 +77,23 @@ func detectDefaultBranch() string {
 	return ""
 }
 
-// resolveRef resolves a branch name to a usable git ref:
-//  1. Local branch — used as-is
-//  2. Already-fetched remote tracking ref (origin/<ref>)
+// resolveRef resolves a branch name to a usable git ref, preferring the remote
+// tracking ref over the local branch. Local branches in fork/shallow clones may
+// exist as refs but lack connectivity with HEAD, causing merge-base to fail.
+// Resolution order:
+//  1. origin/<ref> — already-fetched remote tracking ref (best connectivity)
+//  2. Local branch <ref>
 //  3. Fetch origin/<ref> on demand, then use the tracking ref
 //  4. Return original name unchanged so git surfaces a clear error
 func resolveRef(ref string) string {
-	if err := exec.Command("git", "rev-parse", "--verify", ref).Run(); err == nil {
-		return ref
-	}
 	remote := "origin/" + ref
 	if err := exec.Command("git", "rev-parse", "--verify", remote).Run(); err == nil {
 		return remote
 	}
-	// Branch not found locally — try fetching it from origin.
+	if err := exec.Command("git", "rev-parse", "--verify", ref).Run(); err == nil {
+		return ref
+	}
+	// Not found locally — try fetching from origin.
 	exec.Command("git", "fetch", "origin", ref).Run() //nolint:errcheck
 	if err := exec.Command("git", "rev-parse", "--verify", remote).Run(); err == nil {
 		return remote
