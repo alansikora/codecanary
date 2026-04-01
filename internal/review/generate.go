@@ -436,12 +436,9 @@ func parseGeneratedConfig(output string) (string, error) {
 // StarterConfig is the static template used when creating a new config.
 const StarterConfig = `version: 1
 
-# Provider is required. Options: anthropic, openai, openrouter, claude
-provider: anthropic
+# Required — pick your LLM provider: anthropic, openai, openrouter, or claude
+# provider:
 
-# Add review rules for your project.
-# See https://github.com/alansikora/codecanary for documentation.
-#
 # rules:
 #   - id: example-rule
 #     description: "Describe what to check for"
