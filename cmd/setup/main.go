@@ -75,7 +75,12 @@ func run() error {
 	}
 
 	// 4. Install the CodeCanary Review App (skip if already installed).
-	if auth.CheckAppInstalled(repo, "codecanary-bot") {
+	if installed, err := auth.CheckAppInstalled(repo, "codecanary-bot"); err != nil {
+		fmt.Fprintf(os.Stderr, "  Warning: could not check CodeCanary app installation: %v\n\n", err)
+		if err := auth.InstallCodeCanaryApp(repo, reader); err != nil {
+			return fmt.Errorf("installing CodeCanary app: %w", err)
+		}
+	} else if installed {
 		fmt.Fprintf(os.Stderr, "CodeCanary Review app already installed on %s\n\n", repo)
 	} else {
 		if err := auth.InstallCodeCanaryApp(repo, reader); err != nil {
@@ -344,7 +349,12 @@ func authenticateClaude(repo string, reader *bufio.Reader) (string, string, erro
 	}
 
 	// OAuth flow (default).
-	if auth.CheckAppInstalled(repo, "claude") {
+	if installed, err := auth.CheckAppInstalled(repo, "claude"); err != nil {
+		fmt.Fprintf(os.Stderr, "  Warning: could not check Claude app installation: %v\n\n", err)
+		if err := auth.InstallGitHubApp(repo, reader); err != nil {
+			return "", "", fmt.Errorf("installing Claude GitHub App: %w", err)
+		}
+	} else if installed {
 		fmt.Fprintf(os.Stderr, "Claude GitHub App already installed on %s\n\n", repo)
 	} else {
 		if err := auth.InstallGitHubApp(repo, reader); err != nil {

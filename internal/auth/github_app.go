@@ -34,8 +34,8 @@ type reposResponse struct {
 
 // CheckAppInstalled checks whether a GitHub App (by slug) is installed on the
 // given repo. It uses the gh CLI's user-level installation listing so it works
-// with regular OAuth tokens. Returns false on any error (best-effort check).
-func CheckAppInstalled(repo, appSlug string) bool {
+// with regular OAuth tokens.
+func CheckAppInstalled(repo, appSlug string) (bool, error) {
 	owner := strings.SplitN(repo, "/", 2)[0]
 
 	// List installations that the current user can see.
@@ -43,7 +43,7 @@ func CheckAppInstalled(repo, appSlug string) bool {
 	// so we decode each page separately.
 	out, err := exec.Command("gh", "api", "/user/installations", "--paginate").Output()
 	if err != nil {
-		return false
+		return false, fmt.Errorf("listing installations: %w", err)
 	}
 
 	var allInstallations []installation
@@ -53,7 +53,7 @@ func CheckAppInstalled(repo, appSlug string) bool {
 		if err := dec.Decode(&page); err == io.EOF {
 			break
 		} else if err != nil {
-			return false
+			return false, fmt.Errorf("parsing installations response: %w", err)
 		}
 		allInstallations = append(allInstallations, page.Installations...)
 	}
@@ -65,14 +65,14 @@ func CheckAppInstalled(repo, appSlug string) bool {
 
 		// "all" means every repo in this account is covered.
 		if inst.RepositorySelection == "all" {
-			return true
+			return true, nil
 		}
 
 		// Otherwise verify the specific repo is in the selected set.
 		endpoint := "/user/installations/" + strconv.Itoa(inst.ID) + "/repositories"
 		repoOut, err := exec.Command("gh", "api", endpoint, "--paginate").Output()
 		if err != nil {
-			continue
+			return false, fmt.Errorf("listing repos for installation %d: %w", inst.ID, err)
 		}
 		repoDec := json.NewDecoder(bytes.NewReader(repoOut))
 		for {
@@ -80,17 +80,17 @@ func CheckAppInstalled(repo, appSlug string) bool {
 			if err := repoDec.Decode(&page); err == io.EOF {
 				break
 			} else if err != nil {
-				break
+				return false, fmt.Errorf("parsing repos response: %w", err)
 			}
 			for _, r := range page.Repositories {
 				if r.FullName == repo {
-					return true
+					return true, nil
 				}
 			}
 		}
 	}
 
-	return false
+	return false, nil
 }
 
 // InstallCodeCanaryApp opens the browser to install the CodeCanary Review app on a repo.
