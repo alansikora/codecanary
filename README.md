@@ -7,8 +7,9 @@ AI-powered code review for GitHub pull requests. Catch bugs, security issues, an
 Most AI code review tools are one-shot: paste a PR, get feedback, repeat from scratch next time. CodeCanary is different — it's a stateful, automated reviewer that lives in your CI pipeline.
 
 - **Fully automated** — runs as a GitHub Action on every push. No one needs to open a tool or paste a link.
+- **Multi-provider** — bring your own LLM: Anthropic, OpenAI, OpenRouter, or Claude CLI. No vendor lock-in.
 - **Native PR integration** — posts inline comments on exact diff lines, auto-resolves threads when code is fixed, and minimizes stale reviews to keep PRs clean.
-- **Incremental reviews** — on re-push, Go-driven triage classifies existing threads at zero Claude cost. Only threads where code actually changed get re-evaluated.
+- **Incremental reviews** — on re-push, Go-driven triage classifies existing threads at zero LLM cost. Only threads where code actually changed get re-evaluated.
 - **Thread lifecycle** — understands code fixes, author dismissals, acknowledgments, and rebuttals as distinct resolution types. Each finding is tracked independently.
 - **Anti-hallucination** — explicit file allowlists, line number validation against the diff, and distance thresholds prevent fabricated findings.
 - **Cost-efficient** — uses faster models for triage, full models for review. Tracks usage per invocation so you can see exactly what you're spending.
@@ -26,9 +27,9 @@ curl -fsSL https://codecanary.sh/setup | sh
 
 This walks you through:
 1. Installing the CodeCanary Review GitHub App
-2. Authenticating with Claude (OAuth or API key)
+2. Authenticating (Anthropic API key, OpenAI key, OpenRouter key, or Claude OAuth)
 3. Creating the GitHub Actions workflow
-4. Generating a `.codecanary/config.yml` config tailored to your project
+4. Creating a `.codecanary/config.yml` starter template
 5. Opening a PR with everything ready to merge
 
 ## Canary
@@ -66,14 +67,17 @@ end
 
 ## Config
 
-CodeCanary uses a `.codecanary/config.yml` file in your repo:
+CodeCanary uses a `.codecanary/config.yml` file in your repo. The `provider` field is required.
+
+### Anthropic (native API with prompt caching)
 
 ```yaml
 version: 1
+provider: anthropic
+# api_key_env: ANTHROPIC_API_KEY  # default
 
 context: |
   Go REST API using chi router. Tests use testify.
-  All exported functions must have doc comments.
 
 rules:
   - id: error-handling
@@ -89,27 +93,90 @@ ignore:
   - "dist/**"
   - "*.lock"
   - "vendor/**"
+```
 
-review_model: sonnet   # Model for main review (default: sonnet)
-triage_model: haiku    # Model for thread re-evaluation (default: haiku)
+### OpenAI
+
+```yaml
+version: 1
+provider: openai
+# api_key_env: OPENAI_API_KEY  # default
+# api_base: https://api.openai.com/v1  # default; override for Azure, Ollama, etc.
+# review_model: gpt-5.4  # default
+# triage_model: gpt-5.4-mini  # default
+```
+
+### OpenRouter
+
+```yaml
+version: 1
+provider: openrouter
+# api_key_env: OPENROUTER_API_KEY  # default
+# review_model: anthropic/claude-sonnet-4-6  # default
+# triage_model: anthropic/claude-haiku-4-5-20251001  # default
+```
+
+### Claude CLI
+
+```yaml
+version: 1
+provider: claude
+# review_model: claude-sonnet-4-6  # default
+# triage_model: claude-haiku-4-5-20251001  # default
+```
+
+Requires the `claude` CLI binary in PATH and `CLAUDE_CODE_OAUTH_TOKEN`.
+
+### Full config reference
+
+```yaml
+version: 1
+provider: anthropic             # required: anthropic, openai, openrouter, or claude
+
+review_model: claude-sonnet-4-6 # model for main review (provider-specific default)
+triage_model: claude-haiku-4-5-20251001  # model for thread re-evaluation
+
+api_key_env: ANTHROPIC_API_KEY  # env var holding the API key (default per provider)
+api_base: https://...           # override base URL (openai provider only)
+
+max_budget_usd: 0.50            # per-invocation spending limit (claude provider only)
+timeout_minutes: 5              # per-invocation timeout
+max_file_size: 102400           # per-file content limit in bytes (default 100KB)
+max_total_size: 512000          # total file content limit in bytes (default 500KB)
+
+context: |
+  Describe your project stack and conventions here.
+
+rules:
+  - id: example-rule
+    description: "Describe what to check for"
+    severity: warning
+    paths: ["**/*.go"]
+    exclude_paths: ["*_test.go"]
+
+ignore:
+  - "dist/**"
+  - "*.lock"
 
 evaluation:
   code_change:
     context: |
-      Fixes must use errors.Wrap, not bare returns.
+      Extra context for evaluating whether code changes fix a finding.
   reply:
     context: |
-      Treat WONTFIX as acknowledgment.
+      Extra context for evaluating author replies.
 ```
 
 ### Models
 
-You can configure which Claude models are used for reviews and thread triage:
+Each provider has sensible defaults. Override with `review_model` and `triage_model`:
 
-| Field | Description | Default | Allowed values |
-|-------|-------------|---------|----------------|
-| `review_model` | Model for the main code review | `sonnet` | `haiku`, `sonnet`, `opus` |
-| `triage_model` | Model for re-evaluating existing threads on re-push | `haiku` | `haiku`, `sonnet`, `opus` |
+| Provider | Review default | Triage default |
+|----------|---------------|----------------|
+| `anthropic` | `claude-sonnet-4-6` | `claude-haiku-4-5-20251001` |
+| `openai` | `gpt-5.4` | `gpt-5.4-mini` |
+| `openrouter` | `anthropic/claude-sonnet-4-6` | `anthropic/claude-haiku-4-5-20251001` |
+| `claude` | `claude-sonnet-4-6` | `claude-haiku-4-5-20251001` |
 
 ### Severity Levels
 
@@ -128,15 +195,15 @@ You can configure which Claude models are used for reviews and thread triage:
 1. Fetches PR metadata and diff via `gh` CLI
 2. Reads full file contents for context (respecting ignore patterns and size limits)
 3. Builds a review prompt with your rules, context, and anti-hallucination guards
-4. Calls Claude to analyze the changes
+4. Calls your configured LLM provider to analyze the changes
 5. Posts findings as inline PR review comments
 
 ### Incremental Reviews
 
 On subsequent pushes, CodeCanary is smarter:
 
-1. **Go-driven triage** classifies existing threads — no Claude calls for unchanged code
-2. **Parallel evaluation** re-checks threads where code changed or the author replied (using the `triage_model`, default: Haiku)
+1. **Go-driven triage** classifies existing threads — no LLM calls for unchanged code
+2. **Parallel evaluation** re-checks threads where code changed or the author replied (using the triage model)
 3. **New code review** only covers the incremental diff, excluding known issues
 4. **Auto-resolution** marks threads as resolved when the code fix addresses the finding
 
@@ -146,7 +213,7 @@ On subsequent pushes, CodeCanary is smarter:
 - **Author dismisses** — acknowledged, kept open for re-check on future pushes
 - **Author acknowledges** — noted, kept open
 - **Author rebuts** — evaluated for technical merit, kept open
-- **No changes** — skipped entirely (zero Claude cost)
+- **No changes** — skipped entirely (zero LLM cost)
 
 ### Draft PRs
 
