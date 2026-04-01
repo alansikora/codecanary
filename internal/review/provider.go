@@ -21,13 +21,11 @@ type ModelProvider interface {
 // NewProvider constructs the appropriate ModelProvider based on config.
 //   - "anthropic": native Anthropic Messages API with prompt caching
 //   - "api": OpenAI-compatible HTTP provider (OpenRouter, OpenAI, Ollama, etc.)
-//   - "claude" or "" (default): Claude CLI
+//   - "claude": Claude CLI (requires claude binary in PATH and OAuth token)
+//
+// The provider field is required — config validation rejects empty values.
 func NewProvider(cfg *ReviewConfig, env []string) ModelProvider {
-	provider := ""
-	if cfg != nil {
-		provider = cfg.Provider
-	}
-	switch provider {
+	switch cfg.Provider {
 	case "anthropic":
 		keyEnv := cfg.APIKeyEnv
 		if keyEnv == "" {
@@ -51,7 +49,7 @@ func NewProvider(cfg *ReviewConfig, env []string) ModelProvider {
 			keyEnv:  keyEnv,
 			env:     env,
 		}
-	default:
+	default: // "claude"
 		return &claudeCLIProvider{env: env}
 	}
 }

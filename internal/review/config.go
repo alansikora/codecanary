@@ -37,42 +37,38 @@ var validCLIModels = map[string]bool{
 	"haiku": true, "sonnet": true, "opus": true,
 }
 
-// EffectiveReviewModel returns the model for main review.
-// For the Claude CLI provider, defaults to "sonnet" and validates against the allowlist.
-// For the anthropic/api providers, any non-empty string is accepted with provider-appropriate defaults.
+// EffectiveReviewModel returns the configured review model.
+// Each provider has its own default when review_model is not set.
 func (c *ReviewConfig) EffectiveReviewModel() string {
-	if c != nil && (c.Provider == "anthropic" || c.Provider == "api") {
-		if c.ReviewModel != "" {
-			return c.ReviewModel
-		}
-		if c.Provider == "anthropic" {
-			return "claude-sonnet-4-20250514"
-		}
-		return "anthropic/claude-sonnet-4-20250514"
-	}
-	if c != nil && validCLIModels[c.ReviewModel] {
+	if c != nil && c.ReviewModel != "" {
 		return c.ReviewModel
 	}
-	return "sonnet"
+	if c != nil {
+		switch c.Provider {
+		case "claude":
+			return "sonnet"
+		case "api":
+			return "anthropic/claude-sonnet-4-20250514"
+		}
+	}
+	return "claude-sonnet-4-20250514" // anthropic
 }
 
-// EffectiveTriageModel returns the model for thread re-evaluation.
-// For the Claude CLI provider, defaults to "haiku" and validates against the allowlist.
-// For the anthropic/api providers, any non-empty string is accepted with provider-appropriate defaults.
+// EffectiveTriageModel returns the configured triage model.
+// Each provider has its own default when triage_model is not set.
 func (c *ReviewConfig) EffectiveTriageModel() string {
-	if c != nil && (c.Provider == "anthropic" || c.Provider == "api") {
-		if c.TriageModel != "" {
-			return c.TriageModel
-		}
-		if c.Provider == "anthropic" {
-			return "claude-haiku-4-5-20251001"
-		}
-		return "anthropic/claude-haiku-4-5-20251001"
-	}
-	if c != nil && validCLIModels[c.TriageModel] {
+	if c != nil && c.TriageModel != "" {
 		return c.TriageModel
 	}
-	return "haiku"
+	if c != nil {
+		switch c.Provider {
+		case "claude":
+			return "haiku"
+		case "api":
+			return "anthropic/claude-haiku-4-5-20251001"
+		}
+	}
+	return "claude-haiku-4-5-20251001" // anthropic
 }
 
 // EvaluationConfig holds per-evaluation-type settings for re-evaluation prompts.
@@ -140,18 +136,15 @@ func (c *ReviewConfig) Validate() error {
 	if c.MaxBudgetUSD < 0 {
 		return fmt.Errorf("max_budget_usd must be non-negative, got %f", c.MaxBudgetUSD)
 	}
-	if c.Provider != "" && c.Provider != "claude" && c.Provider != "anthropic" && c.Provider != "api" {
-		return fmt.Errorf("invalid provider %q (valid: claude, anthropic, api)", c.Provider)
-	}
 	switch c.Provider {
 	case "anthropic":
-		// Anthropic provider accepts any model string (e.g. "claude-sonnet-4-20250514").
+		// Anthropic provider accepts any model string.
 	case "api":
 		// OpenAI-compatible provider accepts any model string.
 		if c.APIBase != "" && !isValidURL(c.APIBase) {
 			return fmt.Errorf("invalid api_base %q: must be an HTTP(S) URL", c.APIBase)
 		}
-	default:
+	case "claude":
 		// Claude CLI provider only accepts known shorthand model names.
 		if c.ReviewModel != "" && !validCLIModels[c.ReviewModel] {
 			return fmt.Errorf("invalid review_model %q for claude provider (valid: haiku, sonnet, opus)", c.ReviewModel)
@@ -159,6 +152,10 @@ func (c *ReviewConfig) Validate() error {
 		if c.TriageModel != "" && !validCLIModels[c.TriageModel] {
 			return fmt.Errorf("invalid triage_model %q for claude provider (valid: haiku, sonnet, opus)", c.TriageModel)
 		}
+	case "":
+		return fmt.Errorf("provider is required (valid: anthropic, api, claude)")
+	default:
+		return fmt.Errorf("invalid provider %q (valid: anthropic, api, claude)", c.Provider)
 	}
 	for i, r := range c.Rules {
 		if r.Severity != "" && !validSeverities[r.Severity] {

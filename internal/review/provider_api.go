@@ -131,6 +131,7 @@ func (p *apiProvider) Run(ctx context.Context, prompt string, opts RunOpts) (*cl
 		usage.InputTokens = chatResp.Usage.PromptTokens
 		usage.OutputTokens = chatResp.Usage.CompletionTokens
 	}
+	usage.CostUSD = estimateCost(usage)
 
 	return &claudeResult{
 		Text:  text,

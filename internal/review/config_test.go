@@ -54,50 +54,94 @@ func TestEffectiveMaxTotalSize_Custom(t *testing.T) {
 	}
 }
 
-func TestEffectiveReviewModel_Default(t *testing.T) {
-	cfg := &ReviewConfig{}
+func TestEffectiveReviewModel_Anthropic(t *testing.T) {
+	cfg := &ReviewConfig{Provider: "anthropic"}
+	if got := cfg.EffectiveReviewModel(); got != "claude-sonnet-4-20250514" {
+		t.Errorf("EffectiveReviewModel() = %q, want %q", got, "claude-sonnet-4-20250514")
+	}
+}
+
+func TestEffectiveReviewModel_Claude(t *testing.T) {
+	cfg := &ReviewConfig{Provider: "claude"}
 	if got := cfg.EffectiveReviewModel(); got != "sonnet" {
 		t.Errorf("EffectiveReviewModel() = %q, want %q", got, "sonnet")
 	}
 }
 
 func TestEffectiveReviewModel_Custom(t *testing.T) {
-	cfg := &ReviewConfig{ReviewModel: "opus"}
-	if got := cfg.EffectiveReviewModel(); got != "opus" {
-		t.Errorf("EffectiveReviewModel() = %q, want %q", got, "opus")
+	cfg := &ReviewConfig{Provider: "anthropic", ReviewModel: "claude-opus-4-6"}
+	if got := cfg.EffectiveReviewModel(); got != "claude-opus-4-6" {
+		t.Errorf("EffectiveReviewModel() = %q, want %q", got, "claude-opus-4-6")
 	}
 }
 
-func TestEffectiveTriageModel_Default(t *testing.T) {
-	cfg := &ReviewConfig{}
+func TestEffectiveTriageModel_Anthropic(t *testing.T) {
+	cfg := &ReviewConfig{Provider: "anthropic"}
+	if got := cfg.EffectiveTriageModel(); got != "claude-haiku-4-5-20251001" {
+		t.Errorf("EffectiveTriageModel() = %q, want %q", got, "claude-haiku-4-5-20251001")
+	}
+}
+
+func TestEffectiveTriageModel_Claude(t *testing.T) {
+	cfg := &ReviewConfig{Provider: "claude"}
 	if got := cfg.EffectiveTriageModel(); got != "haiku" {
 		t.Errorf("EffectiveTriageModel() = %q, want %q", got, "haiku")
 	}
 }
 
 func TestEffectiveTriageModel_Custom(t *testing.T) {
-	cfg := &ReviewConfig{TriageModel: "sonnet"}
-	if got := cfg.EffectiveTriageModel(); got != "sonnet" {
-		t.Errorf("EffectiveTriageModel() = %q, want %q", got, "sonnet")
+	cfg := &ReviewConfig{Provider: "anthropic", TriageModel: "claude-sonnet-4-20250514"}
+	if got := cfg.EffectiveTriageModel(); got != "claude-sonnet-4-20250514" {
+		t.Errorf("EffectiveTriageModel() = %q, want %q", got, "claude-sonnet-4-20250514")
 	}
 }
 
-func TestValidate_InvalidModel(t *testing.T) {
-	cfg := &ReviewConfig{ReviewModel: "gpt-4"}
+func TestValidate_ProviderRequired(t *testing.T) {
+	cfg := &ReviewConfig{}
 	if err := cfg.Validate(); err == nil {
-		t.Error("expected error for invalid review_model")
-	}
-	cfg = &ReviewConfig{TriageModel: "invalid"}
-	if err := cfg.Validate(); err == nil {
-		t.Error("expected error for invalid triage_model")
+		t.Error("expected error for missing provider")
 	}
 }
 
-func TestValidate_ValidModels(t *testing.T) {
+func TestValidate_InvalidProvider(t *testing.T) {
+	cfg := &ReviewConfig{Provider: "openai"}
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for invalid provider")
+	}
+}
+
+func TestValidate_InvalidModelForClaude(t *testing.T) {
+	cfg := &ReviewConfig{Provider: "claude", ReviewModel: "gpt-4"}
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for invalid review_model on claude provider")
+	}
+	cfg = &ReviewConfig{Provider: "claude", TriageModel: "invalid"}
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for invalid triage_model on claude provider")
+	}
+}
+
+func TestValidate_AnyModelForAnthropic(t *testing.T) {
+	cfg := &ReviewConfig{Provider: "anthropic", ReviewModel: "claude-opus-4-6", TriageModel: "anything"}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidate_ValidCLIModels(t *testing.T) {
 	for _, m := range []string{"haiku", "sonnet", "opus"} {
-		cfg := &ReviewConfig{ReviewModel: m, TriageModel: m}
+		cfg := &ReviewConfig{Provider: "claude", ReviewModel: m, TriageModel: m}
 		if err := cfg.Validate(); err != nil {
 			t.Errorf("unexpected error for model %q: %v", m, err)
+		}
+	}
+}
+
+func TestValidate_ValidProviders(t *testing.T) {
+	for _, p := range []string{"anthropic", "api", "claude"} {
+		cfg := &ReviewConfig{Provider: p}
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("unexpected error for provider %q: %v", p, err)
 		}
 	}
 }

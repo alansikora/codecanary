@@ -141,16 +141,19 @@ func (p *anthropicProvider) Run(ctx context.Context, prompt string, opts RunOpts
 		return nil, fmt.Errorf("Anthropic API returned no text content")
 	}
 
+	usage := CallUsage{
+		Model:             msgResp.Model,
+		InputTokens:       msgResp.Usage.InputTokens,
+		OutputTokens:      msgResp.Usage.OutputTokens,
+		CacheReadTokens:   msgResp.Usage.CacheReadInputTokens,
+		CacheCreateTokens: msgResp.Usage.CacheCreationInputTokens,
+		DurationMS:        durationMS,
+	}
+	usage.CostUSD = estimateCost(usage)
+
 	return &claudeResult{
-		Text: strings.Join(textParts, ""),
-		Usage: CallUsage{
-			Model:             msgResp.Model,
-			InputTokens:       msgResp.Usage.InputTokens,
-			OutputTokens:      msgResp.Usage.OutputTokens,
-			CacheReadTokens:   msgResp.Usage.CacheReadInputTokens,
-			CacheCreateTokens: msgResp.Usage.CacheCreationInputTokens,
-			DurationMS:        durationMS,
-		},
+		Text:  strings.Join(textParts, ""),
+		Usage: usage,
 	}, nil
 }
 
