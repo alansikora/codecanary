@@ -33,8 +33,14 @@ type ReviewConfig struct {
 }
 
 // validCLIModels is the set of allowed model values for the Claude CLI provider.
+// Accepts both aliases (sonnet) and full model IDs (claude-sonnet-4-6).
 var validCLIModels = map[string]bool{
 	"haiku": true, "sonnet": true, "opus": true,
+	"claude-haiku-4-5-20251001": true,
+	"claude-sonnet-4-6":         true,
+	"claude-sonnet-4-5":         true,
+	"claude-opus-4-6":           true,
+	"claude-opus-4-5":           true,
 }
 
 // EffectiveReviewModel returns the configured review model.
@@ -46,7 +52,7 @@ func (c *ReviewConfig) EffectiveReviewModel() string {
 	if c != nil {
 		switch c.Provider {
 		case "claude":
-			return "sonnet"
+			return "claude-sonnet-4-6"
 		case "openrouter":
 			return "anthropic/claude-sonnet-4-6"
 		case "openai":
@@ -65,7 +71,7 @@ func (c *ReviewConfig) EffectiveTriageModel() string {
 	if c != nil {
 		switch c.Provider {
 		case "claude":
-			return "haiku"
+			return "claude-haiku-4-5-20251001"
 		case "openrouter":
 			return "anthropic/claude-haiku-4-5-20251001"
 		case "openai":

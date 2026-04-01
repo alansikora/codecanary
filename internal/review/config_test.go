@@ -63,8 +63,8 @@ func TestEffectiveReviewModel_Anthropic(t *testing.T) {
 
 func TestEffectiveReviewModel_Claude(t *testing.T) {
 	cfg := &ReviewConfig{Provider: "claude"}
-	if got := cfg.EffectiveReviewModel(); got != "sonnet" {
-		t.Errorf("EffectiveReviewModel() = %q, want %q", got, "sonnet")
+	if got := cfg.EffectiveReviewModel(); got != "claude-sonnet-4-6" {
+		t.Errorf("EffectiveReviewModel() = %q, want %q", got, "claude-sonnet-4-6")
 	}
 }
 
@@ -84,8 +84,8 @@ func TestEffectiveTriageModel_Anthropic(t *testing.T) {
 
 func TestEffectiveTriageModel_Claude(t *testing.T) {
 	cfg := &ReviewConfig{Provider: "claude"}
-	if got := cfg.EffectiveTriageModel(); got != "haiku" {
-		t.Errorf("EffectiveTriageModel() = %q, want %q", got, "haiku")
+	if got := cfg.EffectiveTriageModel(); got != "claude-haiku-4-5-20251001" {
+		t.Errorf("EffectiveTriageModel() = %q, want %q", got, "claude-haiku-4-5-20251001")
 	}
 }
 
