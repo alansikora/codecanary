@@ -56,8 +56,8 @@ func TestEffectiveMaxTotalSize_Custom(t *testing.T) {
 
 func TestEffectiveReviewModel_Anthropic(t *testing.T) {
 	cfg := &ReviewConfig{Provider: "anthropic"}
-	if got := cfg.EffectiveReviewModel(); got != "claude-sonnet-4-20250514" {
-		t.Errorf("EffectiveReviewModel() = %q, want %q", got, "claude-sonnet-4-20250514")
+	if got := cfg.EffectiveReviewModel(); got != "claude-sonnet-4-6" {
+		t.Errorf("EffectiveReviewModel() = %q, want %q", got, "claude-sonnet-4-6")
 	}
 }
 

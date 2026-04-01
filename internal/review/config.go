@@ -48,12 +48,12 @@ func (c *ReviewConfig) EffectiveReviewModel() string {
 		case "claude":
 			return "sonnet"
 		case "openrouter":
-			return "anthropic/claude-sonnet-4-20250514"
+			return "anthropic/claude-sonnet-4-6"
 		case "openai":
-			return "gpt-4.1"
+			return "gpt-5.4"
 		}
 	}
-	return "claude-sonnet-4-20250514" // anthropic
+	return "claude-sonnet-4-6" // anthropic
 }
 
 // EffectiveTriageModel returns the configured triage model.
@@ -69,7 +69,7 @@ func (c *ReviewConfig) EffectiveTriageModel() string {
 		case "openrouter":
 			return "anthropic/claude-haiku-4-5-20251001"
 		case "openai":
-			return "gpt-4.1-mini"
+			return "gpt-5.4-mini"
 		}
 	}
 	return "claude-haiku-4-5-20251001" // anthropic
