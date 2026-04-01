@@ -74,9 +74,13 @@ func run() error {
 		return fmt.Errorf("branch %s already exists — delete it with `git branch -D %s` to retry", branch, branch)
 	}
 
-	// 4. Install the CodeCanary Review App.
-	if err := auth.InstallCodeCanaryApp(repo, reader); err != nil {
-		return fmt.Errorf("installing CodeCanary app: %w", err)
+	// 4. Install the CodeCanary Review App (skip if already installed).
+	if auth.CheckAppInstalled(repo, "codecanary-bot") {
+		fmt.Fprintf(os.Stderr, "CodeCanary Review app already installed on %s\n\n", repo)
+	} else {
+		if err := auth.InstallCodeCanaryApp(repo, reader); err != nil {
+			return fmt.Errorf("installing CodeCanary app: %w", err)
+		}
 	}
 
 	// 5. Auth: prompt for method.
@@ -340,8 +344,12 @@ func authenticateClaude(repo string, reader *bufio.Reader) (string, string, erro
 	}
 
 	// OAuth flow (default).
-	if err := auth.InstallGitHubApp(repo, reader); err != nil {
-		return "", "", fmt.Errorf("installing Claude GitHub App: %w", err)
+	if auth.CheckAppInstalled(repo, "claude") {
+		fmt.Fprintf(os.Stderr, "Claude GitHub App already installed on %s\n\n", repo)
+	} else {
+		if err := auth.InstallGitHubApp(repo, reader); err != nil {
+			return "", "", fmt.Errorf("installing Claude GitHub App: %w", err)
+		}
 	}
 
 	token, err := auth.OAuthToken()
