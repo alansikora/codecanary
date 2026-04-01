@@ -150,8 +150,11 @@ func fileDeletedInDiff(diff, path string) bool {
 	if idx < 0 {
 		return false
 	}
-	// Find the next line after the "--- a/<path>" marker.
+	// Ensure full path match (not a prefix of a longer filename).
 	rest := diff[idx+len(marker):]
+	if len(rest) > 0 && rest[0] != '\n' && rest[0] != '\r' {
+		return false
+	}
 	nl := strings.Index(rest, "\n")
 	if nl < 0 {
 		return false
