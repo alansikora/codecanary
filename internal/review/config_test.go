@@ -206,6 +206,24 @@ triage_model: haiku
 	}
 }
 
+func TestApplyLocalConfigOverlay_IgnoresExplicitVersionZero(t *testing.T) {
+	base := &ReviewConfig{
+		Version:     1,
+		Provider:    "anthropic",
+		TriageModel: "claude-haiku-4-5-20251001",
+	}
+	v0 := 0
+	merged := applyLocalConfigOverlay(base, &configLocalOverlayYAML{Version: &v0})
+	if merged.Version != 1 {
+		t.Fatalf("expected base version 1 preserved when overlay has version: 0, got %d", merged.Version)
+	}
+	v1 := 1
+	merged = applyLocalConfigOverlay(&ReviewConfig{Version: 0, Provider: "anthropic", TriageModel: "claude-haiku-4-5-20251001"}, &configLocalOverlayYAML{Version: &v1})
+	if merged.Version != 1 {
+		t.Fatalf("expected overlay version: 1 applied, got %d", merged.Version)
+	}
+}
+
 func TestApplyConfigLocalOverlay_YAMLResetsMaxBudgetToZero(t *testing.T) {
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "config.yml")

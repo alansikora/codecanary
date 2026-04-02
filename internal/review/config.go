@@ -168,7 +168,8 @@ func LoadConfig(path string) (*ReviewConfig, error) {
 // configLocalOverlayYAML is the YAML shape of config.local.yml. Pointer fields
 // mean the key was present in the file; nil means inherit from the main config.
 // That allows explicit numeric zero (e.g. max_budget_usd: 0 for unlimited) to
-// override a non-zero value from config.yml.
+// override a non-zero value from config.yml. The version field is special:
+// explicit version: 0 is ignored so the overlay cannot downgrade a validated base.
 type configLocalOverlayYAML struct {
 	Version      *int              `yaml:"version"`
 	Provider     *string           `yaml:"provider"`
@@ -194,7 +195,10 @@ func applyLocalConfigOverlay(base *ReviewConfig, o *configLocalOverlayYAML) *Rev
 	if o == nil {
 		return &out
 	}
-	if o.Version != nil {
+	// Ignore explicit version: 0 in the overlay. Zero is indistinguishable from
+	// "omitted" in the main config after LoadConfig, and applying it would
+	// downgrade a validated base (e.g. version 1) without tripping Validate().
+	if o.Version != nil && *o.Version != 0 {
 		out.Version = *o.Version
 	}
 	if o.Provider != nil {
