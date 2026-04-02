@@ -17,7 +17,9 @@ Most AI code review tools are one-shot: paste a PR, get feedback, repeat from sc
 - **Transparent** — every resolution is visible in the PR thread: why a finding was resolved, what the author said, and how CodeCanary interpreted it. No black-box decisions.
 - **Configuration-as-code** — project-specific rules, severity levels, ignore patterns, and context in `.codecanary/config.yml`.
 
-## Install
+## Getting Started
+
+### Step 1: Install
 
 ```sh
 curl -fsSL https://codecanary.sh/install | sh
@@ -25,25 +27,43 @@ curl -fsSL https://codecanary.sh/install | sh
 
 This downloads the `codecanary` binary and installs it to `/usr/local/bin` (or `~/.local/bin`).
 
-## Setup
+### Step 2: Choose your setup
+
+CodeCanary works in two modes. Pick one (or both):
+
+#### Local reviews — review changes on your machine
 
 ```sh
-codecanary setup local    # review changes on this machine
-codecanary setup github   # automated PR reviews via GitHub Actions
+codecanary setup local
 ```
 
-Or just run `codecanary setup` to choose interactively.
-
-**Local setup** walks you through:
+This walks you through:
 1. Choosing an AI provider (Anthropic, OpenAI, OpenRouter, or Claude CLI)
 2. Entering and validating your API key (stored securely in macOS Keychain / Linux Secret Service)
 3. Creating a `.codecanary/config.yml` with your provider and model
 
-**GitHub setup** does all of the above, plus:
+Then review your changes:
+
+```sh
+codecanary review          # diffs against main and reviews locally
+codecanary review --post   # same, but also posts findings to the PR on GitHub
+```
+
+If your branch has an open PR, CodeCanary auto-detects it. If not, it diffs against the default branch. Local reviews track state in `.codecanary/.state/` for incremental reviews on subsequent runs.
+
+#### GitHub Actions — automated PR reviews on every push
+
+```sh
+codecanary setup github
+```
+
+This does everything from local setup, plus:
 4. Installing the CodeCanary Review GitHub App
 5. Setting your API key as a GitHub repo secret
-6. Creating the GitHub Actions workflow
+6. Creating the GitHub Actions workflow (`.github/workflows/codecanary.yml`)
 7. Opening a PR with everything ready to merge
+
+Once merged, CodeCanary automatically reviews every PR on open and update.
 
 ### Canary
 
@@ -54,35 +74,23 @@ curl -fsSL https://codecanary.sh/install | sh -s -- --canary
 codecanary setup github --canary
 ```
 
-## Local Review
-
-```sh
-codecanary review          # auto-detects PR or diffs against main
-codecanary review --post   # auto-detect PR + post findings to GitHub
-```
-
-**How it works:**
-1. If your branch has an open PR, CodeCanary auto-detects it and runs the same review as CI
-2. If no PR exists, it diffs your branch against the default branch (main/master) and reviews locally
-3. Local reviews track state in `.codecanary/.state/` for incremental reviews on subsequent runs
-
-**Rails 8.1 Local CI integration:**
-
-```ruby
-# config/ci.rb
-CI.run do
-  step "Code Review", "codecanary", "review"
-end
-```
-
 ## Credential Management
 
 ```sh
-codecanary auth status    # show stored credentials
-codecanary auth delete    # remove a stored credential
+codecanary auth status    # show which API keys are stored
+codecanary auth delete    # remove a stored API key
 ```
 
-API keys are stored in macOS Keychain or Linux Secret Service (via `codecanary setup local`). Environment variables always override stored credentials — useful for CI or testing with a different key.
+API keys are stored in macOS Keychain (macOS) or Secret Service (Linux). Environment variables always override stored credentials — useful for CI or testing with a different key.
+
+### Provider credentials
+
+| Provider | What you need | Where to get it |
+|----------|--------------|-----------------|
+| Anthropic | API key | [console.anthropic.com](https://console.anthropic.com) |
+| OpenAI | API key | [platform.openai.com](https://platform.openai.com) |
+| OpenRouter | API key | [openrouter.ai](https://openrouter.ai) |
+| Claude CLI | Logged-in `claude` binary | Run `claude` and complete the login flow |
 
 ## Config
 

@@ -3,15 +3,15 @@ version: 1
 provider: claude
 
 context: |
-  Go CLI tool for AI-powered GitHub PR code reviews. Two binaries: a review engine
-  (cobra CLI) and an interactive setup wizard. Uses gh CLI for GitHub API, claude CLI
-  for AI inference. Includes a Cloudflare Worker (TypeScript) for OIDC token exchange.
+  Go CLI tool for AI-powered GitHub PR code reviews. Single binary with review, setup,
+  and credential management subcommands. Uses gh CLI for GitHub API, claude CLI for AI
+  inference. Includes a Cloudflare Worker (TypeScript) for OIDC token exchange.
   Key conventions: minimize shell code (logic belongs in Go), config is a flat YAML file
-  at repo root, no test suite yet so refactors need extra care.
+  at .codecanary/config.yml, credentials stored in OS keychain.
 
 rules:
   - id: no-logic-in-shell
-    description: "Shell scripts (setup.sh, GitHub Actions) must be thin wrappers. Business logic, validation, and control flow belong in Go binaries, not shell code."
+    description: "Shell scripts (install.sh, GitHub Actions) must be thin wrappers. Business logic, validation, and control flow belong in Go binaries, not shell code."
     severity: warning
     paths: ["*.sh", ".github/workflows/*.yml"]
 
