@@ -167,6 +167,11 @@ func LoadConfig(path string) (*ReviewConfig, error) {
 
 // MergeReviewConfig overlays non-empty fields from over onto a copy of base.
 // Slices (rules, ignore) are replaced entirely when over provides a non-empty slice.
+//
+// Numeric limits (MaxBudgetUSD, MaxFileSize, MaxTotalSize, TimeoutMins) are only
+// applied when the overlay value is > 0, so omitted YAML fields inherit from base.
+// That means a non-zero cap in config.yml cannot be reset to “unlimited” (0)
+// via config.local.yml without a schema change (e.g. pointers); see overlay docs.
 func MergeReviewConfig(base, over *ReviewConfig) *ReviewConfig {
 	if base == nil {
 		return nil
