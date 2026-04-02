@@ -33,9 +33,9 @@ func init() {
 	}
 }
 
-func validateOpenAI(cfg *ReviewConfig) error {
-	if cfg.APIBase != "" && !isValidURL(cfg.APIBase) {
-		return fmt.Errorf("invalid api_base %q: must be an HTTP(S) URL", cfg.APIBase)
+func validateOpenAI(mc *ModelConfig) error {
+	if mc.APIBase != "" && !isValidURL(mc.APIBase) {
+		return fmt.Errorf("invalid api_base %q: must be an HTTP(S) URL", mc.APIBase)
 	}
 	return nil
 }
@@ -50,14 +50,14 @@ type openaiProvider struct {
 	env     []string
 }
 
-func newOpenAIProvider(cfg *ReviewConfig, env []string) ModelProvider {
+func newOpenAIProvider(mc *ModelConfig, env []string) ModelProvider {
 	apiBase := "https://api.openai.com/v1"
-	if cfg.APIBase != "" {
-		apiBase = cfg.APIBase
+	if mc.APIBase != "" {
+		apiBase = mc.APIBase
 	}
 	keyEnv := "OPENAI_API_KEY"
-	if cfg.APIKeyEnv != "" {
-		keyEnv = cfg.APIKeyEnv
+	if mc.APIKeyEnv != "" {
+		keyEnv = mc.APIKeyEnv
 	}
 	return &openaiProvider{apiBase: apiBase, keyEnv: keyEnv, env: env}
 }

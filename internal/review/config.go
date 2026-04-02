@@ -15,8 +15,18 @@ func isValidURL(s string) bool {
 	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
 }
 
+// ModelConfig holds provider and model settings for a specific role (review or triage).
+type ModelConfig struct {
+	Provider  string `yaml:"provider"`
+	Model     string `yaml:"model"`
+	APIBase   string `yaml:"api_base,omitempty"`   // override base URL (openai provider only)
+	APIKeyEnv string `yaml:"api_key_env,omitempty"` // env var name for API key (default depends on provider)
+}
+
 type ReviewConfig struct {
 	Version      int               `yaml:"version"`
+	Review       ModelConfig       `yaml:"review"`
+	Triage       ModelConfig       `yaml:"triage"`
 	Rules        []Rule            `yaml:"rules"`
 	Context      string            `yaml:"context"`
 	Ignore       []string          `yaml:"ignore"`
@@ -24,38 +34,26 @@ type ReviewConfig struct {
 	MaxTotalSize int               `yaml:"max_total_size"` // total file content limit in bytes (default 500KB)
 	MaxBudgetUSD float64           `yaml:"max_budget_usd"`  // per-invocation spending limit in USD (default 0 = unlimited)
 	TimeoutMins  int               `yaml:"timeout_minutes"` // per-invocation timeout in minutes (default 5)
-	ReviewModel  string            `yaml:"review_model"`    // model for main review (default: sonnet)
-	TriageModel  string            `yaml:"triage_model"`    // model for thread re-evaluation (required)
-	Provider     string            `yaml:"provider"`        // "anthropic", "openai", "openrouter", or "claude"
-	APIBase      string            `yaml:"api_base"`        // override base URL (openai provider only)
-	APIKeyEnv    string            `yaml:"api_key_env"`     // env var name for API key (default depends on provider)
 	Evaluation   *EvaluationConfig `yaml:"evaluation"`
+
 }
 
 // EffectiveReviewModel returns the configured review model.
-// Each provider has its own default when review_model is not set.
-// Panics on nil config or unknown provider — both should be caught by Validate().
+// review.model is required — Validate() rejects configs without it.
 func (c *ReviewConfig) EffectiveReviewModel() string {
 	if c == nil {
 		panic("EffectiveReviewModel called with nil config")
 	}
-	if c.ReviewModel != "" {
-		return c.ReviewModel
-	}
-	pf, ok := providers[c.Provider]
-	if !ok {
-		panic(fmt.Sprintf("unknown provider %q (should have been caught by config validation)", c.Provider))
-	}
-	return pf.SuggestedReviewModel
+	return c.Review.Model
 }
 
 // EffectiveTriageModel returns the configured triage model.
-// triage_model is required — Validate() rejects configs without it.
+// triage.model is required — Validate() rejects configs without it.
 func (c *ReviewConfig) EffectiveTriageModel() string {
 	if c == nil {
 		panic("EffectiveTriageModel called with nil config")
 	}
-	return c.TriageModel
+	return c.Triage.Model
 }
 
 // EvaluationConfig holds per-evaluation-type settings for re-evaluation prompts.
@@ -106,6 +104,26 @@ var validSeverities = map[string]bool{
 	"critical": true, "bug": true, "warning": true, "suggestion": true, "nitpick": true,
 }
 
+// validateModelConfig checks a single ModelConfig section (review or triage).
+func validateModelConfig(mc *ModelConfig, role string) error {
+	if mc.Provider == "" {
+		return fmt.Errorf("%s.provider is required (valid: %s)", role, strings.Join(providerNames(), ", "))
+	}
+	if mc.Model == "" {
+		return fmt.Errorf("%s.model is required", role)
+	}
+	pf, ok := providers[mc.Provider]
+	if !ok {
+		return fmt.Errorf("invalid %s.provider %q (valid: %s)", role, mc.Provider, strings.Join(providerNames(), ", "))
+	}
+	if pf.Validate != nil {
+		if err := pf.Validate(mc); err != nil {
+			return fmt.Errorf("%s: %w", role, err)
+		}
+	}
+	return nil
+}
+
 // Validate checks that config field values are within expected ranges.
 func (c *ReviewConfig) Validate() error {
 	if c.Version != 0 && c.Version != 1 {
@@ -123,20 +141,11 @@ func (c *ReviewConfig) Validate() error {
 	if c.MaxBudgetUSD < 0 {
 		return fmt.Errorf("max_budget_usd must be non-negative, got %f", c.MaxBudgetUSD)
 	}
-	if c.Provider == "" {
-		return fmt.Errorf("provider is required (valid: %s)", strings.Join(providerNames(), ", "))
+	if err := validateModelConfig(&c.Review, "review"); err != nil {
+		return err
 	}
-	if c.TriageModel == "" {
-		return fmt.Errorf("triage_model is required — set the model used for thread re-evaluation")
-	}
-	pf, ok := providers[c.Provider]
-	if !ok {
-		return fmt.Errorf("invalid provider %q (valid: %s)", c.Provider, strings.Join(providerNames(), ", "))
-	}
-	if pf.Validate != nil {
-		if err := pf.Validate(c); err != nil {
-			return err
-		}
+	if err := validateModelConfig(&c.Triage, "triage"); err != nil {
+		return err
 	}
 	for i, r := range c.Rules {
 		if r.Severity != "" && !validSeverities[r.Severity] {

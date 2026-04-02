@@ -16,8 +16,8 @@ func init() {
 	}
 }
 
-func validateOpenRouter(cfg *ReviewConfig) error {
-	if cfg.APIBase != "" {
+func validateOpenRouter(mc *ModelConfig) error {
+	if mc.APIBase != "" {
 		return fmt.Errorf("api_base is not supported by the openrouter provider")
 	}
 	return nil
@@ -31,10 +31,10 @@ type openrouterProvider struct {
 	env    []string
 }
 
-func newOpenRouterProvider(cfg *ReviewConfig, env []string) ModelProvider {
+func newOpenRouterProvider(mc *ModelConfig, env []string) ModelProvider {
 	keyEnv := "OPENROUTER_API_KEY"
-	if cfg.APIKeyEnv != "" {
-		keyEnv = cfg.APIKeyEnv
+	if mc.APIKeyEnv != "" {
+		keyEnv = mc.APIKeyEnv
 	}
 	return &openrouterProvider{keyEnv: keyEnv, env: env}
 }

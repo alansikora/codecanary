@@ -9,26 +9,60 @@ var validSecretName = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 var validActionRef = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 
 // GenerateWorkflow produces the GitHub Actions workflow YAML for CodeCanary.
-// secretName must be a valid GitHub Actions secret name (uppercase, digits, underscores).
-// actionRef must be a valid action version tag (e.g. "v1", "canary").
-func GenerateWorkflow(secretName, actionRef string) (string, error) {
-	if !validSecretName.MatchString(secretName) {
-		return "", fmt.Errorf("invalid secret name %q — must match [A-Z][A-Z0-9_]*", secretName)
+// reviewSecretName and triageSecretName are GitHub Actions secret names.
+// When both providers use the same secret, pass the same name for both.
+func GenerateWorkflow(reviewSecretName, triageSecretName, actionRef string) (string, error) {
+	if !validSecretName.MatchString(reviewSecretName) {
+		return "", fmt.Errorf("invalid secret name %q — must match [A-Z][A-Z0-9_]*", reviewSecretName)
+	}
+	if triageSecretName != "" && !validSecretName.MatchString(triageSecretName) {
+		return "", fmt.Errorf("invalid secret name %q — must match [A-Z][A-Z0-9_]*", triageSecretName)
 	}
 	if !validActionRef.MatchString(actionRef) {
 		return "", fmt.Errorf("invalid action ref %q — must match [a-zA-Z0-9._-]+", actionRef)
 	}
 
+	// Normalize: if triage secret is empty or same as review, treat as single-secret.
+	if triageSecretName == "" {
+		triageSecretName = reviewSecretName
+	}
+	sameSec := triageSecretName == reviewSecretName
+
 	// Build the action step's with: inputs and optional step-level env: block.
 	var withAuth, stepEnv string
-	switch secretName {
-	case "ANTHROPIC_API_KEY":
-		withAuth = "          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}"
-	case "CLAUDE_CODE_OAUTH_TOKEN":
-		withAuth = "          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}"
-	default:
-		// Custom provider — pass the key as a step-level env var.
-		stepEnv = fmt.Sprintf("\n        env:\n          %s: ${{ secrets.%s }}", secretName, secretName)
+
+	if sameSec {
+		// Single provider — same behavior as before.
+		switch reviewSecretName {
+		case "ANTHROPIC_API_KEY":
+			withAuth = "          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}"
+		case "CLAUDE_CODE_OAUTH_TOKEN":
+			withAuth = "          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}"
+		default:
+			stepEnv = fmt.Sprintf("\n        env:\n          %s: ${{ secrets.%s }}", reviewSecretName, reviewSecretName)
+		}
+	} else {
+		// Two different providers — pass both secrets via env.
+		stepEnv = "\n        env:"
+		for _, name := range uniqueSecrets(reviewSecretName, triageSecretName) {
+			// Use with: for well-known action inputs, env: for the rest.
+			switch name {
+			case "ANTHROPIC_API_KEY":
+				withAuth += "          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}\n"
+			case "CLAUDE_CODE_OAUTH_TOKEN":
+				withAuth += "          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}\n"
+			default:
+				stepEnv += fmt.Sprintf("\n          %s: ${{ secrets.%s }}", name, name)
+			}
+		}
+		// If all secrets were handled via with:, clear stepEnv.
+		if stepEnv == "\n        env:" {
+			stepEnv = ""
+		}
+		// Trim trailing newline from withAuth if present.
+		if len(withAuth) > 0 && withAuth[len(withAuth)-1] == '\n' {
+			withAuth = withAuth[:len(withAuth)-1]
+		}
 	}
 
 	return fmt.Sprintf(`name: CodeCanary
@@ -92,4 +126,17 @@ jobs:
           USAGE_DATA: ${{ env.CODECANARY_USAGE }}
         run: codecanary review costs --data "$USAGE_DATA"
 `, actionRef, withAuth, stepEnv), nil
+}
+
+// uniqueSecrets returns deduplicated secret names in order.
+func uniqueSecrets(names ...string) []string {
+	seen := make(map[string]bool)
+	var result []string
+	for _, n := range names {
+		if n != "" && !seen[n] {
+			seen[n] = true
+			result = append(result, n)
+		}
+	}
+	return result
 }

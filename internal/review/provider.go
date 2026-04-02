@@ -37,9 +37,9 @@ type PricingEntry struct {
 // ProviderFactory holds everything needed to construct, validate, and
 // price a provider. Each provider file registers one of these via init().
 type ProviderFactory struct {
-	New                func(cfg *ReviewConfig, env []string) ModelProvider
-	Validate           func(cfg *ReviewConfig) error
-	Pricing            []PricingEntry
+	New                  func(mc *ModelConfig, env []string) ModelProvider
+	Validate             func(mc *ModelConfig) error
+	Pricing              []PricingEntry
 	SuggestedReviewModel string
 	SuggestedTriageModel string
 }
@@ -58,20 +58,29 @@ func providerNames() []string {
 	return names
 }
 
-// NewProvider constructs the appropriate ModelProvider based on config.
-// The provider field is required — config validation rejects empty/unknown values.
-func NewProvider(cfg *ReviewConfig, env []string) ModelProvider {
-	if cfg == nil {
-		panic("NewProvider called with nil config")
+// NewProviderForRole constructs the appropriate ModelProvider for a role-specific ModelConfig.
+func NewProviderForRole(mc *ModelConfig, env []string) ModelProvider {
+	if mc == nil {
+		panic("NewProviderForRole called with nil ModelConfig")
 	}
-	pf, ok := providers[cfg.Provider]
+	pf, ok := providers[mc.Provider]
 	if !ok {
-		panic(fmt.Sprintf("unknown provider %q (should have been caught by config validation)", cfg.Provider))
+		panic(fmt.Sprintf("unknown provider %q (should have been caught by config validation)", mc.Provider))
 	}
 	if pf.New == nil {
-		panic(fmt.Sprintf("provider %q registered without a New constructor", cfg.Provider))
+		panic(fmt.Sprintf("provider %q registered without a New constructor", mc.Provider))
 	}
-	return pf.New(cfg, env)
+	return pf.New(mc, env)
+}
+
+// GetSuggestedReviewModel returns the suggested review model for a provider.
+// Used by the setup wizard to pre-select the recommended option.
+func GetSuggestedReviewModel(provider string) string {
+	pf, ok := providers[provider]
+	if !ok {
+		return ""
+	}
+	return pf.SuggestedReviewModel
 }
 
 // GetSuggestedTriageModel returns the suggested triage model for a provider.

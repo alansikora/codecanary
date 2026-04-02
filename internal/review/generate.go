@@ -451,22 +451,34 @@ const StarterRulesSection = `# rules:
 // StarterConfig is the static template used when creating a new config.
 const StarterConfig = `version: 1
 
-# Required — uncomment one provider block:
+# Required — uncomment one configuration:
 #
-# provider: anthropic
-# review_model: claude-sonnet-4-6
-# triage_model: claude-haiku-4-5-20251001
+# review:
+#   provider: anthropic
+#   model: claude-sonnet-4-6
+# triage:
+#   provider: anthropic
+#   model: claude-haiku-4-5-20251001
 #
-# provider: openai
-# review_model: gpt-5.4
-# triage_model: gpt-5.4-mini
+# review:
+#   provider: openai
+#   model: gpt-5.4
+# triage:
+#   provider: openai
+#   model: gpt-5.4-mini
 #
-# provider: openrouter
-# review_model: anthropic/claude-sonnet-4-6
-# triage_model: anthropic/claude-haiku-4-5-20251001
+# review:
+#   provider: openrouter
+#   model: anthropic/claude-sonnet-4-6
+# triage:
+#   provider: openrouter
+#   model: anthropic/claude-haiku-4-5-20251001
 #
-# provider: claude
-# review_model: claude-sonnet-4-6
-# triage_model: claude-haiku-4-5-20251001
+# review:
+#   provider: claude
+#   model: sonnet
+# triage:
+#   provider: claude
+#   model: haiku
 
 ` + StarterRulesSection

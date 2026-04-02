@@ -86,7 +86,7 @@ The review engine (`runner.go`) is provider- and platform-agnostic. It depends o
 Abstracts LLM invocations. The core engine calls `provider.Run(ctx, prompt, opts)` and gets back text + usage metadata. It never knows which LLM backend is being used.
 
 **Implementations**: `anthropic`, `openai`, `openrouter`, `claude` (CLI).
-**Selection**: factory registry in `provider.go` — `NewProvider(cfg, env)` returns the right implementation based on `cfg.Provider`.
+**Selection**: factory registry in `provider.go` — `NewProviderForRole(mc, env)` returns the right implementation based on `mc.Provider`.
 
 Adding a new LLM provider means: create `provider_<name>.go` and register a `ProviderFactory` (constructor, validation, pricing, default models) via `init()`.
 
@@ -104,7 +104,7 @@ There is a **single `Run()` function** — not separate paths for GitHub vs. loc
 
 1. Fetch PR data (or local diff)
 2. Load config, project docs, file contents
-3. Create provider via `NewProvider()` (factory, provider-agnostic)
+3. Create review + triage providers via `NewProviderForRole()` (factory, provider-agnostic)
 4. Load previous findings via `platform.LoadPreviousFindings()`
 5. If incremental: triage threads, evaluate via provider, handle resolutions
 6. Build and execute main review prompt
@@ -113,7 +113,7 @@ There is a **single `Run()` function** — not separate paths for GitHub vs. loc
 
 ### Other architecture notes
 
-- **Config** is `.codecanary/config.yml` (directory structure). Legacy `.codecanary.yml` at repo root is still supported with a deprecation warning.
+- **Config** is `.codecanary/config.yml` (directory structure). Uses nested `review:` and `triage:` sections, each with `provider` and `model`. Legacy `.codecanary.yml` at repo root is still supported with a deprecation warning.
 - **Incremental reviews**: on re-push, triage existing threads (Go-driven classifier in `triage.go`), evaluate changed threads via provider (triage model), then review only new code
 - **Dual marker detection**: reads both `codecanary:review` and legacy `clanopy:review` HTML markers for backward compatibility
 - **Anti-hallucination**: explicit file allowlist, line validation against diff, max finding distance threshold

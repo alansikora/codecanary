@@ -10,6 +10,7 @@ import (
 
 	"github.com/alansikora/codecanary/internal/auth"
 	"github.com/alansikora/codecanary/internal/credentials"
+	"github.com/alansikora/codecanary/internal/review"
 	"github.com/charmbracelet/huh"
 )
 
@@ -77,90 +78,60 @@ func RunGitHub(canary bool) error {
 		return fmt.Errorf("installing CodeCanary app: %w", err)
 	}
 
-	// 6. Select provider.
-	provider, err := SelectProvider()
+	// 6. Review provider.
+	reviewProvider, err := SelectProvider("review")
 	if err != nil {
 		return err
 	}
 
-	// 7. Provider-specific auth and secret setup.
-	var secretName string
-	var apiKey string
+	// 7. Review provider credentials + secret.
+	reviewSecretName, reviewAPIKey, err := collectGitHubCredentials(reviewProvider, repo, reader)
+	if err != nil {
+		return err
+	}
 
-	if provider == "claude" {
-		// OAuth flow for Claude CLI.
-		if err := auth.InstallGitHubApp(repo, reader); err != nil {
-			return fmt.Errorf("installing Claude GitHub App: %w", err)
-		}
-		token, err := auth.OAuthToken()
-		if err != nil {
-			return fmt.Errorf("OAuth authentication failed: %w", err)
-		}
-		secretName = "CLAUDE_CODE_OAUTH_TOKEN"
-		apiKey = token
-	} else {
-		// Collect API key.
-		key, err := InputAPIKey(provider)
+	// 8. Review model.
+	reviewModel, err := SelectModel(reviewProvider)
+	if err != nil {
+		return err
+	}
+
+	// 9. Triage provider.
+	triageProvider, err := SelectTriageProvider(reviewProvider)
+	if err != nil {
+		return err
+	}
+
+	// 10. Triage provider credentials + secret (only if different).
+	triageSecretName := reviewSecretName
+	triageAPIKey := reviewAPIKey
+	if triageProvider != reviewProvider {
+		triageSecretName, triageAPIKey, err = collectGitHubCredentials(triageProvider, repo, reader)
 		if err != nil {
 			return err
 		}
-
-		fmt.Fprintf(os.Stderr, "Validating API key...")
-		if err := ValidateAPIKey(provider, key); err != nil {
-			fmt.Fprintf(os.Stderr, " failed\n")
-			return fmt.Errorf("API key validation failed: %w", err)
-		}
-		fmt.Fprintf(os.Stderr, " valid!\n")
-
-		secretName = ProviderSecretName(provider)
-		apiKey = key
-
-		// Also store locally for `codecanary review` usage.
-		envVar := ProviderEnvVar(provider)
-		if err := credentials.Store(envVar, key); err != nil {
-			fmt.Fprintf(os.Stderr, "Note: could not store key locally: %v\n", err)
-		}
 	}
 
-	// 8. Set GitHub secret.
-	var setSecret bool
-	err = huh.NewForm(
-		huh.NewGroup(
-			huh.NewConfirm().
-				Title(fmt.Sprintf("Set %s as a secret on %s?", secretName, repo)).
-				Value(&setSecret),
-		),
-	).Run()
+	// 11. Triage model.
+	triageModel, err := SelectTriageModel(triageProvider)
 	if err != nil {
 		return err
 	}
 
-	if setSecret {
-		fmt.Fprintf(os.Stderr, "Setting %s secret on %s...\n", secretName, repo)
-		if err := auth.SetGitHubSecret(repo, secretName, apiKey); err != nil {
-			return fmt.Errorf("setting secret: %w", err)
+	// 12. Set GitHub secrets.
+	if err := setGitHubSecret(repo, reviewSecretName, reviewAPIKey); err != nil {
+		return err
+	}
+	if triageSecretName != reviewSecretName {
+		if err := setGitHubSecret(repo, triageSecretName, triageAPIKey); err != nil {
+			return err
 		}
-		fmt.Fprintf(os.Stderr, "  Done!\n\n")
-	} else {
-		fmt.Fprintf(os.Stderr, "Skipped. Set the secret manually:\n")
-		fmt.Fprintf(os.Stderr, "  gh secret set %s --repo %s\n\n", secretName, repo)
 	}
 
-	// 9. Select models.
-	reviewModel, err := SelectModel(provider)
-	if err != nil {
-		return err
-	}
-
-	triageModel, err := SelectTriageModel(provider)
-	if err != nil {
-		return err
-	}
-
-	// 10. Explain workflow permissions.
+	// 13. Explain workflow permissions.
 	fmt.Fprintf(os.Stderr, "\n%s\n\n", GitHubPermissionsGuidance())
 
-	// 11. Generate workflow file.
+	// 14. Generate workflow file.
 	workflowDir := filepath.Join(".github", "workflows")
 	workflowPath := filepath.Join(workflowDir, "codecanary.yml")
 
@@ -169,7 +140,7 @@ func RunGitHub(canary bool) error {
 		actionRef = "canary"
 	}
 
-	workflow, err := GenerateWorkflow(secretName, actionRef)
+	workflow, err := GenerateWorkflow(reviewSecretName, triageSecretName, actionRef)
 	if err != nil {
 		return err
 	}
@@ -182,13 +153,15 @@ func RunGitHub(canary bool) error {
 		return err
 	}
 
-	// 12. Generate config.
+	// 15. Generate config.
 	configPath := filepath.Join(".codecanary", "config.yml")
-	if err := writeConfig(provider, reviewModel, triageModel, configPath); err != nil {
+	reviewMC := review.ModelConfig{Provider: reviewProvider, Model: reviewModel}
+	triageMC := review.ModelConfig{Provider: triageProvider, Model: triageModel}
+	if err := writeConfig(reviewMC, triageMC, configPath); err != nil {
 		return err
 	}
 
-	// 13. Create PR.
+	// 16. Create PR.
 	var filesToAdd []string
 	var bullets []string
 
@@ -229,5 +202,67 @@ func RunGitHub(canary bool) error {
 	fmt.Fprintf(os.Stderr, "  %s\n", strings.TrimSpace(string(prOut)))
 	fmt.Fprintf(os.Stderr, "\nDone! Merge the PR to enable automated reviews.\n")
 
+	return nil
+}
+
+// collectGitHubCredentials handles credential collection for a provider in GitHub mode.
+// Returns the secret name and API key value.
+func collectGitHubCredentials(provider, repo string, reader *bufio.Reader) (string, string, error) {
+	if provider == "claude" {
+		if err := auth.InstallGitHubApp(repo, reader); err != nil {
+			return "", "", fmt.Errorf("installing Claude GitHub App: %w", err)
+		}
+		token, err := auth.OAuthToken()
+		if err != nil {
+			return "", "", fmt.Errorf("OAuth authentication failed: %w", err)
+		}
+		return "CLAUDE_CODE_OAUTH_TOKEN", token, nil
+	}
+
+	apiKey, err := InputAPIKey(provider)
+	if err != nil {
+		return "", "", err
+	}
+
+	fmt.Fprintf(os.Stderr, "Validating API key...")
+	if err := ValidateAPIKey(provider, apiKey); err != nil {
+		fmt.Fprintf(os.Stderr, " failed\n")
+		return "", "", fmt.Errorf("API key validation failed: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, " valid!\n")
+
+	// Also store locally for `codecanary review` usage.
+	envVar := ProviderEnvVar(provider)
+	if err := credentials.Store(envVar, apiKey); err != nil {
+		fmt.Fprintf(os.Stderr, "Note: could not store key locally: %v\n", err)
+	}
+
+	return ProviderSecretName(provider), apiKey, nil
+}
+
+// setGitHubSecret prompts and sets a GitHub secret.
+func setGitHubSecret(repo, secretName, apiKey string) error {
+	var setSecret bool
+	err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title(fmt.Sprintf("Set %s as a secret on %s?", secretName, repo)).
+				Value(&setSecret),
+		),
+	).Run()
+	if err != nil {
+		return err
+	}
+
+	if setSecret {
+		fmt.Fprintf(os.Stderr, "Setting %s secret on %s...\n", secretName, repo)
+		if err := auth.SetGitHubSecret(repo, secretName, apiKey); err != nil {
+			return fmt.Errorf("setting secret: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "  Done!\n\n")
+	} else {
+		fmt.Fprintf(os.Stderr, "Skipped. Set the secret manually:\n")
+		fmt.Fprintf(os.Stderr, "  gh secret set %s --repo %s\n\n", secretName, repo)
+	}
 	return nil
 }

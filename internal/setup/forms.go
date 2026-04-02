@@ -26,14 +26,37 @@ func SelectSetupMode() (string, error) {
 	return mode, err
 }
 
-// SelectProvider prompts the user to choose an LLM provider.
-func SelectProvider() (string, error) {
+// SelectProvider prompts the user to choose an LLM provider for a given role.
+func SelectProvider(role string) (string, error) {
+	title := fmt.Sprintf("Which AI provider for %s?", role)
 	var provider string
 	err := huh.NewForm(
 		huh.NewGroup(
 			huh.NewSelect[string]().
-				Title("Which AI provider do you want to use?").
+				Title(title).
 				Options(
+					huh.NewOption("Anthropic", "anthropic"),
+					huh.NewOption("OpenAI", "openai"),
+					huh.NewOption("OpenRouter", "openrouter"),
+					huh.NewOption("Claude CLI", "claude"),
+				).
+				Value(&provider),
+		),
+	).Run()
+	return provider, err
+}
+
+// SelectTriageProvider prompts the user to choose a triage provider,
+// with a "Same as review" default option.
+func SelectTriageProvider(reviewProvider string) (string, error) {
+	sameLabel := fmt.Sprintf("Same as review (%s)", reviewProvider)
+	var provider string
+	err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Which AI provider for triage?").
+				Options(
+					huh.NewOption(sameLabel, reviewProvider),
 					huh.NewOption("Anthropic", "anthropic"),
 					huh.NewOption("OpenAI", "openai"),
 					huh.NewOption("OpenRouter", "openrouter"),
@@ -75,14 +98,15 @@ func InputAPIKey(provider string) (string, error) {
 	return strings.TrimSpace(apiKey), err
 }
 
-// SelectModel prompts the user to choose a review model or accept defaults.
+// SelectModel prompts the user to choose a review model.
+// The provider's suggested review model is pre-selected.
 func SelectModel(provider string) (string, error) {
 	options := modelOptions(provider)
 	if len(options) == 0 {
 		return "", nil
 	}
 
-	var reviewModel string
+	reviewModel := review.GetSuggestedReviewModel(provider)
 	err := huh.NewForm(
 		huh.NewGroup(
 			huh.NewSelect[string]().
@@ -178,24 +202,24 @@ func modelOptions(provider string) []huh.Option[string] {
 	switch provider {
 	case "anthropic":
 		return []huh.Option[string]{
-			huh.NewOption("claude-sonnet-4-6 (default)", ""),
+			huh.NewOption("claude-sonnet-4-6 (recommended)", "claude-sonnet-4-6"),
 			huh.NewOption("claude-opus-4-6", "claude-opus-4-6"),
 			huh.NewOption("claude-haiku-4-5-20251001", "claude-haiku-4-5-20251001"),
 		}
 	case "openai":
 		return []huh.Option[string]{
-			huh.NewOption("gpt-5.4 (default)", ""),
+			huh.NewOption("gpt-5.4 (recommended)", "gpt-5.4"),
 			huh.NewOption("gpt-5.4-mini", "gpt-5.4-mini"),
 		}
 	case "openrouter":
 		return []huh.Option[string]{
-			huh.NewOption("anthropic/claude-sonnet-4-6 (default)", ""),
+			huh.NewOption("anthropic/claude-sonnet-4-6 (recommended)", "anthropic/claude-sonnet-4-6"),
 			huh.NewOption("anthropic/claude-opus-4-6", "anthropic/claude-opus-4-6"),
 			huh.NewOption("openai/gpt-5.4", "openai/gpt-5.4"),
 		}
 	case "claude":
 		return []huh.Option[string]{
-			huh.NewOption("sonnet (default)", ""),
+			huh.NewOption("sonnet (recommended)", "sonnet"),
 			huh.NewOption("opus", "opus"),
 			huh.NewOption("haiku", "haiku"),
 		}

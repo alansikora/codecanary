@@ -36,8 +36,8 @@ func init() {
 	}
 }
 
-func validateAnthropic(cfg *ReviewConfig) error {
-	if cfg.APIBase != "" {
+func validateAnthropic(mc *ModelConfig) error {
+	if mc.APIBase != "" {
 		return fmt.Errorf("api_base is not supported by the anthropic provider")
 	}
 	return nil
@@ -50,10 +50,10 @@ type anthropicProvider struct {
 	env    []string // filtered environment
 }
 
-func newAnthropicProvider(cfg *ReviewConfig, env []string) ModelProvider {
+func newAnthropicProvider(mc *ModelConfig, env []string) ModelProvider {
 	keyEnv := "ANTHROPIC_API_KEY"
-	if cfg.APIKeyEnv != "" {
-		keyEnv = cfg.APIKeyEnv
+	if mc.APIKeyEnv != "" {
+		keyEnv = mc.APIKeyEnv
 	}
 	return &anthropicProvider{keyEnv: keyEnv, env: env}
 }

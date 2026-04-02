@@ -30,12 +30,9 @@ func init() {
 	}
 }
 
-func validateClaude(cfg *ReviewConfig) error {
-	if cfg.ReviewModel != "" && !validCLIModels[cfg.ReviewModel] {
-		return fmt.Errorf("invalid review_model %q for claude provider (valid: haiku, sonnet, opus)", cfg.ReviewModel)
-	}
-	if cfg.TriageModel != "" && !validCLIModels[cfg.TriageModel] {
-		return fmt.Errorf("invalid triage_model %q for claude provider (valid: haiku, sonnet, opus)", cfg.TriageModel)
+func validateClaude(mc *ModelConfig) error {
+	if mc.Model != "" && !validCLIModels[mc.Model] {
+		return fmt.Errorf("invalid model %q for claude provider (valid: haiku, sonnet, opus)", mc.Model)
 	}
 	return nil
 }
@@ -46,7 +43,7 @@ type claudeCLIProvider struct {
 	env []string
 }
 
-func newClaudeCLIProvider(_ *ReviewConfig, env []string) ModelProvider {
+func newClaudeCLIProvider(_ *ModelConfig, env []string) ModelProvider {
 	return &claudeCLIProvider{env: env}
 }
 
