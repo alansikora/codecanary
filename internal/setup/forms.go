@@ -50,18 +50,29 @@ func SelectProvider(role string) (string, error) {
 // with a "Same as review" default option.
 func SelectTriageProvider(reviewProvider string) (string, error) {
 	sameLabel := fmt.Sprintf("Same as review (%s)", reviewProvider)
+	options := []huh.Option[string]{
+		huh.NewOption(sameLabel, reviewProvider),
+	}
+	// Add other providers, skipping the one that matches reviewProvider
+	// to avoid duplicate values in the dropdown.
+	all := []struct{ label, value string }{
+		{"Anthropic", "anthropic"},
+		{"OpenAI", "openai"},
+		{"OpenRouter", "openrouter"},
+		{"Claude CLI", "claude"},
+	}
+	for _, p := range all {
+		if p.value != reviewProvider {
+			options = append(options, huh.NewOption(p.label, p.value))
+		}
+	}
+
 	var provider string
 	err := huh.NewForm(
 		huh.NewGroup(
 			huh.NewSelect[string]().
 				Title("Which AI provider for triage?").
-				Options(
-					huh.NewOption(sameLabel, reviewProvider),
-					huh.NewOption("Anthropic", "anthropic"),
-					huh.NewOption("OpenAI", "openai"),
-					huh.NewOption("OpenRouter", "openrouter"),
-					huh.NewOption("Claude CLI", "claude"),
-				).
+				Options(options...).
 				Value(&provider),
 		),
 	).Run()

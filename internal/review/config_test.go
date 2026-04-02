@@ -2,6 +2,7 @@ package review
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -220,6 +221,28 @@ triage:
 	}
 	if cfg.Triage.Model != "gpt-5.4-mini" {
 		t.Errorf("Triage.Model = %q, want %q", cfg.Triage.Model, "gpt-5.4-mini")
+	}
+}
+
+func TestLoadConfig_OldFormatError(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/config.yml"
+
+	yaml := `version: 1
+provider: anthropic
+review_model: claude-sonnet-4-6
+triage_model: claude-haiku-4-5-20251001
+`
+	if err := writeTestFile(path, yaml); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := LoadConfig(path)
+	if err == nil {
+		t.Fatal("expected error for old flat-format config")
+	}
+	if !strings.Contains(err.Error(), "config format has changed") {
+		t.Errorf("expected migration hint in error, got: %v", err)
 	}
 }
 
