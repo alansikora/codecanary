@@ -5,6 +5,24 @@ import (
 	"fmt"
 )
 
+func init() {
+	providers["openrouter"] = ProviderFactory{
+		New:      newOpenRouterProvider,
+		Validate: validateOpenRouter,
+		// No pricing entries — OpenRouter proxies other providers' models,
+		// which are matched by substring from those providers' pricing tables.
+		DefaultReviewModel: "anthropic/claude-sonnet-4-6",
+		DefaultTriageModel: "anthropic/claude-haiku-4-5-20251001",
+	}
+}
+
+func validateOpenRouter(cfg *ReviewConfig) error {
+	if cfg.APIBase != "" {
+		return fmt.Errorf("api_base is not supported by the openrouter provider")
+	}
+	return nil
+}
+
 // openrouterProvider implements ModelProvider for the OpenRouter API.
 // OpenRouter uses the OpenAI-compatible chat completions format and
 // supports automatic prompt caching with sticky provider routing.
