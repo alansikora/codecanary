@@ -101,14 +101,31 @@ func writeCredentials(creds map[string]string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(creds, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0600)
+	// Atomic write: temp file + rename to avoid partial writes corrupting existing credentials.
+	tmp, err := os.CreateTemp(dir, ".credentials-*.json")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	_, writeErr := tmp.Write(data)
+	tmp.Close()
+	if writeErr != nil {
+		os.Remove(tmpPath)
+		return writeErr
+	}
+	if err := os.Chmod(tmpPath, 0600); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 func fileStore(envVarName, value string) error {
