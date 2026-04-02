@@ -186,7 +186,11 @@ func (g *GithubPlatform) GetIncrementalDiff(baseSHA string, prFiles []string) (s
 
 	// Local-detect mode: also include uncommitted changes scoped to PR files.
 	wtDiff, err := workingTreeDiff(prFiles)
-	if err != nil || wtDiff == "" {
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not compute working-tree diff: %v\n", err)
+		return diff, nil
+	}
+	if wtDiff == "" {
 		return diff, nil
 	}
 
