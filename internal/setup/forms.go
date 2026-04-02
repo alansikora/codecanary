@@ -71,13 +71,14 @@ func InputAPIKey(provider string) (string, error) {
 }
 
 // SelectModel prompts the user to choose a review model or accept defaults.
-func SelectModel(provider string) (reviewModel string, triageModel string, err error) {
+func SelectModel(provider string) (string, error) {
 	options := modelOptions(provider)
 	if len(options) == 0 {
-		return "", "", nil
+		return "", nil
 	}
 
-	err = huh.NewForm(
+	var reviewModel string
+	err := huh.NewForm(
 		huh.NewGroup(
 			huh.NewSelect[string]().
 				Title("Review model").
@@ -86,7 +87,7 @@ func SelectModel(provider string) (reviewModel string, triageModel string, err e
 				Value(&reviewModel),
 		),
 	).Run()
-	return reviewModel, "", err
+	return reviewModel, err
 }
 
 // ConfirmConfigGeneration asks whether to generate config by analyzing the project.

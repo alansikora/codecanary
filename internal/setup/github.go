@@ -138,7 +138,7 @@ func RunGitHub(canary bool) error {
 	}
 
 	// 9. Select model.
-	reviewModel, _, err := SelectModel(provider)
+	reviewModel, err := SelectModel(provider)
 	if err != nil {
 		return err
 	}
