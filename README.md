@@ -42,6 +42,8 @@ This walks you through:
 2. Entering and validating your API key (stored securely in your system keychain)
 3. Creating a `.codecanary/config.yml` with your provider and model
 
+> If your system has no keychain (e.g. headless Linux), setup warns you and you set the API key as an environment variable instead.
+
 Then review your changes:
 
 ```sh
@@ -57,11 +59,11 @@ If your branch has an open PR, CodeCanary auto-detects it. If not, it diffs agai
 codecanary setup github
 ```
 
-This does everything from local setup, plus:
-4. Installing the CodeCanary Review GitHub App
-5. Setting your API key as a GitHub repo secret
-6. Creating the GitHub Actions workflow (`.github/workflows/codecanary.yml`)
-7. Opening a PR with everything ready to merge
+This runs the same provider and key selection as local setup, then:
+1. Installs the CodeCanary Review GitHub App
+2. Sets your API key as a GitHub repo secret
+3. Creates the GitHub Actions workflow (`.github/workflows/codecanary.yml`)
+4. Opens a PR with everything ready to merge
 
 Once merged, CodeCanary automatically reviews every PR on open and update.
 
