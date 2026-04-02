@@ -92,7 +92,7 @@ Abstracts LLM invocations. The core engine calls `provider.Run(ctx, prompt, opts
 **Implementations**: `anthropic`, `openai`, `openrouter`, `claude` (CLI).
 **Selection**: factory registry in `provider.go` — `NewProvider(cfg, env)` returns the right implementation based on `cfg.Provider`.
 
-Adding a new LLM provider means: create `provider_<name>.go` and register a `ProviderFactory` (constructor, validation, pricing, default models) via `init()`. Single-file change — no modifications to `config.go` or `pricing.go`.
+Adding a new LLM provider means: create `provider_<name>.go` and register a `ProviderFactory` (constructor, validation, pricing, default models) via `init()`.
 
 ### Platform layer — `ReviewPlatform` interface (`platform.go`)
 
