@@ -1,5 +1,7 @@
 version: 1
 
+provider: claude
+
 context: |
   Go CLI tool for AI-powered GitHub PR code reviews. Two binaries: a review engine
   (cobra CLI) and an interactive setup wizard. Uses gh CLI for GitHub API, claude CLI
