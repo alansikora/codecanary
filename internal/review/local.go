@@ -59,6 +59,20 @@ func FetchLocalDiff() (*PRData, error) {
 	}, nil
 }
 
+// workingTreeDiff returns uncommitted changes (staged + unstaged) for the
+// given set of files. Returns empty string if there are no dirty changes.
+func workingTreeDiff(files []string) (string, error) {
+	if len(files) == 0 {
+		return "", nil
+	}
+	args := append([]string{"diff", "HEAD", "--"}, files...)
+	out, err := exec.Command("git", args...).Output()
+	if err != nil {
+		return "", fmt.Errorf("git diff HEAD: %w", err)
+	}
+	return string(out), nil
+}
+
 // detectDefaultBranch returns "main" or "master" based on what exists locally.
 // Returns empty string if neither exists.
 func detectDefaultBranch() string {

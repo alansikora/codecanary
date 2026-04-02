@@ -173,6 +173,29 @@ func (g *GithubPlatform) SaveState(result *ReviewResult, stillOpen []Finding, is
 	return nil
 }
 
+func (g *GithubPlatform) GetIncrementalDiff(baseSHA string, prFiles []string) (string, error) {
+	diff, err := GetIncrementalDiff(baseSHA)
+	if err != nil {
+		return "", err
+	}
+
+	// In CI mode, only committed changes matter.
+	if g.Post {
+		return diff, nil
+	}
+
+	// Local-detect mode: also include uncommitted changes scoped to PR files.
+	wtDiff, err := workingTreeDiff(prFiles)
+	if err != nil || wtDiff == "" {
+		return diff, nil
+	}
+
+	if diff == "" {
+		return wtDiff, nil
+	}
+	return diff + "\n" + wtDiff, nil
+}
+
 func (g *GithubPlatform) ReportUsage(tracker *UsageTracker) {
 	report := tracker.Report(g.Repo, g.PRNumber)
 	if len(report.Calls) > 0 {

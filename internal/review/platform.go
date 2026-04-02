@@ -25,6 +25,11 @@ type ReviewPlatform interface {
 	// SaveState persists findings for future incremental reviews.
 	SaveState(result *ReviewResult, stillOpen []Finding, isIncremental bool) error
 
+	// GetIncrementalDiff returns the diff since the given SHA.
+	// In CI this is committed changes only. Locally it also includes
+	// uncommitted working-tree changes scoped to the given file set.
+	GetIncrementalDiff(baseSHA string, prFiles []string) (string, error)
+
 	// ReportUsage handles usage data (best-effort). On GitHub this writes
 	// to GITHUB_ENV. Locally this prints a usage table to stderr.
 	ReportUsage(tracker *UsageTracker)

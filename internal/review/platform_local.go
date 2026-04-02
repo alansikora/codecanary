@@ -63,6 +63,24 @@ func (l *LocalPlatform) SaveState(result *ReviewResult, stillOpen []Finding, _ b
 	return nil
 }
 
+func (l *LocalPlatform) GetIncrementalDiff(baseSHA string, prFiles []string) (string, error) {
+	diff, err := GetIncrementalDiff(baseSHA)
+	if err != nil {
+		return "", err
+	}
+
+	// Always include uncommitted changes in local mode.
+	wtDiff, err := workingTreeDiff(prFiles)
+	if err != nil || wtDiff == "" {
+		return diff, nil
+	}
+
+	if diff == "" {
+		return wtDiff, nil
+	}
+	return diff + "\n" + wtDiff, nil
+}
+
 func (l *LocalPlatform) ReportUsage(tracker *UsageTracker) {
 	outputFormat := resolveOutputFormat(l.OutputFormat)
 	if outputFormat == "terminal" {

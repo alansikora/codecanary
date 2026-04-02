@@ -435,8 +435,9 @@ func runTriage(
 ) (string, []fixedThread, []Finding) {
 	Stderrf(ansiBold, "Re-evaluating %d unresolved thread(s) (base %s)...\n", len(reviewThreads), shortSHA(previousSHA))
 
-	// Compute incremental diff.
-	incrementalDiff, diffErr := GetIncrementalDiff(previousSHA)
+	// Compute incremental diff via the platform adapter.
+	// In local modes this also includes uncommitted working-tree changes.
+	incrementalDiff, diffErr := platform.GetIncrementalDiff(previousSHA, pr.Files)
 	if diffErr != nil {
 		fmt.Fprintf(os.Stderr, "Could not compute incremental diff, will use full PR diff for reevaluation\n")
 	} else {
