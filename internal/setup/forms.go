@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/alansikora/codecanary/internal/review"
 	"github.com/charmbracelet/huh"
 )
 
@@ -95,13 +96,14 @@ func SelectModel(provider string) (string, error) {
 }
 
 // SelectTriageModel prompts the user to choose a triage model.
+// The provider's suggested triage model is pre-selected.
 func SelectTriageModel(provider string) (string, error) {
 	options := triageModelOptions(provider)
 	if len(options) == 0 {
 		return "", nil
 	}
 
-	var triageModel string
+	triageModel := review.GetSuggestedTriageModel(provider)
 	err := huh.NewForm(
 		huh.NewGroup(
 			huh.NewSelect[string]().

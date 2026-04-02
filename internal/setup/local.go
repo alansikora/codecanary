@@ -75,14 +75,16 @@ func writeConfig(provider, reviewModel, triageModel, configPath string) error {
 		return fmt.Errorf("creating config directory: %w", err)
 	}
 
+	if triageModel == "" {
+		return fmt.Errorf("triage_model is required")
+	}
+
 	// Build a minimal working config.
 	config := fmt.Sprintf("version: 1\nprovider: %s\n", provider)
 	if reviewModel != "" {
 		config += fmt.Sprintf("review_model: %s\n", reviewModel)
 	}
-	if triageModel != "" {
-		config += fmt.Sprintf("triage_model: %s\n", triageModel)
-	}
+	config += fmt.Sprintf("triage_model: %s\n", triageModel)
 	config += "\n" + review.StarterRulesSection
 
 	return writeFileWithConfirm(configPath, []byte(config))

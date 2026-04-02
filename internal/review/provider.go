@@ -74,6 +74,16 @@ func NewProvider(cfg *ReviewConfig, env []string) ModelProvider {
 	return pf.New(cfg, env)
 }
 
+// GetSuggestedTriageModel returns the suggested triage model for a provider.
+// Used by the setup wizard to pre-select the recommended option.
+func GetSuggestedTriageModel(provider string) string {
+	pf, ok := providers[provider]
+	if !ok {
+		return ""
+	}
+	return pf.SuggestedTriageModel
+}
+
 // lookupEnvVar finds a variable by name in the filtered environment.
 func lookupEnvVar(env []string, key string) string {
 	for _, e := range env {

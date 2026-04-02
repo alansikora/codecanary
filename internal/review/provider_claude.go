@@ -26,7 +26,7 @@ func init() {
 		Validate: validateClaude,
 		// No pricing entries — the Claude CLI reports cost directly.
 		SuggestedReviewModel: "claude-sonnet-4-6",
-		SuggestedTriageModel: "claude-haiku-4-5-20251001",
+		SuggestedTriageModel: "haiku",
 	}
 }
 
