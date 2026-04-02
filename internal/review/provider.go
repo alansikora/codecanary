@@ -68,6 +68,9 @@ func NewProvider(cfg *ReviewConfig, env []string) ModelProvider {
 	if !ok {
 		panic(fmt.Sprintf("unknown provider %q (should have been caught by config validation)", cfg.Provider))
 	}
+	if pf.New == nil {
+		panic(fmt.Sprintf("provider %q registered without a New constructor", cfg.Provider))
+	}
 	return pf.New(cfg, env)
 }
 
