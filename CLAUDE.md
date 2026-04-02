@@ -80,7 +80,7 @@ Abstracts LLM invocations. The core engine calls `provider.Run(ctx, prompt, opts
 **Implementations**: `anthropic`, `openai`, `openrouter`, `claude` (CLI).
 **Selection**: factory registry in `provider.go` — `NewProvider(cfg, env)` returns the right implementation based on `cfg.Provider`.
 
-Adding a new LLM provider means: implement `ModelProvider`, register it in the factory map, add pricing entries.
+Adding a new LLM provider means: create `provider_<name>.go` and register a `ProviderFactory` (constructor, validation, pricing, default models) via `init()`. Single-file change — no modifications to `config.go` or `pricing.go`.
 
 ### Platform layer — `ReviewPlatform` interface (`platform.go`)
 
@@ -115,7 +115,7 @@ There is a **single `Run()` function** — not separate paths for GitHub vs. loc
 ## Rules
 
 - **Keep the core engine agnostic.** `runner.go`, `triage.go`, `prompt.go`, `findings.go` must never import or reference a specific LLM provider or platform. All provider/platform specifics go behind the `ModelProvider` or `ReviewPlatform` interfaces. No `if provider == "openai"` in core logic.
-- **Use the adapter/provider pattern for new integrations.** New LLM backends → implement `ModelProvider` + register in factory. New deployment targets → implement `ReviewPlatform` + wire in CLI. Never fork the pipeline.
+- **Use the adapter/provider pattern for new integrations.** New LLM backends → create `provider_<name>.go` with a `ProviderFactory` registration in `init()`. New deployment targets → implement `ReviewPlatform` + wire in CLI. Never fork the pipeline.
 - **One pipeline, not two.** There must be a single `Run()` path. GitHub and local modes differ only in which `ReviewPlatform` implementation is injected — the orchestration logic is shared.
 - **Shared types for similar providers.** OpenAI-compatible APIs share request/response types via `provider_openai_compat.go`. Don't duplicate HTTP client logic across providers.
 - **Minimize shell code.** `setup.sh` and the GitHub Action (`alansikora/codecanary-action`) should be kept as thin as possible. All logic must live in Go.

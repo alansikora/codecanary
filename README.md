@@ -199,6 +199,53 @@ Because checks happen _between_ calls, a single call can push spending over the 
 | `suggestion` | Better patterns, readability improvements |
 | `nitpick` | Minor style, naming, formatting |
 
+## Adding a Provider
+
+CodeCanary's review engine is provider-agnostic — all LLM specifics live behind the `ModelProvider` interface. Adding a new provider is a single-file change.
+
+### Create `internal/review/provider_<name>.go`
+
+Your file does three things: implements `ModelProvider`, and registers everything (constructor, validation, pricing, default models) via `init()`.
+
+**1. Register a `ProviderFactory`:**
+
+```go
+func init() {
+    providers["myprovider"] = ProviderFactory{
+        New:      newMyProvider,
+        Validate: validateMyProvider,
+        Pricing: []PricingEntry{
+            // More specific substrings first — first match wins.
+            {"my-model-large", modelPricing{InputPerMTok: 3, OutputPerMTok: 15, CacheWritePerMTok: 3.75, CacheReadPerMTok: 0.30}},
+            {"my-model-small", modelPricing{InputPerMTok: 1, OutputPerMTok: 5, CacheWritePerMTok: 1.25, CacheReadPerMTok: 0.10}},
+        },
+        DefaultReviewModel: "my-model-large",
+        DefaultTriageModel: "my-model-small",
+    }
+}
+```
+
+- `Pricing` entries use substring matching against model names for cost estimation. If your provider reports cost directly (like the Claude CLI), omit pricing entries.
+- `Validate` runs during config validation, before the provider is constructed. Use it to enforce constraints (e.g., `api_base` format, allowed model names).
+
+**2. Implement `ModelProvider`:**
+
+```go
+type ModelProvider interface {
+    Run(ctx context.Context, prompt string, opts RunOpts) (*claudeResult, error)
+}
+```
+
+`Run` receives the full prompt and returns a `claudeResult` with the response text and a `CallUsage` struct (input/output/cache tokens, cost, duration). See `provider_openai.go` for a minimal example.
+
+If your provider uses an OpenAI-compatible chat completions API, reuse the shared `doChat` helper and types from `provider_openai_compat.go`.
+
+**3. Run tests:**
+
+```sh
+go test ./... && go vet ./...
+```
+
 ## How It Works
 
 ### First Review

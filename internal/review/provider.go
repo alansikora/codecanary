@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -17,21 +18,44 @@ type RunOpts struct {
 // ModelProvider is the interface for running prompts against an LLM.
 // Each provider adapter implements this interface in its own file.
 //
-// To add a new provider:
-//  1. Create provider_<name>.go implementing ModelProvider
-//  2. Add a constructor to the providers map below
-//  3. Add the name to validProviders in config.go
+// To add a new provider, create provider_<name>.go and register a
+// ProviderFactory in the providers map via an init() function.
 type ModelProvider interface {
 	// Run sends a prompt and returns the result text plus usage metadata.
 	Run(ctx context.Context, prompt string, opts RunOpts) (*claudeResult, error)
 }
 
-// providers maps provider names to their constructor functions.
-var providers = map[string]func(cfg *ReviewConfig, env []string) ModelProvider{
-	"anthropic":  newAnthropicProvider,
-	"openai":     newOpenAIProvider,
-	"openrouter": newOpenRouterProvider,
-	"claude":     newClaudeCLIProvider,
+// PricingEntry maps a model name substring to its pricing.
+// Entries are matched in slice order (first match wins), so more specific
+// substrings must come before less specific ones (e.g. "claude-opus-4-6"
+// before "claude-opus-4-").
+type PricingEntry struct {
+	Substring string
+	Pricing   modelPricing
+}
+
+// ProviderFactory holds everything needed to construct, validate, and
+// price a provider. Each provider file registers one of these via init().
+type ProviderFactory struct {
+	New                func(cfg *ReviewConfig, env []string) ModelProvider
+	Validate           func(cfg *ReviewConfig) error
+	Pricing            []PricingEntry
+	DefaultReviewModel string
+	DefaultTriageModel string
+}
+
+// providers maps provider names to their factories.
+// Populated by init() functions in each provider_*.go file.
+var providers = map[string]ProviderFactory{}
+
+// providerNames returns registered provider names in sorted order.
+func providerNames() []string {
+	names := make([]string, 0, len(providers))
+	for k := range providers {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // NewProvider constructs the appropriate ModelProvider based on config.
@@ -40,11 +64,11 @@ func NewProvider(cfg *ReviewConfig, env []string) ModelProvider {
 	if cfg == nil {
 		panic("NewProvider called with nil config")
 	}
-	factory, ok := providers[cfg.Provider]
+	pf, ok := providers[cfg.Provider]
 	if !ok {
 		panic(fmt.Sprintf("unknown provider %q (should have been caught by config validation)", cfg.Provider))
 	}
-	return factory(cfg, env)
+	return pf.New(cfg, env)
 }
 
 // lookupEnvVar finds a variable by name in the filtered environment.

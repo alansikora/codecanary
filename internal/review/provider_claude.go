@@ -9,6 +9,37 @@ import (
 	"strings"
 )
 
+// validCLIModels is the set of allowed model values for the Claude CLI provider.
+// Accepts both aliases (sonnet) and full model IDs (claude-sonnet-4-6).
+var validCLIModels = map[string]bool{
+	"haiku": true, "sonnet": true, "opus": true,
+	"claude-haiku-4-5-20251001": true,
+	"claude-sonnet-4-6":         true,
+	"claude-sonnet-4-5":         true,
+	"claude-opus-4-6":           true,
+	"claude-opus-4-5":           true,
+}
+
+func init() {
+	providers["claude"] = ProviderFactory{
+		New:      newClaudeCLIProvider,
+		Validate: validateClaude,
+		// No pricing entries — the Claude CLI reports cost directly.
+		DefaultReviewModel: "claude-sonnet-4-6",
+		DefaultTriageModel: "claude-haiku-4-5-20251001",
+	}
+}
+
+func validateClaude(cfg *ReviewConfig) error {
+	if cfg.ReviewModel != "" && !validCLIModels[cfg.ReviewModel] {
+		return fmt.Errorf("invalid review_model %q for claude provider (valid: haiku, sonnet, opus)", cfg.ReviewModel)
+	}
+	if cfg.TriageModel != "" && !validCLIModels[cfg.TriageModel] {
+		return fmt.Errorf("invalid triage_model %q for claude provider (valid: haiku, sonnet, opus)", cfg.TriageModel)
+	}
+	return nil
+}
+
 // claudeCLIProvider implements ModelProvider using the Claude CLI binary.
 // Requires the `claude` binary in PATH and an OAuth token.
 type claudeCLIProvider struct {
