@@ -64,7 +64,7 @@ func resolveEnv() []string {
 	// Inject keychain credentials for known providers if not already in env.
 	for _, envVar := range credentials.KnownProviderEnvVars() {
 		if !present[envVar] {
-			if val, err := credentials.Retrieve(envVar); err == nil && val != "" {
+			if val, _, err := credentials.Retrieve(envVar); err == nil && val != "" {
 				filtered = append(filtered, envVar+"="+val)
 			}
 		}

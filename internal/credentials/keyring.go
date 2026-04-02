@@ -2,6 +2,7 @@ package credentials
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -45,29 +46,43 @@ func Store(envVarName, value string) error {
 }
 
 // Retrieve fetches an API key. Tries the OS keychain first, falls back to
-// the credentials file.
-func Retrieve(envVarName string) (string, error) {
+// the credentials file. Returns the value and the storage location ("keychain"
+// or "credentials file").
+func Retrieve(envVarName string) (value string, source string, err error) {
 	if val, err := keyring.Get(serviceName, envVarName); err == nil {
-		return val, nil
+		return val, "keychain", nil
 	}
-	return fileRetrieve(envVarName)
+	val, err := fileRetrieve(envVarName)
+	if err != nil {
+		return "", "", err
+	}
+	return val, "credentials file", nil
 }
 
 // Delete removes an API key from both the OS keychain and the credentials file.
 func Delete(envVarName string) error {
-	_ = keyring.Delete(serviceName, envVarName)
+	if err := keyring.Delete(serviceName, envVarName); err != nil && !errors.Is(err, keyring.ErrNotFound) {
+		return fmt.Errorf("removing from keychain: %w", err)
+	}
 	return fileDelete(envVarName)
 }
 
 // --- file-based fallback (for systems without a keychain) ---
 
-func credentialsPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".codecanary", "credentials.json")
+func credentialsPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("could not determine home directory: %w", err)
+	}
+	return filepath.Join(home, ".codecanary", "credentials.json"), nil
 }
 
 func readCredentials() (map[string]string, error) {
-	data, err := os.ReadFile(credentialsPath())
+	path, err := credentialsPath()
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return map[string]string{}, nil
@@ -82,7 +97,10 @@ func readCredentials() (map[string]string, error) {
 }
 
 func writeCredentials(creds map[string]string) error {
-	path := credentialsPath()
+	path, err := credentialsPath()
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
@@ -121,8 +139,13 @@ func fileDelete(envVarName string) error {
 	}
 	delete(creds, envVarName)
 	if len(creds) == 0 {
-		// Clean up the file entirely if empty.
-		os.Remove(credentialsPath())
+		path, err := credentialsPath()
+		if err != nil {
+			return err
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 		return nil
 	}
 	return writeCredentials(creds)

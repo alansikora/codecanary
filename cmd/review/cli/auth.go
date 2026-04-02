@@ -11,7 +11,7 @@ import (
 var authCmd = &cobra.Command{
 	Use:   "auth",
 	Short: "Manage stored credentials",
-	Long:  "View and manage API keys stored in the system keychain.",
+	Long:  "View and manage API keys stored locally.",
 }
 
 var authStatusCmd = &cobra.Command{
@@ -20,8 +20,8 @@ var authStatusCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		fmt.Println("Provider credentials:")
 		for _, envVar := range credentials.KnownProviderEnvVars() {
-			if _, err := credentials.Retrieve(envVar); err == nil {
-				fmt.Printf("  %s: stored in system keychain\n", envVar)
+			if _, source, err := credentials.Retrieve(envVar); err == nil {
+				fmt.Printf("  %s: stored in %s\n", envVar, source)
 			} else {
 				fmt.Printf("  %s: not found\n", envVar)
 			}
@@ -37,12 +37,12 @@ var authDeleteCmd = &cobra.Command{
 		// Find which keys are stored.
 		var stored []string
 		for _, envVar := range credentials.KnownProviderEnvVars() {
-			if _, err := credentials.Retrieve(envVar); err == nil {
+			if _, _, err := credentials.Retrieve(envVar); err == nil {
 				stored = append(stored, envVar)
 			}
 		}
 		if len(stored) == 0 {
-			fmt.Println("No credentials stored in system keychain.")
+			fmt.Println("No stored credentials found.")
 			return nil
 		}
 
@@ -69,7 +69,7 @@ var authDeleteCmd = &cobra.Command{
 		err = huh.NewForm(
 			huh.NewGroup(
 				huh.NewConfirm().
-					Title(fmt.Sprintf("Delete %s from system keychain?", selected)).
+					Title(fmt.Sprintf("Delete %s?", selected)).
 					Value(&confirm),
 			),
 		).Run()
@@ -85,7 +85,7 @@ var authDeleteCmd = &cobra.Command{
 		if err := credentials.Delete(selected); err != nil {
 			return fmt.Errorf("deleting credential: %w", err)
 		}
-		fmt.Printf("Deleted %s from system keychain.\n", selected)
+		fmt.Printf("Deleted %s.\n", selected)
 		return nil
 	},
 }

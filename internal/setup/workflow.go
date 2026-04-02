@@ -6,12 +6,17 @@ import (
 )
 
 var validSecretName = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+var validActionRef = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 
 // GenerateWorkflow produces the GitHub Actions workflow YAML for CodeCanary.
 // secretName must be a valid GitHub Actions secret name (uppercase, digits, underscores).
+// actionRef must be a valid action version tag (e.g. "v1", "canary").
 func GenerateWorkflow(secretName, actionRef string) (string, error) {
 	if !validSecretName.MatchString(secretName) {
 		return "", fmt.Errorf("invalid secret name %q — must match [A-Z][A-Z0-9_]*", secretName)
+	}
+	if !validActionRef.MatchString(actionRef) {
+		return "", fmt.Errorf("invalid action ref %q — must match [a-zA-Z0-9._-]+", actionRef)
 	}
 
 	// Build the action step's with: inputs and optional step-level env: block.
