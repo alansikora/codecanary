@@ -62,6 +62,8 @@ if [ -z "$URL" ]; then
   echo "Error: could not find asset for ${OS}/${ARCH} in release ${TAG}" >&2
   exit 1
 fi
+case "$URL" in https://github.com/*) ;; *)
+  echo "Error: unexpected download URL: $URL" >&2; exit 1;; esac
 
 ARCHIVE="${URL##*/}"
 _v="${ARCHIVE%.tar.gz}"
