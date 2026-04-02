@@ -56,7 +56,6 @@ echo "Fetching release ${TAG}..."
 URL="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/tags/${TAG}" \
   | grep '"browser_download_url"' \
   | grep "_${OS}_${ARCH}\.tar\.gz" \
-  | grep -v 'codecanary-setup' \
   | cut -d'"' -f4)"
 
 if [ -z "$URL" ]; then
@@ -79,9 +78,6 @@ curl -fsSL -o "${TMPDIR}/${ARCHIVE}" "${URL}"
 curl -fsSL -o "${TMPDIR}/checksums.txt" "${CHECKSUMS_URL}"
 
 # Verify checksum (sha256sum on Linux, shasum on macOS).
-# NOTE: This runs in shell rather than Go because the Go binary is the artifact
-# being verified. A future improvement could have codecanary-setup handle this
-# for subsequent installs once it is already trusted on the machine.
 if command -v sha256sum >/dev/null 2>&1; then
   (cd "${TMPDIR}" && grep -F "${ARCHIVE}" checksums.txt | sha256sum -c --quiet -)
 elif command -v shasum >/dev/null 2>&1; then

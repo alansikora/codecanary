@@ -21,31 +21,10 @@ builds:
     ldflags:
       - -s -w -X main.version=v{{.Version}}
 
-  - id: codecanary-setup
-    main: ./cmd/setup
-    binary: codecanary-setup
-    env:
-      - CGO_ENABLED=0
-    goos:
-      - linux
-      - darwin
-    goarch:
-      - amd64
-      - arm64
-    ldflags:
-      - -s -w -X main.version=v{{.Version}}
-
 archives:
   - id: codecanary
     builds: [codecanary]
     name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
-    files:
-      - LICENSE
-      - README.md
-
-  - id: codecanary-setup
-    builds: [codecanary-setup]
-    name_template: 'codecanary-setup_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
     files:
       - LICENSE
       - README.md

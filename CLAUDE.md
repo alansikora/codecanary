@@ -13,8 +13,6 @@ cmd/
       review.go    # codecanary review <pr>
       setup.go     # codecanary setup [local|github]
       auth.go      # codecanary auth [status|delete]
-  setup/           # Legacy setup binary (to be removed)
-    main.go
 internal/
   review/
     runner.go            # Core review pipeline — single Run() entry point
@@ -59,13 +57,11 @@ install.sh         # Downloads and installs codecanary binary permanently
 ## Binary
 
 - **`codecanary`** — single binary for reviews, setup, and credential management. Installed locally via `install.sh`, also used by the GitHub Action.
-- **`codecanary-setup`** — legacy setup binary (to be removed).
 
 ## Build
 
 ```sh
 go build ./cmd/review    # builds codecanary
-go build ./cmd/setup     # builds codecanary-setup
 ```
 
 Version is set via ldflags: `-X main.version=v{version}`
