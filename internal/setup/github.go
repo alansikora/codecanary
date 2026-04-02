@@ -43,9 +43,11 @@ func RunGitHub(canary bool) error {
 	// 4. Handle existing setup branch.
 	branch := "codecanary/review-setup"
 	if err := exec.Command("git", "show-ref", "--verify", "refs/heads/"+branch).Run(); err == nil {
-		// Check if we're currently on that branch.
-		currentBranch, _ := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output()
-		if strings.TrimSpace(string(currentBranch)) == branch {
+		// Check if we're currently on that branch. If we can't determine
+		// the current branch, treat it conservatively as a match to avoid
+		// deleting a branch we might be on.
+		currentBranch, err := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output()
+		if err != nil || strings.TrimSpace(string(currentBranch)) == branch {
 			return fmt.Errorf("you are currently on branch %s — switch to another branch first, then retry", branch)
 		}
 
@@ -161,7 +163,10 @@ func RunGitHub(canary bool) error {
 		actionRef = "canary"
 	}
 
-	workflow := GenerateWorkflow(secretName, actionRef)
+	workflow, err := GenerateWorkflow(secretName, actionRef)
+	if err != nil {
+		return err
+	}
 
 	if err := os.MkdirAll(workflowDir, 0755); err != nil {
 		return fmt.Errorf("creating workflow directory: %w", err)

@@ -1,9 +1,19 @@
 package setup
 
-import "fmt"
+import (
+	"fmt"
+	"regexp"
+)
+
+var validSecretName = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 
 // GenerateWorkflow produces the GitHub Actions workflow YAML for CodeCanary.
-func GenerateWorkflow(secretName, actionRef string) string {
+// secretName must be a valid GitHub Actions secret name (uppercase, digits, underscores).
+func GenerateWorkflow(secretName, actionRef string) (string, error) {
+	if !validSecretName.MatchString(secretName) {
+		return "", fmt.Errorf("invalid secret name %q — must match [A-Z][A-Z0-9_]*", secretName)
+	}
+
 	// Build the action step's with: inputs and optional step-level env: block.
 	var withAuth, stepEnv string
 	switch secretName {
@@ -76,5 +86,5 @@ jobs:
         env:
           USAGE_DATA: ${{ env.CODECANARY_USAGE }}
         run: codecanary review costs --data "$USAGE_DATA"
-`, actionRef, withAuth, stepEnv)
+`, actionRef, withAuth, stepEnv), nil
 }

@@ -1,6 +1,10 @@
 package credentials
 
-import "github.com/zalando/go-keyring"
+import (
+	"slices"
+
+	"github.com/zalando/go-keyring"
+)
 
 const serviceName = "codecanary"
 
@@ -17,6 +21,7 @@ func KnownProviderEnvVars() []string {
 	for _, v := range providerEnvVars {
 		vars = append(vars, v)
 	}
+	slices.Sort(vars)
 	return vars
 }
 

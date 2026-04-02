@@ -46,6 +46,10 @@ func SelectProvider() (string, error) {
 
 // InputAPIKey prompts the user for their API key with provider-specific guidance.
 func InputAPIKey(provider string) (string, error) {
+	if provider == "" {
+		return "", fmt.Errorf("provider must not be empty")
+	}
+
 	guidance := ProviderGuidance(provider)
 	envVar := ProviderEnvVar(provider)
 
