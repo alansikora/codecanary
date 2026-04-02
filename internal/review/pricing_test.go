@@ -34,3 +34,26 @@ func TestNoPricingSubstringOverlap(t *testing.T) {
 		}
 	}
 }
+
+// TestIntraProviderPricingOrder verifies that within each provider's Pricing
+// slice, overlapping substrings are ordered most-specific-first. Since
+// lookupPricing returns the first match within a slice, a less specific
+// entry appearing before a more specific one would shadow it.
+func TestIntraProviderPricingOrder(t *testing.T) {
+	for name, pf := range providers {
+		entries := pf.Pricing
+		for i, a := range entries {
+			for j, b := range entries[i+1:] {
+				aLower := strings.ToLower(a.Substring)
+				bLower := strings.ToLower(b.Substring)
+				// If a (earlier) contains b (later), that's fine — a is more specific.
+				// But if b contains a, then a is the shorter/less-specific entry
+				// and it would shadow b.
+				if strings.Contains(bLower, aLower) && !strings.Contains(aLower, bLower) {
+					t.Errorf("provider %q: pricing entry %d (%q) shadows entry %d (%q) — more specific substrings must come first",
+						name, i, a.Substring, i+1+j, b.Substring)
+				}
+			}
+		}
+	}
+}
