@@ -45,10 +45,71 @@ func SelectProvider() (string, error) {
 	return provider, err
 }
 
+// SelectLocalProvider prompts for local use: Claude CLI (subscription) or an API-key provider.
+func SelectLocalProvider() (string, error) {
+	var authKind string
+	if err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("How should CodeCanary authenticate on this machine?").
+				Description("Claude Pro or Max through the Claude CLI does not use ANTHROPIC_API_KEY.").
+				Options(
+					huh.NewOption("Claude CLI — subscription (no API key)", "claude"),
+					huh.NewOption("API key — Anthropic, OpenAI, or OpenRouter", "api_key"),
+				).
+				Value(&authKind),
+		),
+	).Run(); err != nil {
+		return "", err
+	}
+	if authKind == "claude" {
+		return "claude", nil
+	}
+	return selectAPIKeyProvider()
+}
+
+func selectAPIKeyProvider() (string, error) {
+	var provider string
+	err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Which provider's API key?").
+				Options(
+					huh.NewOption("Anthropic", "anthropic"),
+					huh.NewOption("OpenAI", "openai"),
+					huh.NewOption("OpenRouter", "openrouter"),
+				).
+				Value(&provider),
+		),
+	).Run()
+	return provider, err
+}
+
+// SelectExistingConfigStrategy asks how to persist setup when config.yml already exists.
+func SelectExistingConfigStrategy() (string, error) {
+	var choice string
+	err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title(".codecanary/config.yml already exists. How should we save this setup?").
+				Description("CI and teammates use config.yml. Use config.local.yml for machine-only overrides.").
+				Options(
+					huh.NewOption("Replace config.yml (shared file — commit with care)", "replace"),
+					huh.NewOption("Write config.local.yml only (local reviews merge this; config.yml unchanged)", "local_overlay"),
+				).
+				Value(&choice),
+		),
+	).Run()
+	return choice, err
+}
+
 // InputAPIKey prompts the user for their API key with provider-specific guidance.
 func InputAPIKey(provider string) (string, error) {
 	if provider == "" {
 		return "", fmt.Errorf("provider must not be empty")
+	}
+	if provider == "claude" {
+		return "", fmt.Errorf("claude provider uses the Claude CLI, not an API key — pick the Claude CLI option in local setup")
 	}
 
 	guidance := ProviderGuidance(provider)
@@ -116,31 +177,42 @@ func SelectTriageModel(provider string) (string, error) {
 	return triageModel, err
 }
 
+// WriteFileConfirmOpts customizes the overwrite confirmation prompt.
+type WriteFileConfirmOpts struct {
+	OverwriteTitle       string
+	OverwriteDescription string
+}
+
 // writeFileWithConfirm writes data to path, prompting to overwrite if it already exists.
-func writeFileWithConfirm(path string, data []byte) error {
+// The bool is true if the file was written (created or updated).
+func writeFileWithConfirm(path string, data []byte, opts WriteFileConfirmOpts) (bool, error) {
 	action := "Created"
+	title := opts.OverwriteTitle
+	if title == "" {
+		title = fmt.Sprintf("%s already exists. Overwrite?", path)
+	}
 	if _, err := os.Stat(path); err == nil {
 		var overwrite bool
-		if err := huh.NewForm(
-			huh.NewGroup(
-				huh.NewConfirm().
-					Title(fmt.Sprintf("%s already exists. Overwrite?", path)).
-					Value(&overwrite),
-			),
-		).Run(); err != nil {
-			return err
+		confirm := huh.NewConfirm().
+			Title(title).
+			Value(&overwrite)
+		if opts.OverwriteDescription != "" {
+			confirm = confirm.Description(opts.OverwriteDescription)
+		}
+		if err := huh.NewForm(huh.NewGroup(confirm)).Run(); err != nil {
+			return false, err
 		}
 		if !overwrite {
 			fmt.Fprintf(os.Stderr, "Keeping existing %s\n", path)
-			return nil
+			return false, nil
 		}
 		action = "Updated"
 	}
 	if err := os.WriteFile(path, data, 0644); err != nil {
-		return fmt.Errorf("writing %s: %w", path, err)
+		return false, fmt.Errorf("writing %s: %w", path, err)
 	}
 	fmt.Fprintf(os.Stderr, "%s %s\n", action, path)
-	return nil
+	return true, nil
 }
 
 func triageModelOptions(provider string) []huh.Option[string] {

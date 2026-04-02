@@ -20,8 +20,8 @@ type ReviewConfig struct {
 	Rules        []Rule            `yaml:"rules"`
 	Context      string            `yaml:"context"`
 	Ignore       []string          `yaml:"ignore"`
-	MaxFileSize  int               `yaml:"max_file_size"`  // per-file content limit in bytes (default 100KB)
-	MaxTotalSize int               `yaml:"max_total_size"` // total file content limit in bytes (default 500KB)
+	MaxFileSize  int               `yaml:"max_file_size"`   // per-file content limit in bytes (default 100KB)
+	MaxTotalSize int               `yaml:"max_total_size"`  // total file content limit in bytes (default 500KB)
 	MaxBudgetUSD float64           `yaml:"max_budget_usd"`  // per-invocation spending limit in USD (default 0 = unlimited)
 	TimeoutMins  int               `yaml:"timeout_minutes"` // per-invocation timeout in minutes (default 5)
 	ReviewModel  string            `yaml:"review_model"`    // model for main review (default: sonnet)
@@ -165,9 +165,94 @@ func LoadConfig(path string) (*ReviewConfig, error) {
 	return &cfg, nil
 }
 
+// MergeReviewConfig overlays non-empty fields from over onto a copy of base.
+// Slices (rules, ignore) are replaced entirely when over provides a non-empty slice.
+func MergeReviewConfig(base, over *ReviewConfig) *ReviewConfig {
+	if base == nil {
+		return nil
+	}
+	out := *base
+	if over == nil {
+		return &out
+	}
+	if over.Version != 0 {
+		out.Version = over.Version
+	}
+	if over.Provider != "" {
+		out.Provider = over.Provider
+	}
+	if over.ReviewModel != "" {
+		out.ReviewModel = over.ReviewModel
+	}
+	if over.TriageModel != "" {
+		out.TriageModel = over.TriageModel
+	}
+	if over.APIBase != "" {
+		out.APIBase = over.APIBase
+	}
+	if over.APIKeyEnv != "" {
+		out.APIKeyEnv = over.APIKeyEnv
+	}
+	if over.Context != "" {
+		out.Context = over.Context
+	}
+	if over.MaxFileSize > 0 {
+		out.MaxFileSize = over.MaxFileSize
+	}
+	if over.MaxTotalSize > 0 {
+		out.MaxTotalSize = over.MaxTotalSize
+	}
+	if over.MaxBudgetUSD > 0 {
+		out.MaxBudgetUSD = over.MaxBudgetUSD
+	}
+	if over.TimeoutMins > 0 {
+		out.TimeoutMins = over.TimeoutMins
+	}
+	if len(over.Ignore) > 0 {
+		out.Ignore = append([]string(nil), over.Ignore...)
+	}
+	if len(over.Rules) > 0 {
+		out.Rules = append([]Rule(nil), over.Rules...)
+	}
+	if over.Evaluation != nil {
+		out.Evaluation = over.Evaluation
+	}
+	return &out
+}
+
+// ApplyConfigLocalOverlay merges .codecanary/config.local.yml (same directory as
+// mainConfigPath) onto base when the file exists. The merged config is validated.
+func ApplyConfigLocalOverlay(mainConfigPath string, base *ReviewConfig) (*ReviewConfig, error) {
+	if base == nil {
+		return nil, fmt.Errorf("base config is nil")
+	}
+	dir := filepath.Dir(mainConfigPath)
+	localPath := filepath.Join(dir, "config.local.yml")
+	data, err := os.ReadFile(localPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return base, nil
+		}
+		return nil, fmt.Errorf("reading %s: %w", localPath, err)
+	}
+	var overlay ReviewConfig
+	if err := yaml.Unmarshal(data, &overlay); err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", localPath, err)
+	}
+	merged := MergeReviewConfig(base, &overlay)
+	if err := merged.Validate(); err != nil {
+		return nil, fmt.Errorf("merged config (%s + %s): %w", mainConfigPath, localPath, err)
+	}
+	Stderrf(ansiCyan, "Applying local overrides from %s\n", localPath)
+	return merged, nil
+}
+
 // FindConfig looks for review config starting from the current directory and
 // walking up the directory tree. It checks .codecanary/config.yml first, then
 // falls back to the legacy .codecanary.yml with a deprecation warning.
+//
+// For local-only review runs (no PR), if .codecanary/config.local.yml exists next
+// to the resolved config file, it is merged on top — see ApplyConfigLocalOverlay.
 func FindConfig() (string, error) {
 	dir, err := os.Getwd()
 	if err != nil {

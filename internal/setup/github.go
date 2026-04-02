@@ -178,14 +178,18 @@ func RunGitHub(canary bool) error {
 		return fmt.Errorf("creating workflow directory: %w", err)
 	}
 
-	if err := writeFileWithConfirm(workflowPath, []byte(workflow)); err != nil {
+	if _, err := writeFileWithConfirm(workflowPath, []byte(workflow), WriteFileConfirmOpts{}); err != nil {
 		return err
 	}
 
 	// 12. Generate config.
 	configPath := filepath.Join(".codecanary", "config.yml")
-	if err := writeConfig(provider, reviewModel, triageModel, configPath); err != nil {
+	configWritten, err := writeMainConfigForPath(provider, reviewModel, triageModel, configPath)
+	if err != nil {
 		return err
+	}
+	if !configWritten {
+		fmt.Fprintf(os.Stderr, "Note: %s was not updated — you declined overwrite. The PR may still reference an older config.\n", configPath)
 	}
 
 	// 13. Create PR.

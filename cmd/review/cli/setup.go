@@ -39,7 +39,7 @@ var setupCmd = &cobra.Command{
 var setupLocalCmd = &cobra.Command{
 	Use:   "local",
 	Short: "Set up CodeCanary for local development",
-	Long:  "Configure a provider and API key for reviewing changes on this machine.",
+	Long:  "Configure a provider for local review (API key or Claude CLI). Can write .codecanary/config.local.yml so you do not have to overwrite the shared config.yml.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !term.IsTerminal(int(os.Stdin.Fd())) {
 			return fmt.Errorf("setup requires an interactive terminal")

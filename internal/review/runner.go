@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/alansikora/codecanary/internal/credentials"
@@ -22,6 +23,9 @@ type RunOptions struct {
 	ReplyOnly  bool           // evaluate thread replies only, skip new findings
 	PR         *PRData        // pre-fetched PRData (used in local mode)
 	Platform   ReviewPlatform // environment adapter (GitHub or local)
+	// ApplyLocalConfigOverlay merges .codecanary/config.local.yml over the main
+	// config when true (used for local branch review, not GitHub PR runs).
+	ApplyLocalConfigOverlay bool
 }
 
 // allowedEnvPrefixes lists environment variable prefixes passed to the LLM subprocess.
@@ -175,8 +179,8 @@ type reviewContext struct {
 
 // prepareReview loads config, project docs, file contents, and resolves the
 // Claude environment. Both the PR and local paths use this.
-func prepareReview(pr *PRData, configPath string) (*reviewContext, error) {
-	cfg, err := loadReviewConfig(configPath)
+func prepareReview(pr *PRData, configPath string, applyLocalOverlay bool) (*reviewContext, error) {
+	cfg, err := loadReviewConfig(configPath, applyLocalOverlay)
 	if err != nil {
 		return nil, err
 	}
@@ -327,7 +331,7 @@ func Run(opts RunOptions) error {
 	}
 
 	// 2. Prepare shared review context.
-	rctx, err := prepareReview(pr, opts.ConfigPath)
+	rctx, err := prepareReview(pr, opts.ConfigPath, opts.ApplyLocalConfigOverlay)
 	if err != nil {
 		return err
 	}
@@ -578,46 +582,68 @@ func runTriage(
 	return prompt, fixed, stillOpenFindings
 }
 
-// loadReviewConfig loads the review config from the given path (or default).
-// When the specified path does not exist, it falls back to FindConfig which
-// discovers both the new (.codecanary/config.yml) and legacy (.codecanary.yml)
-// locations. Returns an empty config if no config file is found anywhere.
-func loadReviewConfig(configPath string) (*ReviewConfig, error) {
+// resolveMainConfigPathAndLoad loads the main config file and returns its
+// absolute path. The empty-config legacy return uses an empty main path.
+func resolveMainConfigPathAndLoad(configPath string) (mainAbs string, cfg *ReviewConfig, err error) {
 	if configPath == "" {
 		configPath = ".codecanary/config.yml"
 	}
-	cfg, err := LoadConfig(configPath)
-	if err == nil {
-		return cfg, nil
+	absExplicit, absErr := filepath.Abs(configPath)
+	if absErr != nil {
+		absExplicit = configPath
 	}
 
-	// If the explicit path doesn't exist, try discovery.
+	cfg, err = LoadConfig(absExplicit)
+	if err == nil {
+		return absExplicit, cfg, nil
+	}
+
 	if errors.Is(err, os.ErrNotExist) || os.IsNotExist(err) {
 		if found, findErr := FindConfig(); findErr == nil {
-			cfg, err = LoadConfig(found)
-			if err != nil {
-				return nil, fmt.Errorf("loading config: %w", err)
+			absFound, ferr := filepath.Abs(found)
+			if ferr != nil {
+				absFound = found
 			}
-			return cfg, nil
+			cfg, err = LoadConfig(absFound)
+			if err != nil {
+				return "", nil, fmt.Errorf("loading config: %w", err)
+			}
+			return absFound, cfg, nil
 		}
-		// No config found anywhere.
-		return nil, fmt.Errorf("no config file found — create .codecanary/config.yml (see https://github.com/alansikora/codecanary)")
+		return "", nil, fmt.Errorf("no config file found — create .codecanary/config.yml (see https://github.com/alansikora/codecanary)")
 	}
 
 	var pathErr *os.PathError
 	if errors.As(err, &pathErr) {
-		// Path error (e.g. permission denied on missing dir) — try discovery.
 		if found, findErr := FindConfig(); findErr == nil {
-			cfg, err = LoadConfig(found)
-			if err != nil {
-				return nil, fmt.Errorf("loading config: %w", err)
+			absFound, ferr := filepath.Abs(found)
+			if ferr != nil {
+				absFound = found
 			}
-			return cfg, nil
+			cfg, err = LoadConfig(absFound)
+			if err != nil {
+				return "", nil, fmt.Errorf("loading config: %w", err)
+			}
+			return absFound, cfg, nil
 		}
-		return &ReviewConfig{}, nil
+		return "", &ReviewConfig{}, nil
 	}
 
-	return nil, fmt.Errorf("loading config: %w", err)
+	return "", nil, fmt.Errorf("loading config: %w", err)
+}
+
+// loadReviewConfig loads the review config from the given path (or default).
+// When applyLocalOverlay is true, merges .codecanary/config.local.yml next to
+// the resolved main config (local review mode only).
+func loadReviewConfig(configPath string, applyLocalOverlay bool) (*ReviewConfig, error) {
+	mainAbs, cfg, err := resolveMainConfigPathAndLoad(configPath)
+	if err != nil {
+		return nil, err
+	}
+	if !applyLocalOverlay || mainAbs == "" {
+		return cfg, nil
+	}
+	return ApplyConfigLocalOverlay(mainAbs, cfg)
 }
 
 // isAncestor checks if the given SHA is an ancestor of HEAD.
@@ -661,4 +687,3 @@ func hasAcknowledgmentReply(t ReviewThread, reason string) bool {
 	}
 	return false
 }
-

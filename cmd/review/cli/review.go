@@ -84,12 +84,13 @@ var reviewCmd = &cobra.Command{
 		}
 
 		return review.Run(review.RunOptions{
-			PR:         pr,
-			ConfigPath: configPath,
-			Output:     output,
-			Post:       post,
-			DryRun:     dryRun,
-			ReplyOnly:  replyOnly,
+			PR:                      pr,
+			ConfigPath:              configPath,
+			Output:                  output,
+			Post:                    post,
+			DryRun:                  dryRun,
+			ReplyOnly:               replyOnly,
+			ApplyLocalConfigOverlay: true,
 			Platform: &review.LocalPlatform{
 				Branch:       pr.HeadBranch,
 				OutputFormat: output,

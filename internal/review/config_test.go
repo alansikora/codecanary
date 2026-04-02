@@ -1,6 +1,8 @@
 package review
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -142,5 +144,54 @@ func TestValidate_ValidProviders(t *testing.T) {
 		if err := cfg.Validate(); err != nil {
 			t.Errorf("unexpected error for provider %q: %v", p, err)
 		}
+	}
+}
+
+func TestMergeReviewConfig_OverridesProvider(t *testing.T) {
+	base := &ReviewConfig{
+		Version:     1,
+		Provider:    "anthropic",
+		ReviewModel: "claude-sonnet-4-6",
+		TriageModel: "claude-haiku-4-5-20251001",
+		Rules:       []Rule{{ID: "r1", Description: "keep"}},
+	}
+	over := &ReviewConfig{Provider: "claude", TriageModel: "haiku"}
+	merged := MergeReviewConfig(base, over)
+	if merged.Provider != "claude" || merged.TriageModel != "haiku" {
+		t.Fatalf("merged = %+v", merged)
+	}
+	if merged.ReviewModel != "claude-sonnet-4-6" {
+		t.Errorf("expected review model inherited, got %q", merged.ReviewModel)
+	}
+	if len(merged.Rules) != 1 || merged.Rules[0].ID != "r1" {
+		t.Errorf("expected rules inherited, got %+v", merged.Rules)
+	}
+}
+
+func TestApplyConfigLocalOverlay(t *testing.T) {
+	dir := t.TempDir()
+	mainPath := filepath.Join(dir, "config.yml")
+	overlayPath := filepath.Join(dir, "config.local.yml")
+	if err := os.WriteFile(mainPath, []byte(`version: 1
+provider: anthropic
+triage_model: claude-haiku-4-5-20251001
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	base, err := LoadConfig(mainPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(overlayPath, []byte(`provider: claude
+triage_model: haiku
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	merged, err := ApplyConfigLocalOverlay(mainPath, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if merged.Provider != "claude" || merged.TriageModel != "haiku" {
+		t.Fatalf("merged = %+v", merged)
 	}
 }

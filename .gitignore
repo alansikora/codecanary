@@ -6,6 +6,10 @@ dist/
 
 # CodeCanary
 .codecanary/.state/
+.codecanary/config.local.yml
 
 # Dependencies
 worker/node_modules/
+
+# Binary files
+bin/
