@@ -42,7 +42,7 @@ internal/
     state.go             # Local state persistence
     generate.go          # Config generation from repo analysis
     docs.go              # Project doc discovery
-  credentials/     # OS keychain integration (macOS Keychain, Linux Secret Service)
+  credentials/     # OS keychain integration (system keychain)
     keyring.go     # Store/Retrieve/Delete via go-keyring
     resolve.go     # API key resolution: env var → keychain → error
   setup/           # Setup wizard logic (huh forms)
@@ -75,7 +75,7 @@ Version is set via ldflags: `-X main.version=v{version}`
 
 - `spf13/cobra` — CLI framework
 - `charmbracelet/huh` — terminal form builder (setup wizard)
-- `zalando/go-keyring` — OS keychain (macOS Keychain, Linux Secret Service)
+- `zalando/go-keyring` — OS keychain (system keychain)
 - `bmatcuk/doublestar` — glob pattern matching for ignore rules
 - `gopkg.in/yaml.v3` — config parsing
 - `golang.org/x/term` — terminal detection
