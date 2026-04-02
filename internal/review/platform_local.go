@@ -63,10 +63,9 @@ func (l *LocalPlatform) SaveState(result *ReviewResult, stillOpen []Finding, _ b
 	return nil
 }
 
-func (l *LocalPlatform) ReportUsage(tracker *UsageTracker) error {
+func (l *LocalPlatform) ReportUsage(tracker *UsageTracker) {
 	outputFormat := resolveOutputFormat(l.OutputFormat)
 	if outputFormat == "terminal" {
 		fmt.Fprint(os.Stderr, FormatUsageTable(tracker.Calls(), colorsEnabled()))
 	}
-	return nil
 }

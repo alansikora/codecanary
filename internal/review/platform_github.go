@@ -16,7 +16,11 @@ type GithubPlatform struct {
 }
 
 func (g *GithubPlatform) LoadPreviousFindings() ([]ReviewThread, string, int) {
-	allThreads, _ := FetchReviewThreads(g.Repo, g.PRNumber)
+	allThreads, err := FetchReviewThreads(g.Repo, g.PRNumber)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not fetch review threads: %v\n", err)
+		return nil, "", 0
+	}
 	startIndex := len(allThreads)
 	var unresolved []ReviewThread
 	for _, t := range allThreads {
@@ -30,7 +34,10 @@ func (g *GithubPlatform) LoadPreviousFindings() ([]ReviewThread, string, int) {
 
 func (g *GithubPlatform) ExcludedAuthor(threads []ReviewThread) string {
 	if len(threads) > 0 {
-		return threads[0].Author
+		if login := threads[0].Author; login != "" {
+			return login
+		}
+		fmt.Fprintf(os.Stderr, "Warning: could not determine bot login from thread author\n")
 	}
 	return ""
 }
@@ -91,9 +98,13 @@ func (g *GithubPlatform) Publish(result *ReviewResult, pr *PRData, threads []Rev
 					fmt.Fprintf(os.Stderr, "Minimized %d previous review(s)\n", len(nodeIDs))
 				}
 			} else {
-				allThreads, _ := FetchReviewThreads(g.Repo, g.PRNumber)
-				resolvedIDs := resolvedFindingIDs(allThreads, threads, fixed)
-				minimizeFullyResolvedReviews(g.Repo, g.PRNumber, resolvedIDs)
+				allThreads, err := FetchReviewThreads(g.Repo, g.PRNumber)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: could not fetch review threads for minimization: %v\n", err)
+				} else {
+					resolvedIDs := resolvedFindingIDs(allThreads, threads, fixed)
+					minimizeFullyResolvedReviews(g.Repo, g.PRNumber, resolvedIDs)
+				}
 			}
 		} else {
 			fmt.Fprintf(os.Stderr, "Warning: could not fetch reviews for minimization: %v\n", err)
@@ -162,7 +173,7 @@ func (g *GithubPlatform) SaveState(result *ReviewResult, stillOpen []Finding, is
 	return nil
 }
 
-func (g *GithubPlatform) ReportUsage(tracker *UsageTracker) error {
+func (g *GithubPlatform) ReportUsage(tracker *UsageTracker) {
 	report := tracker.Report(g.Repo, g.PRNumber)
 	if len(report.Calls) > 0 {
 		if err := WriteUsageEnv(report); err != nil {
@@ -177,6 +188,4 @@ func (g *GithubPlatform) ReportUsage(tracker *UsageTracker) error {
 			fmt.Fprint(os.Stderr, FormatUsageTable(tracker.Calls(), colorsEnabled()))
 		}
 	}
-
-	return nil
 }

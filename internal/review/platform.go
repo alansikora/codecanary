@@ -25,7 +25,7 @@ type ReviewPlatform interface {
 	// SaveState persists findings for future incremental reviews.
 	SaveState(result *ReviewResult, stillOpen []Finding, isIncremental bool) error
 
-	// ReportUsage handles usage data. On GitHub this writes to GITHUB_ENV.
-	// Locally this prints a usage table to stderr.
-	ReportUsage(tracker *UsageTracker) error
+	// ReportUsage handles usage data (best-effort). On GitHub this writes
+	// to GITHUB_ENV. Locally this prints a usage table to stderr.
+	ReportUsage(tracker *UsageTracker)
 }

@@ -454,12 +454,6 @@ func runTriage(
 	}
 
 	botLogin := platform.ExcludedAuthor(reviewThreads)
-	if botLogin == "" && len(reviewThreads) > 0 {
-		// In local mode, botLogin is expected to be empty. Only warn in GitHub mode.
-		if _, ok := platform.(*GithubPlatform); ok {
-			fmt.Fprintf(os.Stderr, "Warning: could not determine bot login from thread author\n")
-		}
-	}
 	triaged := ClassifyThreads(reviewThreads, reevalDiff, botLogin)
 
 	var fixed []fixedThread
