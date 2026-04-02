@@ -165,62 +165,76 @@ func LoadConfig(path string) (*ReviewConfig, error) {
 	return &cfg, nil
 }
 
-// MergeReviewConfig overlays non-empty fields from over onto a copy of base.
-// Slices (rules, ignore) are replaced entirely when over provides a non-empty slice.
-//
-// Numeric limits (MaxBudgetUSD, MaxFileSize, MaxTotalSize, TimeoutMins) are only
-// applied when the overlay value is > 0, so omitted YAML fields inherit from base.
-// That means a non-zero cap in config.yml cannot be reset to “unlimited” (0)
-// via config.local.yml without a schema change (e.g. pointers); see overlay docs.
-func MergeReviewConfig(base, over *ReviewConfig) *ReviewConfig {
+// configLocalOverlayYAML is the YAML shape of config.local.yml. Pointer fields
+// mean the key was present in the file; nil means inherit from the main config.
+// That allows explicit numeric zero (e.g. max_budget_usd: 0 for unlimited) to
+// override a non-zero value from config.yml.
+type configLocalOverlayYAML struct {
+	Version      *int              `yaml:"version"`
+	Provider     *string           `yaml:"provider"`
+	ReviewModel  *string           `yaml:"review_model"`
+	TriageModel  *string           `yaml:"triage_model"`
+	APIBase      *string           `yaml:"api_base"`
+	APIKeyEnv    *string           `yaml:"api_key_env"`
+	Context      *string           `yaml:"context"`
+	MaxFileSize  *int              `yaml:"max_file_size"`
+	MaxTotalSize *int              `yaml:"max_total_size"`
+	MaxBudgetUSD *float64          `yaml:"max_budget_usd"`
+	TimeoutMins  *int              `yaml:"timeout_minutes"`
+	Ignore       *[]string         `yaml:"ignore"`
+	Rules        *[]Rule           `yaml:"rules"`
+	Evaluation   *EvaluationConfig `yaml:"evaluation"`
+}
+
+func applyLocalConfigOverlay(base *ReviewConfig, o *configLocalOverlayYAML) *ReviewConfig {
 	if base == nil {
 		return nil
 	}
 	out := *base
-	if over == nil {
+	if o == nil {
 		return &out
 	}
-	if over.Version != 0 {
-		out.Version = over.Version
+	if o.Version != nil {
+		out.Version = *o.Version
 	}
-	if over.Provider != "" {
-		out.Provider = over.Provider
+	if o.Provider != nil {
+		out.Provider = *o.Provider
 	}
-	if over.ReviewModel != "" {
-		out.ReviewModel = over.ReviewModel
+	if o.ReviewModel != nil {
+		out.ReviewModel = *o.ReviewModel
 	}
-	if over.TriageModel != "" {
-		out.TriageModel = over.TriageModel
+	if o.TriageModel != nil {
+		out.TriageModel = *o.TriageModel
 	}
-	if over.APIBase != "" {
-		out.APIBase = over.APIBase
+	if o.APIBase != nil {
+		out.APIBase = *o.APIBase
 	}
-	if over.APIKeyEnv != "" {
-		out.APIKeyEnv = over.APIKeyEnv
+	if o.APIKeyEnv != nil {
+		out.APIKeyEnv = *o.APIKeyEnv
 	}
-	if over.Context != "" {
-		out.Context = over.Context
+	if o.Context != nil {
+		out.Context = *o.Context
 	}
-	if over.MaxFileSize > 0 {
-		out.MaxFileSize = over.MaxFileSize
+	if o.MaxFileSize != nil {
+		out.MaxFileSize = *o.MaxFileSize
 	}
-	if over.MaxTotalSize > 0 {
-		out.MaxTotalSize = over.MaxTotalSize
+	if o.MaxTotalSize != nil {
+		out.MaxTotalSize = *o.MaxTotalSize
 	}
-	if over.MaxBudgetUSD > 0 {
-		out.MaxBudgetUSD = over.MaxBudgetUSD
+	if o.MaxBudgetUSD != nil {
+		out.MaxBudgetUSD = *o.MaxBudgetUSD
 	}
-	if over.TimeoutMins > 0 {
-		out.TimeoutMins = over.TimeoutMins
+	if o.TimeoutMins != nil {
+		out.TimeoutMins = *o.TimeoutMins
 	}
-	if len(over.Ignore) > 0 {
-		out.Ignore = append([]string(nil), over.Ignore...)
+	if o.Ignore != nil {
+		out.Ignore = append([]string(nil), (*o.Ignore)...)
 	}
-	if len(over.Rules) > 0 {
-		out.Rules = append([]Rule(nil), over.Rules...)
+	if o.Rules != nil {
+		out.Rules = append([]Rule(nil), (*o.Rules)...)
 	}
-	if over.Evaluation != nil {
-		out.Evaluation = over.Evaluation
+	if o.Evaluation != nil {
+		out.Evaluation = o.Evaluation
 	}
 	return &out
 }
@@ -240,11 +254,11 @@ func ApplyConfigLocalOverlay(mainConfigPath string, base *ReviewConfig) (*Review
 		}
 		return nil, fmt.Errorf("reading %s: %w", localPath, err)
 	}
-	var overlay ReviewConfig
+	var overlay configLocalOverlayYAML
 	if err := yaml.Unmarshal(data, &overlay); err != nil {
 		return nil, fmt.Errorf("parsing %s: %w", localPath, err)
 	}
-	merged := MergeReviewConfig(base, &overlay)
+	merged := applyLocalConfigOverlay(base, &overlay)
 	if err := merged.Validate(); err != nil {
 		return nil, fmt.Errorf("merged config (%s + %s): %w", mainConfigPath, localPath, err)
 	}

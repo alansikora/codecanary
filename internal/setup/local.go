@@ -85,8 +85,8 @@ func buildMinimalLocalOverlay(provider, reviewModel, triageModel string) string 
 	var b strings.Builder
 	b.WriteString("# Merged on top of config.yml when you run `codecanary review` without a PR.\n")
 	b.WriteString("# GitHub Actions uses only config.yml. Add this file to .gitignore if it should stay private.\n")
-	b.WriteString("# Numeric limits from the main config (max_budget_usd, max_file_size, etc.) can only be\n")
-	b.WriteString("# tightened via this file, not cleared back to unlimited/default — omitted fields inherit from config.yml.\n")
+	b.WriteString("# Each key you set replaces the main config for local review, including numeric zeros\n")
+	b.WriteString("# (e.g. max_budget_usd: 0 removes a budget cap from config.yml). Omit a key to inherit.\n")
 	b.WriteString("version: 1\n")
 	b.WriteString(fmt.Sprintf("provider: %s\n", provider))
 	if reviewModel != "" {

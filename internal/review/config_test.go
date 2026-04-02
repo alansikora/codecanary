@@ -147,21 +147,31 @@ func TestValidate_ValidProviders(t *testing.T) {
 	}
 }
 
-func TestMergeReviewConfig_OverridesProvider(t *testing.T) {
+func TestApplyLocalConfigOverlay_MergesPointers(t *testing.T) {
 	base := &ReviewConfig{
-		Version:     1,
-		Provider:    "anthropic",
-		ReviewModel: "claude-sonnet-4-6",
-		TriageModel: "claude-haiku-4-5-20251001",
-		Rules:       []Rule{{ID: "r1", Description: "keep"}},
+		Version:      1,
+		Provider:     "anthropic",
+		ReviewModel:  "claude-sonnet-4-6",
+		TriageModel:  "claude-haiku-4-5-20251001",
+		MaxBudgetUSD: 5,
+		Rules:        []Rule{{ID: "r1", Description: "keep"}},
 	}
-	over := &ReviewConfig{Provider: "claude", TriageModel: "haiku"}
-	merged := MergeReviewConfig(base, over)
+	claude := "claude"
+	haiku := "haiku"
+	zeroBudget := 0.0
+	merged := applyLocalConfigOverlay(base, &configLocalOverlayYAML{
+		Provider:     &claude,
+		TriageModel:  &haiku,
+		MaxBudgetUSD: &zeroBudget,
+	})
 	if merged.Provider != "claude" || merged.TriageModel != "haiku" {
 		t.Fatalf("merged = %+v", merged)
 	}
 	if merged.ReviewModel != "claude-sonnet-4-6" {
 		t.Errorf("expected review model inherited, got %q", merged.ReviewModel)
+	}
+	if merged.MaxBudgetUSD != 0 {
+		t.Errorf("expected max_budget_usd reset to 0, got %v", merged.MaxBudgetUSD)
 	}
 	if len(merged.Rules) != 1 || merged.Rules[0].ID != "r1" {
 		t.Errorf("expected rules inherited, got %+v", merged.Rules)
@@ -193,5 +203,36 @@ triage_model: haiku
 	}
 	if merged.Provider != "claude" || merged.TriageModel != "haiku" {
 		t.Fatalf("merged = %+v", merged)
+	}
+}
+
+func TestApplyConfigLocalOverlay_YAMLResetsMaxBudgetToZero(t *testing.T) {
+	dir := t.TempDir()
+	mainPath := filepath.Join(dir, "config.yml")
+	overlayPath := filepath.Join(dir, "config.local.yml")
+	if err := os.WriteFile(mainPath, []byte(`version: 1
+provider: anthropic
+triage_model: claude-haiku-4-5-20251001
+max_budget_usd: 5
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	base, err := LoadConfig(mainPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(overlayPath, []byte(`max_budget_usd: 0
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	merged, err := ApplyConfigLocalOverlay(mainPath, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if merged.MaxBudgetUSD != 0 {
+		t.Fatalf("expected max_budget_usd 0 from overlay, got %v", merged.MaxBudgetUSD)
+	}
+	if merged.Provider != "anthropic" {
+		t.Fatalf("expected provider unchanged, got %q", merged.Provider)
 	}
 }
