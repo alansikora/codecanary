@@ -11,6 +11,38 @@ import (
 	"time"
 )
 
+func init() {
+	providers["anthropic"] = ProviderFactory{
+		New:      newAnthropicProvider,
+		Validate: validateAnthropic,
+		Pricing: []PricingEntry{
+			// Opus 4.6 / 4.5
+			{"claude-opus-4-6", modelPricing{5, 25, 6.25, 0.50}},
+			{"claude-opus-4-5", modelPricing{5, 25, 6.25, 0.50}},
+			// Opus 4.1 / 4
+			{"claude-opus-4-1", modelPricing{15, 75, 18.75, 1.50}},
+			{"claude-opus-4-", modelPricing{15, 75, 18.75, 1.50}},
+			// Sonnet 4.6 / 4.5 / 4
+			{"claude-sonnet-4", modelPricing{3, 15, 3.75, 0.30}},
+			// Haiku 4.5
+			{"claude-haiku-4-5", modelPricing{1, 5, 1.25, 0.10}},
+			// Haiku 3.5
+			{"claude-haiku-3-5", modelPricing{0.80, 4, 1.0, 0.08}},
+			// Haiku 3
+			{"claude-haiku-3", modelPricing{0.25, 1.25, 0.30, 0.03}},
+		},
+		DefaultReviewModel: "claude-sonnet-4-6",
+		DefaultTriageModel: "claude-haiku-4-5-20251001",
+	}
+}
+
+func validateAnthropic(cfg *ReviewConfig) error {
+	if cfg.APIBase != "" {
+		return fmt.Errorf("api_base is not supported by the anthropic provider")
+	}
+	return nil
+}
+
 // anthropicProvider implements ModelProvider using the native Anthropic Messages API.
 // Supports prompt caching for significant cost savings on repeated calls.
 type anthropicProvider struct {

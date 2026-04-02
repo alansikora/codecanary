@@ -32,53 +32,38 @@ type ReviewConfig struct {
 	Evaluation   *EvaluationConfig `yaml:"evaluation"`
 }
 
-// validCLIModels is the set of allowed model values for the Claude CLI provider.
-// Accepts both aliases (sonnet) and full model IDs (claude-sonnet-4-6).
-var validCLIModels = map[string]bool{
-	"haiku": true, "sonnet": true, "opus": true,
-	"claude-haiku-4-5-20251001": true,
-	"claude-sonnet-4-6":         true,
-	"claude-sonnet-4-5":         true,
-	"claude-opus-4-6":           true,
-	"claude-opus-4-5":           true,
-}
-
 // EffectiveReviewModel returns the configured review model.
 // Each provider has its own default when review_model is not set.
+// Panics on nil config or unknown provider — both should be caught by Validate().
 func (c *ReviewConfig) EffectiveReviewModel() string {
-	if c != nil && c.ReviewModel != "" {
+	if c == nil {
+		panic("EffectiveReviewModel called with nil config")
+	}
+	if c.ReviewModel != "" {
 		return c.ReviewModel
 	}
-	if c != nil {
-		switch c.Provider {
-		case "claude":
-			return "claude-sonnet-4-6"
-		case "openrouter":
-			return "anthropic/claude-sonnet-4-6"
-		case "openai":
-			return "gpt-5.4"
-		}
+	pf, ok := providers[c.Provider]
+	if !ok {
+		panic(fmt.Sprintf("unknown provider %q (should have been caught by config validation)", c.Provider))
 	}
-	return "claude-sonnet-4-6" // anthropic
+	return pf.DefaultReviewModel
 }
 
 // EffectiveTriageModel returns the configured triage model.
 // Each provider has its own default when triage_model is not set.
+// Panics on nil config or unknown provider — both should be caught by Validate().
 func (c *ReviewConfig) EffectiveTriageModel() string {
-	if c != nil && c.TriageModel != "" {
+	if c == nil {
+		panic("EffectiveTriageModel called with nil config")
+	}
+	if c.TriageModel != "" {
 		return c.TriageModel
 	}
-	if c != nil {
-		switch c.Provider {
-		case "claude":
-			return "claude-haiku-4-5-20251001"
-		case "openrouter":
-			return "anthropic/claude-haiku-4-5-20251001"
-		case "openai":
-			return "gpt-5.4-mini"
-		}
+	pf, ok := providers[c.Provider]
+	if !ok {
+		panic(fmt.Sprintf("unknown provider %q (should have been caught by config validation)", c.Provider))
 	}
-	return "claude-haiku-4-5-20251001" // anthropic
+	return pf.DefaultTriageModel
 }
 
 // EvaluationConfig holds per-evaluation-type settings for re-evaluation prompts.
@@ -146,29 +131,17 @@ func (c *ReviewConfig) Validate() error {
 	if c.MaxBudgetUSD < 0 {
 		return fmt.Errorf("max_budget_usd must be non-negative, got %f", c.MaxBudgetUSD)
 	}
-	switch c.Provider {
-	case "anthropic", "openrouter":
-		// Accept any model string.
-		if c.APIBase != "" {
-			return fmt.Errorf("api_base is not supported by the %s provider", c.Provider)
+	if c.Provider == "" {
+		return fmt.Errorf("provider is required (valid: %s)", strings.Join(providerNames(), ", "))
+	}
+	pf, ok := providers[c.Provider]
+	if !ok {
+		return fmt.Errorf("invalid provider %q (valid: %s)", c.Provider, strings.Join(providerNames(), ", "))
+	}
+	if pf.Validate != nil {
+		if err := pf.Validate(c); err != nil {
+			return err
 		}
-	case "openai":
-		// Accept any model string; api_base can override the endpoint.
-		if c.APIBase != "" && !isValidURL(c.APIBase) {
-			return fmt.Errorf("invalid api_base %q: must be an HTTP(S) URL", c.APIBase)
-		}
-	case "claude":
-		// Claude CLI only accepts known shorthand model names.
-		if c.ReviewModel != "" && !validCLIModels[c.ReviewModel] {
-			return fmt.Errorf("invalid review_model %q for claude provider (valid: haiku, sonnet, opus)", c.ReviewModel)
-		}
-		if c.TriageModel != "" && !validCLIModels[c.TriageModel] {
-			return fmt.Errorf("invalid triage_model %q for claude provider (valid: haiku, sonnet, opus)", c.TriageModel)
-		}
-	case "":
-		return fmt.Errorf("provider is required (valid: anthropic, openai, openrouter, claude)")
-	default:
-		return fmt.Errorf("invalid provider %q (valid: anthropic, openai, openrouter, claude)", c.Provider)
 	}
 	for i, r := range c.Rules {
 		if r.Severity != "" && !validSeverities[r.Severity] {
