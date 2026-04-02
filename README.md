@@ -263,7 +263,7 @@ type ModelProvider interface {
 }
 ```
 
-`claudeResult` is the package-internal shared result type (defined in `provider.go`). `Run` returns the response text and a `CallUsage` struct (input/output/cache tokens, cost, duration). See `provider_openai.go` for a minimal example.
+`Run` receives the full prompt and returns a `claudeResult` with the response text and a `CallUsage` struct (input/output/cache tokens, cost, duration). See `provider_openai.go` for a minimal example.
 
 If your provider uses an OpenAI-compatible chat completions API, reuse the shared `doChat` helper and types from `provider_openai_compat.go`.
 
