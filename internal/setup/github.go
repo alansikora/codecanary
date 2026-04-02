@@ -44,10 +44,12 @@ func RunGitHub(canary bool) error {
 	branch := "codecanary/review-setup"
 	if err := exec.Command("git", "show-ref", "--verify", "refs/heads/"+branch).Run(); err == nil {
 		// Check if we're currently on that branch. If we can't determine
-		// the current branch, treat it conservatively as a match to avoid
-		// deleting a branch we might be on.
+		// the current branch, refuse to delete conservatively.
 		currentBranch, err := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output()
-		if err != nil || strings.TrimSpace(string(currentBranch)) == branch {
+		if err != nil {
+			return fmt.Errorf("could not determine current branch: %w — refusing to delete %s; switch branches and retry", err, branch)
+		}
+		if strings.TrimSpace(string(currentBranch)) == branch {
 			return fmt.Errorf("you are currently on branch %s — switch to another branch first, then retry", branch)
 		}
 
