@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 func init() {
@@ -36,6 +37,20 @@ func init() {
 func validateOpenAI(cfg *ReviewConfig) error {
 	if cfg.APIBase != "" && !isValidURL(cfg.APIBase) {
 		return fmt.Errorf("invalid api_base %q: must be an HTTP(S) URL", cfg.APIBase)
+	}
+	// Skip model checks when api_base is overridden — custom endpoints can serve any model.
+	if cfg.APIBase == "" {
+		for _, model := range []string{cfg.ReviewModel, cfg.TriageModel} {
+			if model == "" {
+				continue
+			}
+			if strings.Contains(model, "/") {
+				return fmt.Errorf("model %q looks like an OpenRouter model (contains '/') — use provider: openrouter instead", model)
+			}
+			if strings.HasPrefix(model, "claude-") || model == "haiku" || model == "sonnet" || model == "opus" {
+				return fmt.Errorf("model %q looks like an Anthropic model — use provider: anthropic, or provider: openrouter to mix models", model)
+			}
+		}
 	}
 	return nil
 }

@@ -40,6 +40,17 @@ func validateAnthropic(cfg *ReviewConfig) error {
 	if cfg.APIBase != "" {
 		return fmt.Errorf("api_base is not supported by the anthropic provider")
 	}
+	for _, model := range []string{cfg.ReviewModel, cfg.TriageModel} {
+		if model == "" {
+			continue
+		}
+		if strings.Contains(model, "/") {
+			return fmt.Errorf("model %q looks like an OpenRouter model (contains '/') — use provider: openrouter instead", model)
+		}
+		if strings.HasPrefix(model, "gpt-") || strings.HasPrefix(model, "o1") || strings.HasPrefix(model, "o3") || strings.HasPrefix(model, "o4") || strings.HasPrefix(model, "chatgpt") {
+			return fmt.Errorf("model %q looks like an OpenAI model — use provider: openai, or provider: openrouter to mix models", model)
+		}
+	}
 	return nil
 }
 

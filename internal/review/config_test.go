@@ -130,6 +130,50 @@ func TestValidate_ValidCLIModels(t *testing.T) {
 	}
 }
 
+func TestValidate_CrossProviderModel_Anthropic(t *testing.T) {
+	// OpenAI model on anthropic provider.
+	cfg := &ReviewConfig{Provider: "anthropic", TriageModel: "gpt-5.4-mini"}
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for OpenAI model on anthropic provider")
+	}
+	// OpenRouter-style model on anthropic provider.
+	cfg = &ReviewConfig{Provider: "anthropic", TriageModel: "openai/gpt-5.4"}
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for OpenRouter model on anthropic provider")
+	}
+	// Review model too.
+	cfg = &ReviewConfig{Provider: "anthropic", ReviewModel: "o4-mini", TriageModel: "claude-haiku-4-5-20251001"}
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for OpenAI review_model on anthropic provider")
+	}
+}
+
+func TestValidate_CrossProviderModel_OpenAI(t *testing.T) {
+	// Anthropic model on openai provider.
+	cfg := &ReviewConfig{Provider: "openai", TriageModel: "claude-haiku-4-5-20251001"}
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for Anthropic model on openai provider")
+	}
+	// Claude alias on openai provider.
+	cfg = &ReviewConfig{Provider: "openai", TriageModel: "haiku"}
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for Claude alias on openai provider")
+	}
+	// OpenRouter-style model on openai provider.
+	cfg = &ReviewConfig{Provider: "openai", ReviewModel: "anthropic/claude-sonnet-4-6", TriageModel: "gpt-5.4-mini"}
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for OpenRouter model on openai provider")
+	}
+}
+
+func TestValidate_CrossProviderModel_OpenAI_CustomBase(t *testing.T) {
+	// With api_base set, any model name is allowed (custom endpoint).
+	cfg := &ReviewConfig{Provider: "openai", APIBase: "http://localhost:11434/v1", TriageModel: "claude-haiku-4-5-20251001"}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("unexpected error with custom api_base: %v", err)
+	}
+}
+
 func TestValidate_ValidProviders(t *testing.T) {
 	triageModels := map[string]string{
 		"anthropic":  "claude-haiku-4-5-20251001",

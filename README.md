@@ -206,6 +206,8 @@ evaluation:
 | `openrouter` | `anthropic/claude-sonnet-4-6` | `anthropic/claude-haiku-4-5-20251001` |
 | `claude` | `claude-sonnet-4-6` | `haiku` |
 
+Both `review_model` and `triage_model` must be models supported by your configured provider — you can't use an OpenAI model with `provider: anthropic` or vice versa. Config validation catches obvious mismatches. To mix models from different providers, use `provider: openrouter`, which proxies all of them. The `openai` provider skips this check when `api_base` is set, since custom endpoints (Ollama, vLLM, Azure) can serve any model.
+
 ### Budget Enforcement
 
 `max_budget_usd` caps total spending per review run. Set to `0` (default) for unlimited.
