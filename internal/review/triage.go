@@ -394,7 +394,9 @@ func evalContext(cfg *ReviewConfig, evalType string) string {
 }
 
 // EvaluateThreadsParallel runs the LLM in parallel for threads that need evaluation.
-func EvaluateThreadsParallel(triaged []TriagedThread, provider ModelProvider, cfg *ReviewConfig, maxConcurrent int, model string, tracker *UsageTracker) []ThreadResolution {
+// When maxBudgetUSD > 0, new goroutines are not launched once the budget is exceeded
+// (already-running goroutines are allowed to finish).
+func EvaluateThreadsParallel(triaged []TriagedThread, provider ModelProvider, cfg *ReviewConfig, maxConcurrent int, model string, tracker *UsageTracker, maxBudgetUSD float64) []ThreadResolution {
 	results := make([]ThreadResolution, len(triaged))
 
 	sem := make(chan struct{}, maxConcurrent)
@@ -403,6 +405,11 @@ func EvaluateThreadsParallel(triaged []TriagedThread, provider ModelProvider, cf
 	for i, t := range triaged {
 		if t.Class == TriageSkip {
 			results[i] = ThreadResolution{Index: t.Index, Resolved: false}
+			continue
+		}
+		// Soft budget cap: skip remaining evaluations if budget is exceeded.
+		if err := CheckBudget(tracker, maxBudgetUSD); err != nil {
+			results[i] = ThreadResolution{Index: t.Index, Error: err}
 			continue
 		}
 		wg.Add(1)
@@ -505,7 +512,11 @@ func LogResolutions(triaged []TriagedThread, resolutions []ThreadResolution) {
 		}
 		label := threadLabel(triaged[i].Thread)
 		if r.Error != nil {
-			fmt.Fprintf(os.Stderr, "  [error]    %s — evaluation failed: %v\n", label, r.Error)
+			if isBudgetError(r.Error) {
+				fmt.Fprintf(os.Stderr, "  [skip]     %s — %v\n", label, r.Error)
+			} else {
+				fmt.Fprintf(os.Stderr, "  [error]    %s — evaluation failed: %v\n", label, r.Error)
+			}
 		} else if r.Resolved {
 			switch r.Reason {
 			case "code_change":

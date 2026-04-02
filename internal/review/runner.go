@@ -417,7 +417,7 @@ func Run(opts RunOptions) error {
 			LogTriage(triaged)
 			needsEval := countNonSkipped(triaged)
 			if needsEval > 0 {
-				resolutions := EvaluateThreadsParallel(triaged, provider, cfg, 3, cfg.EffectiveTriageModel(), tracker)
+				resolutions := EvaluateThreadsParallel(triaged, provider, cfg, 3, cfg.EffectiveTriageModel(), tracker, cfg.MaxBudgetUSD)
 				LogResolutions(triaged, resolutions)
 				fixed = toFixedThreads(resolutions)
 
@@ -524,7 +524,7 @@ func Run(opts RunOptions) error {
 		// LocalDetect mode: no GitHub threads but may have local state from a
 		// previous local run. Use local state for incremental detection.
 		prompt, stillOpenFindings, isIncremental, startIndex = buildLocalIncrementalPrompt(
-			pr, cfg, rctx.ProjectDocs, opts.PRNumber, startIndex,
+			pr, cfg, rctx.ProjectDocs, opts.PRNumber, startIndex, provider, tracker,
 		)
 		if prompt == "" && !isIncremental {
 			Stderrf(ansiBold, "Reviewing PR #%d...\n", opts.PRNumber)
@@ -543,6 +543,13 @@ func Run(opts RunOptions) error {
 	}
 
 	var findings []Finding
+	if !opts.ReplyOnly && prompt != "" {
+		// Budget check: skip review if triage phase already exceeded the budget.
+		if err := CheckBudget(tracker, cfg.MaxBudgetUSD); err != nil {
+			fmt.Fprintf(os.Stderr, "Skipping review call: %v\n", err)
+			prompt = ""
+		}
+	}
 	if !opts.ReplyOnly && prompt != "" {
 		// 6. Run LLM.
 		claudeOut, err := provider.Run(context.Background(), prompt, RunOpts{
@@ -692,8 +699,13 @@ func Run(opts RunOptions) error {
 // the appropriate prompt (incremental or empty). Returns the prompt, still-open
 // findings, whether the review is incremental, and the start index.
 // Used by both Run (LocalDetect mode) and runLocal.
+//
+// When provider and tracker are non-nil, previous findings are triaged against
+// the incremental diff (same as the PR flow). Findings resolved by code changes
+// are removed from known issues and the still-open list.
 func buildLocalIncrementalPrompt(
 	pr *PRData, cfg *ReviewConfig, projectDocs map[string]string, prNumber int, startIndex int,
+	provider ModelProvider, tracker *UsageTracker,
 ) (prompt string, stillOpen []Finding, incremental bool, newStartIndex int) {
 	newStartIndex = startIndex
 
@@ -730,14 +742,55 @@ func buildLocalIncrementalPrompt(
 		return "", stillOpen, true, newStartIndex
 	}
 
-	knownIssues := findingsToKnownIssues(state.Findings)
-	for _, f := range state.Findings {
+	// Triage previous findings against the incremental diff.
+	threads := findingsToKnownIssues(state.Findings)
+	fixedSet := make(map[int]bool)
+	var resolvedCtx []ResolvedContext
+
+	if provider != nil && len(threads) > 0 {
+		triaged := ClassifyThreads(threads, inc.Diff, "")
+		LogTriage(triaged)
+		needsEval := countNonSkipped(triaged)
+		if needsEval > 0 {
+			resolutions := EvaluateThreadsParallel(triaged, provider, cfg, 3, cfg.EffectiveTriageModel(), tracker, cfg.MaxBudgetUSD)
+			LogResolutions(triaged, resolutions)
+			for _, f := range toFixedThreads(resolutions) {
+				if f.Reason == "code_change" {
+					fixedSet[f.Index] = true
+					if f.Index >= 0 && f.Index < len(state.Findings) {
+						sf := state.Findings[f.Index]
+						resolvedCtx = append(resolvedCtx, ResolvedContext{
+							Path:   sf.File,
+							Line:   sf.Line,
+							Title:  sf.Title,
+							Reason: f.Reason,
+						})
+					}
+				}
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "No findings need re-evaluation — skipping triage\n")
+		}
+	}
+
+	// Build known issues and still-open lists, excluding resolved findings.
+	var knownIssues []ReviewThread
+	for i, f := range state.Findings {
+		if fixedSet[i] {
+			continue
+		}
 		sf := f
 		sf.Status = "still open"
 		stillOpen = append(stillOpen, sf)
+		knownIssues = append(knownIssues, threads[i])
+	}
+
+	resolved := len(fixedSet)
+	if resolved > 0 {
+		fmt.Fprintf(os.Stderr, "%d finding(s) resolved by code changes\n", resolved)
 	}
 	Stderrf(ansiBold, "Reviewing incremental changes (%d known issues excluded)...\n", len(knownIssues))
-	prompt = BuildIncrementalPrompt(inc.Diff, cfg, knownIssues, prNumber, newStartIndex, inc.Contents, inc.Files, nil, projectDocs)
+	prompt = BuildIncrementalPrompt(inc.Diff, cfg, knownIssues, prNumber, newStartIndex, inc.Contents, inc.Files, resolvedCtx, projectDocs)
 	return prompt, stillOpen, true, newStartIndex
 }
 
@@ -753,12 +806,13 @@ func runLocal(opts RunOptions) error {
 
 	// Build prompt (incremental or full).
 	branch := pr.HeadBranch
+	provider := NewProvider(rctx.Config, rctx.Env)
 	var prompt string
 	var stillOpenFindings []Finding
 	var isIncremental bool
 
 	prompt, stillOpenFindings, isIncremental, _ = buildLocalIncrementalPrompt(
-		pr, rctx.Config, rctx.ProjectDocs, 0, 0,
+		pr, rctx.Config, rctx.ProjectDocs, 0, 0, provider, rctx.Tracker,
 	)
 	if prompt == "" && !isIncremental {
 		// First local review — full diff.
@@ -781,10 +835,14 @@ func runLocal(opts RunOptions) error {
 		}
 		return nil
 	}
-
-	// Run LLM and process findings.
-	provider := NewProvider(rctx.Config, rctx.Env)
 	var findings []Finding
+	if prompt != "" {
+		// Budget check: skip review if triage phase already exceeded the budget.
+		if err := CheckBudget(rctx.Tracker, rctx.Config.MaxBudgetUSD); err != nil {
+			fmt.Fprintf(os.Stderr, "Skipping review call: %v\n", err)
+			prompt = ""
+		}
+	}
 	if prompt != "" {
 		claudeOut, err := provider.Run(context.Background(), prompt, RunOpts{
 			Model:        rctx.Config.EffectiveReviewModel(),
@@ -827,11 +885,15 @@ func runLocal(opts RunOptions) error {
 	}
 
 	// Save local state for future incremental reviews.
-	allFindings := findings
-	state, _ := LoadLocalState(branch)
-	if state != nil && state.SHA != "" && isAncestor(state.SHA) {
-		allFindings = mergeFindings(state.Findings, findings)
+	// Use stillOpenFindings as the base — triage already removed resolved findings.
+	// Strip the "still open" status tag before saving.
+	var survivingFindings []Finding
+	for _, f := range stillOpenFindings {
+		sf := f
+		sf.Status = ""
+		survivingFindings = append(survivingFindings, sf)
 	}
+	allFindings := mergeFindings(survivingFindings, findings)
 	if saveErr := SaveLocalState(branch, &LocalState{
 		SHA:      headSHA,
 		Branch:   branch,
