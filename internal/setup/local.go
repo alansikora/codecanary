@@ -39,14 +39,12 @@ func RunLocal() error {
 		}
 		fmt.Fprintf(os.Stderr, " valid!\n")
 
-		// Store in OS keychain.
+		// Store credential (system keychain, or ~/.codecanary/credentials.json fallback).
 		envVar := ProviderEnvVar(provider)
 		if err := credentials.Store(envVar, apiKey); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not store key in system keychain: %v\n", err)
-			fmt.Fprintf(os.Stderr, "You can set %s as an environment variable instead.\n\n", envVar)
-		} else {
-			fmt.Fprintf(os.Stderr, "API key stored in system keychain.\n\n")
+			return fmt.Errorf("could not store API key: %w", err)
 		}
+		fmt.Fprintf(os.Stderr, "API key stored securely.\n\n")
 	}
 
 	// 3. Select model.

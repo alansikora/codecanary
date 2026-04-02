@@ -39,10 +39,8 @@ codecanary setup local
 
 This walks you through:
 1. Choosing an AI provider (Anthropic, OpenAI, OpenRouter, or Claude CLI)
-2. Entering and validating your API key (stored securely in your system keychain)
+2. Entering and validating your API key (stored securely — system keychain on macOS, `~/.codecanary/credentials.json` on Linux)
 3. Creating a `.codecanary/config.yml` with your provider and model
-
-> If your system has no keychain (e.g. headless Linux), setup warns you and you set the API key as an environment variable instead.
 
 Then review your changes:
 
@@ -83,7 +81,7 @@ codecanary auth status    # show which API keys are stored
 codecanary auth delete    # remove a stored API key
 ```
 
-API keys are stored in your system keychain. Environment variables always override stored credentials — useful for CI or testing with a different key.
+API keys are stored in your system keychain (macOS) or `~/.codecanary/credentials.json` (Linux). Environment variables always override stored credentials — useful for CI or testing with a different key.
 
 ### Provider credentials
 

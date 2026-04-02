@@ -42,8 +42,8 @@ internal/
     state.go             # Local state persistence
     generate.go          # Config generation from repo analysis
     docs.go              # Project doc discovery
-  credentials/     # OS keychain integration (system keychain)
-    keyring.go     # Store/Retrieve/Delete via go-keyring
+  credentials/     # Credential storage (keychain with file fallback)
+    keyring.go     # Store/Retrieve/Delete — keychain first, ~/.codecanary/credentials.json fallback
     resolve.go     # API key resolution: env var → keychain → error
   setup/           # Setup wizard logic (huh forms)
     forms.go       # Shared huh form components
@@ -75,7 +75,7 @@ Version is set via ldflags: `-X main.version=v{version}`
 
 - `spf13/cobra` — CLI framework
 - `charmbracelet/huh` — terminal form builder (setup wizard)
-- `zalando/go-keyring` — OS keychain (system keychain)
+- `zalando/go-keyring` — OS keychain (with file-based fallback for systems without one)
 - `bmatcuk/doublestar` — glob pattern matching for ignore rules
 - `gopkg.in/yaml.v3` — config parsing
 - `golang.org/x/term` — terminal detection
@@ -124,7 +124,7 @@ There is a **single `Run()` function** — not separate paths for GitHub vs. loc
 - **Anti-hallucination**: explicit file allowlist, line validation against diff, max finding distance threshold
 - **Worker** (`worker/`): OIDC token exchange proxy at `oidc.codecanary.sh` — verifies GitHub Actions OIDC token, returns GitHub App installation token
 - **Setup** is a subcommand (`codecanary setup`) using `charmbracelet/huh` forms, with `local` and `github` sub-flows
-- **Credentials** are stored in the OS keychain via `go-keyring`. `resolveEnv()` in `runner.go` injects keychain credentials into the filtered env when not already set. Env vars always take priority.
+- **Credentials** are stored via `go-keyring` (OS keychain) with a file-based fallback (`~/.codecanary/credentials.json`, mode `0600`). `resolveEnv()` in `runner.go` injects stored credentials into the filtered env when not already set. Env vars always take priority.
 
 ## Rules
 
