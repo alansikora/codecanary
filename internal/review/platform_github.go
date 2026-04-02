@@ -174,18 +174,14 @@ func (g *GithubPlatform) SaveState(result *ReviewResult, stillOpen []Finding, is
 }
 
 func (g *GithubPlatform) ReportUsage(tracker *UsageTracker) {
+	// Always print usage table to stderr (visible in GHA logs and local-detect).
+	fmt.Fprint(os.Stderr, FormatUsageTable(tracker.Calls(), colorsEnabled()))
+
+	// Also write to GITHUB_ENV so the workflow Usage step can display it.
 	report := tracker.Report(g.Repo, g.PRNumber)
 	if len(report.Calls) > 0 {
 		if err := WriteUsageEnv(report); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not write usage env: %v\n", err)
-		}
-	}
-
-	// Also print usage table when output goes to terminal (local-detect mode).
-	if !g.Post {
-		outputFormat := resolveOutputFormat(g.OutputFormat)
-		if outputFormat == "terminal" {
-			fmt.Fprint(os.Stderr, FormatUsageTable(tracker.Calls(), colorsEnabled()))
 		}
 	}
 }
