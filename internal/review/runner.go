@@ -417,7 +417,7 @@ func Run(opts RunOptions) error {
 			LogTriage(triaged)
 			needsEval := countNonSkipped(triaged)
 			if needsEval > 0 {
-				resolutions := EvaluateThreadsParallel(triaged, provider, cfg, 3, cfg.EffectiveTriageModel(), tracker)
+				resolutions := EvaluateThreadsParallel(triaged, provider, cfg, 3, cfg.EffectiveTriageModel(), tracker, cfg.MaxBudgetUSD)
 				LogResolutions(triaged, resolutions)
 				fixed = toFixedThreads(resolutions)
 
@@ -543,6 +543,13 @@ func Run(opts RunOptions) error {
 	}
 
 	var findings []Finding
+	if !opts.ReplyOnly && prompt != "" {
+		// Budget check: skip review if triage phase already exceeded the budget.
+		if err := CheckBudget(tracker, cfg.MaxBudgetUSD); err != nil {
+			fmt.Fprintf(os.Stderr, "Skipping review call: %v\n", err)
+			prompt = ""
+		}
+	}
 	if !opts.ReplyOnly && prompt != "" {
 		// 6. Run LLM.
 		claudeOut, err := provider.Run(context.Background(), prompt, RunOpts{
@@ -785,6 +792,13 @@ func runLocal(opts RunOptions) error {
 	// Run LLM and process findings.
 	provider := NewProvider(rctx.Config, rctx.Env)
 	var findings []Finding
+	if prompt != "" {
+		// Budget check: skip review if prior calls already exceeded the budget.
+		if err := CheckBudget(rctx.Tracker, rctx.Config.MaxBudgetUSD); err != nil {
+			fmt.Fprintf(os.Stderr, "Skipping review call: %v\n", err)
+			prompt = ""
+		}
+	}
 	if prompt != "" {
 		claudeOut, err := provider.Run(context.Background(), prompt, RunOpts{
 			Model:        rctx.Config.EffectiveReviewModel(),

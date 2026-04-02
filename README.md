@@ -178,6 +178,17 @@ Each provider has sensible defaults. Override with `review_model` and `triage_mo
 | `openrouter` | `anthropic/claude-sonnet-4-6` | `anthropic/claude-haiku-4-5-20251001` |
 | `claude` | `claude-sonnet-4-6` | `claude-haiku-4-5-20251001` |
 
+### Budget Enforcement
+
+`max_budget_usd` caps total spending per review run. Set to `0` (default) for unlimited.
+
+| Provider | How it works |
+|----------|-------------|
+| `claude` | Passed as `--max-budget-usd` to the CLI (enforced mid-stream). The runner also checks between calls as an additional safeguard. |
+| `anthropic`, `openai`, `openrouter` | Enforced by the runner between LLM calls. After the triage phase completes, spending is checked before starting the review call. During parallel triage, each new evaluation is skipped once the budget is exceeded (already-running evaluations finish). |
+
+Because checks happen _between_ calls, a single call can push spending over the limit — the cap is enforced before the _next_ call starts.
+
 ### Severity Levels
 
 | Level | Use for |

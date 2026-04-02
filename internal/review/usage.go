@@ -52,6 +52,30 @@ func (u *UsageTracker) Calls() []CallUsage {
 	return out
 }
 
+// TotalCost returns the sum of CostUSD across all recorded calls.
+func (u *UsageTracker) TotalCost() float64 {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	var total float64
+	for _, c := range u.calls {
+		total += c.CostUSD
+	}
+	return total
+}
+
+// CheckBudget returns an error if the tracker's total cost exceeds the given
+// limit. A limit of 0 means unlimited (no check performed).
+func CheckBudget(tracker *UsageTracker, limit float64) error {
+	if limit <= 0 {
+		return nil
+	}
+	spent := tracker.TotalCost()
+	if spent > limit {
+		return fmt.Errorf("budget exceeded: $%.4f spent of $%.4f limit", spent, limit)
+	}
+	return nil
+}
+
 // Report builds a UsageReport from accumulated calls.
 func (u *UsageTracker) Report(repo string, prNumber int) *UsageReport {
 	u.mu.Lock()
