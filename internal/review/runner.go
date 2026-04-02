@@ -384,7 +384,6 @@ func Run(opts RunOptions) error {
 	}
 	if !opts.ReplyOnly && prompt != "" {
 		claudeOut, err := reviewProvider.Run(context.Background(), prompt, RunOpts{
-			Model:        cfg.EffectiveReviewModel(),
 			MaxBudgetUSD: cfg.MaxBudgetUSD,
 			Timeout:      cfg.EffectiveTimeout(),
 		})
@@ -489,7 +488,7 @@ func runTriage(
 		LogTriage(triaged)
 		needsEval := countNonSkipped(triaged)
 		if needsEval > 0 {
-			resolutions := EvaluateThreadsParallel(triaged, triageProvider, cfg, 3, cfg.EffectiveTriageModel(), tracker, cfg.MaxBudgetUSD)
+			resolutions := EvaluateThreadsParallel(triaged, triageProvider, cfg, 3, tracker, cfg.MaxBudgetUSD)
 			LogResolutions(triaged, resolutions)
 			fixed = toFixedThreads(resolutions)
 

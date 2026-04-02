@@ -45,6 +45,7 @@ func validateOpenAI(mc *ModelConfig) error {
 // Also works with any OpenAI-compatible endpoint by overriding api_base
 // (e.g. Azure OpenAI, Ollama, vLLM).
 type openaiProvider struct {
+	model   string
 	apiBase string
 	keyEnv  string
 	env     []string
@@ -59,7 +60,7 @@ func newOpenAIProvider(mc *ModelConfig, env []string) ModelProvider {
 	if mc.APIKeyEnv != "" {
 		keyEnv = mc.APIKeyEnv
 	}
-	return &openaiProvider{apiBase: apiBase, keyEnv: keyEnv, env: env}
+	return &openaiProvider{model: mc.Model, apiBase: apiBase, keyEnv: keyEnv, env: env}
 }
 
 func (p *openaiProvider) Run(ctx context.Context, prompt string, opts RunOpts) (*claudeResult, error) {
@@ -68,13 +69,13 @@ func (p *openaiProvider) Run(ctx context.Context, prompt string, opts RunOpts) (
 		return nil, fmt.Errorf("API key not found: set %s or run `codecanary setup local`", p.keyEnv)
 	}
 
-	chatResp, durationMS, err := doChat(ctx, p.apiBase, apiKey, opts.Model, prompt, opts.Timeout)
+	chatResp, durationMS, err := doChat(ctx, p.apiBase, apiKey, p.model, prompt, opts.Timeout)
 	if err != nil {
 		return nil, err
 	}
 
 	usage := CallUsage{
-		Model:      opts.Model,
+		Model:      p.model,
 		DurationMS: durationMS,
 	}
 	if chatResp.Usage != nil {

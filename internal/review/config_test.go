@@ -2,7 +2,6 @@ package review
 
 import (
 	"os"
-	"strings"
 	"testing"
 	"time"
 )
@@ -53,26 +52,6 @@ func TestEffectiveMaxTotalSize_Custom(t *testing.T) {
 	cfg := &ReviewConfig{MaxTotalSize: 200000}
 	if got := cfg.EffectiveMaxTotalSize(); got != 200000 {
 		t.Errorf("EffectiveMaxTotalSize() = %d, want 200000", got)
-	}
-}
-
-func TestEffectiveReviewModel(t *testing.T) {
-	cfg := &ReviewConfig{
-		Review: ModelConfig{Provider: "anthropic", Model: "claude-sonnet-4-6"},
-		Triage: ModelConfig{Provider: "anthropic", Model: "claude-haiku-4-5-20251001"},
-	}
-	if got := cfg.EffectiveReviewModel(); got != "claude-sonnet-4-6" {
-		t.Errorf("EffectiveReviewModel() = %q, want %q", got, "claude-sonnet-4-6")
-	}
-}
-
-func TestEffectiveTriageModel(t *testing.T) {
-	cfg := &ReviewConfig{
-		Review: ModelConfig{Provider: "anthropic", Model: "claude-sonnet-4-6"},
-		Triage: ModelConfig{Provider: "anthropic", Model: "claude-sonnet-4-20250514"},
-	}
-	if got := cfg.EffectiveTriageModel(); got != "claude-sonnet-4-20250514" {
-		t.Errorf("EffectiveTriageModel() = %q, want %q", got, "claude-sonnet-4-20250514")
 	}
 }
 
@@ -221,28 +200,6 @@ triage:
 	}
 	if cfg.Triage.Model != "gpt-5.4-mini" {
 		t.Errorf("Triage.Model = %q, want %q", cfg.Triage.Model, "gpt-5.4-mini")
-	}
-}
-
-func TestLoadConfig_OldFormatError(t *testing.T) {
-	dir := t.TempDir()
-	path := dir + "/config.yml"
-
-	yaml := `version: 1
-provider: anthropic
-review_model: claude-sonnet-4-6
-triage_model: claude-haiku-4-5-20251001
-`
-	if err := writeTestFile(path, yaml); err != nil {
-		t.Fatal(err)
-	}
-
-	_, err := LoadConfig(path)
-	if err == nil {
-		t.Fatal("expected error for old flat-format config")
-	}
-	if !strings.Contains(err.Error(), "config format has changed") {
-		t.Errorf("expected migration hint in error, got: %v", err)
 	}
 }
 

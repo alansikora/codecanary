@@ -35,30 +35,6 @@ type ReviewConfig struct {
 	MaxBudgetUSD float64           `yaml:"max_budget_usd"`  // per-invocation spending limit in USD (default 0 = unlimited)
 	TimeoutMins  int               `yaml:"timeout_minutes"` // per-invocation timeout in minutes (default 5)
 	Evaluation   *EvaluationConfig `yaml:"evaluation"`
-
-	// Old format detection — these fields exist only to detect old-format
-	// configs and return a clear error message pointing users to the new format.
-	OldProvider    string `yaml:"provider,omitempty"`
-	OldReviewModel string `yaml:"review_model,omitempty"`
-	OldTriageModel string `yaml:"triage_model,omitempty"`
-}
-
-// EffectiveReviewModel returns the configured review model.
-// review.model is required — Validate() rejects configs without it.
-func (c *ReviewConfig) EffectiveReviewModel() string {
-	if c == nil {
-		panic("EffectiveReviewModel called with nil config")
-	}
-	return c.Review.Model
-}
-
-// EffectiveTriageModel returns the configured triage model.
-// triage.model is required — Validate() rejects configs without it.
-func (c *ReviewConfig) EffectiveTriageModel() string {
-	if c == nil {
-		panic("EffectiveTriageModel called with nil config")
-	}
-	return c.Triage.Model
 }
 
 // EvaluationConfig holds per-evaluation-type settings for re-evaluation prompts.
@@ -145,10 +121,6 @@ func (c *ReviewConfig) Validate() error {
 	}
 	if c.MaxBudgetUSD < 0 {
 		return fmt.Errorf("max_budget_usd must be non-negative, got %f", c.MaxBudgetUSD)
-	}
-	// Detect old flat-format configs and give a clear error.
-	if c.Review.Provider == "" && c.OldProvider != "" {
-		return fmt.Errorf("config format has changed — replace top-level 'provider'/'review_model'/'triage_model' with nested 'review:' and 'triage:' sections (see https://github.com/alansikora/codecanary)")
 	}
 	if err := validateModelConfig(&c.Review, "review"); err != nil {
 		return err

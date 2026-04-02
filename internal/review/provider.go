@@ -9,8 +9,9 @@ import (
 )
 
 // RunOpts configures a single model invocation.
+// The model is stored in the provider at construction time (from ModelConfig),
+// so it is not included here.
 type RunOpts struct {
-	Model        string
 	MaxBudgetUSD float64
 	Timeout      time.Duration
 }

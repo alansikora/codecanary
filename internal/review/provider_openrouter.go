@@ -27,6 +27,7 @@ func validateOpenRouter(mc *ModelConfig) error {
 // OpenRouter uses the OpenAI-compatible chat completions format and
 // supports automatic prompt caching with sticky provider routing.
 type openrouterProvider struct {
+	model  string
 	keyEnv string
 	env    []string
 }
@@ -36,7 +37,7 @@ func newOpenRouterProvider(mc *ModelConfig, env []string) ModelProvider {
 	if mc.APIKeyEnv != "" {
 		keyEnv = mc.APIKeyEnv
 	}
-	return &openrouterProvider{keyEnv: keyEnv, env: env}
+	return &openrouterProvider{model: mc.Model, keyEnv: keyEnv, env: env}
 }
 
 func (p *openrouterProvider) Run(ctx context.Context, prompt string, opts RunOpts) (*claudeResult, error) {
@@ -45,13 +46,13 @@ func (p *openrouterProvider) Run(ctx context.Context, prompt string, opts RunOpt
 		return nil, fmt.Errorf("API key not found: set %s or run `codecanary setup local`", p.keyEnv)
 	}
 
-	chatResp, durationMS, err := doChat(ctx, "https://openrouter.ai/api/v1", apiKey, opts.Model, prompt, opts.Timeout)
+	chatResp, durationMS, err := doChat(ctx, "https://openrouter.ai/api/v1", apiKey, p.model, prompt, opts.Timeout)
 	if err != nil {
 		return nil, err
 	}
 
 	usage := CallUsage{
-		Model:      opts.Model,
+		Model:      p.model,
 		DurationMS: durationMS,
 	}
 	if chatResp.Usage != nil {
