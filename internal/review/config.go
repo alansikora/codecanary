@@ -34,30 +34,36 @@ type ReviewConfig struct {
 
 // EffectiveReviewModel returns the configured review model.
 // Each provider has its own default when review_model is not set.
+// Panics on nil config or unknown provider — both should be caught by Validate().
 func (c *ReviewConfig) EffectiveReviewModel() string {
-	if c != nil && c.ReviewModel != "" {
+	if c == nil {
+		panic("EffectiveReviewModel called with nil config")
+	}
+	if c.ReviewModel != "" {
 		return c.ReviewModel
 	}
-	if c != nil {
-		if pf, ok := providers[c.Provider]; ok && pf.DefaultReviewModel != "" {
-			return pf.DefaultReviewModel
-		}
+	pf, ok := providers[c.Provider]
+	if !ok {
+		panic(fmt.Sprintf("unknown provider %q (should have been caught by config validation)", c.Provider))
 	}
-	return "claude-sonnet-4-6" // fallback
+	return pf.DefaultReviewModel
 }
 
 // EffectiveTriageModel returns the configured triage model.
 // Each provider has its own default when triage_model is not set.
+// Panics on nil config or unknown provider — both should be caught by Validate().
 func (c *ReviewConfig) EffectiveTriageModel() string {
-	if c != nil && c.TriageModel != "" {
+	if c == nil {
+		panic("EffectiveTriageModel called with nil config")
+	}
+	if c.TriageModel != "" {
 		return c.TriageModel
 	}
-	if c != nil {
-		if pf, ok := providers[c.Provider]; ok && pf.DefaultTriageModel != "" {
-			return pf.DefaultTriageModel
-		}
+	pf, ok := providers[c.Provider]
+	if !ok {
+		panic(fmt.Sprintf("unknown provider %q (should have been caught by config validation)", c.Provider))
 	}
-	return "claude-haiku-4-5-20251001" // fallback
+	return pf.DefaultTriageModel
 }
 
 // EvaluationConfig holds per-evaluation-type settings for re-evaluation prompts.
