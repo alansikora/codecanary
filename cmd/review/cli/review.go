@@ -36,6 +36,13 @@ var reviewCmd = &cobra.Command{
 				Post:       post,
 				DryRun:     dryRun,
 				ReplyOnly:  replyOnly,
+				Platform: &review.GithubPlatform{
+					Repo:         repo,
+					PRNumber:     prNumber,
+					Post:         post,
+					DryRun:       dryRun,
+					OutputFormat: output,
+				},
 			})
 		}
 
@@ -43,14 +50,20 @@ var reviewCmd = &cobra.Command{
 		if prNumber, err := review.DetectPRNumber(repo); err == nil {
 			review.Stderrf(review.ColorCyan, "Auto-detected PR #%d from current branch\n", prNumber)
 			return review.Run(review.RunOptions{
-				Repo:        repo,
-				PRNumber:    prNumber,
-				ConfigPath:  configPath,
-				Output:      output,
-				Post:        post,
-				DryRun:      dryRun,
-				ReplyOnly:   replyOnly,
-				LocalDetect: true,
+				Repo:       repo,
+				PRNumber:   prNumber,
+				ConfigPath: configPath,
+				Output:     output,
+				Post:       post,
+				DryRun:     dryRun,
+				ReplyOnly:  replyOnly,
+				Platform: &review.GithubPlatform{
+					Repo:         repo,
+					PRNumber:     prNumber,
+					Post:         post,
+					DryRun:       dryRun,
+					OutputFormat: output,
+				},
 			})
 		}
 
@@ -72,12 +85,15 @@ var reviewCmd = &cobra.Command{
 
 		return review.Run(review.RunOptions{
 			PR:         pr,
-			Local:      true,
 			ConfigPath: configPath,
 			Output:     output,
 			Post:       post,
 			DryRun:     dryRun,
 			ReplyOnly:  replyOnly,
+			Platform: &review.LocalPlatform{
+				Branch:       pr.HeadBranch,
+				OutputFormat: output,
+			},
 		})
 	},
 }

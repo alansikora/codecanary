@@ -17,10 +17,9 @@ type RunOptions struct {
 	Output     string // "markdown" or "json"
 	Post       bool
 	DryRun     bool
-	ReplyOnly   bool    // evaluate thread replies only, skip new findings
-	Local       bool    // local mode: no PR, no GitHub interaction
-	LocalDetect bool    // PR was auto-detected locally (save state)
-	PR          *PRData // pre-fetched PRData (used in local mode)
+	ReplyOnly  bool           // evaluate thread replies only, skip new findings
+	PR         *PRData        // pre-fetched PRData (used in local mode)
+	Platform   ReviewPlatform // environment adapter (GitHub or local)
 }
 
 // allowedEnvPrefixes lists environment variable prefixes passed to the LLM subprocess.
@@ -186,38 +185,6 @@ func prepareReview(pr *PRData, configPath string) (*reviewContext, error) {
 	}, nil
 }
 
-// scopedIncrementalDiff holds the result of preparing an incremental diff.
-type scopedIncrementalDiff struct {
-	Diff     string
-	Files    []string
-	Contents map[string]string
-}
-
-// prepareIncrementalDiff computes the incremental diff from prevSHA, scopes it
-// to the PR/branch files, and returns the scoped diff, file list, and contents.
-func prepareIncrementalDiff(prevSHA string, prFiles []string, fileContents map[string]string) (*scopedIncrementalDiff, error) {
-	diff, err := GetIncrementalDiff(prevSHA)
-	if err != nil {
-		return nil, err
-	}
-
-	allowed := make(map[string]bool, len(prFiles))
-	for _, f := range prFiles {
-		allowed[f] = true
-	}
-	diff = ScopeDiffToFiles(diff, allowed)
-
-	files := FilesFromDiff(diff)
-	contents := make(map[string]string, len(files))
-	for _, f := range files {
-		if content, ok := fileContents[f]; ok {
-			contents[f] = content
-		}
-	}
-
-	return &scopedIncrementalDiff{Diff: diff, Files: files, Contents: contents}, nil
-}
-
 // processFindings parses Claude's output, filters findings to diff files,
 // removes non-actionable findings, and tags status for incremental reviews.
 func processFindings(claudeText string, diffFiles []string, incremental bool) ([]Finding, error) {
@@ -304,61 +271,57 @@ func currentHEAD() (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// Run orchestrates the full review flow.
+// Run orchestrates the full review flow using the platform adapter.
 func Run(opts RunOptions) error {
-	if opts.Local {
-		return runLocal(opts)
-	}
+	platform := opts.Platform
+	pr := opts.PR
 
-	// 1. Detect repo if not provided.
-	repo := opts.Repo
-	if repo == "" {
-		detected, err := DetectRepo()
-		if err != nil {
-			return fmt.Errorf("detecting repo: %w", err)
-		}
-		repo = detected
-	}
-
-	// 2. Fetch PR data.
-	pr, err := FetchPR(repo, opts.PRNumber)
-	if err != nil {
-		return fmt.Errorf("fetching PR: %w", err)
-	}
-
-	// 2b. Skip setup PRs (workflow file being added for the first time).
-	// Only skip if the PR exclusively contains setup files (workflow + config).
-	if isSetupPR(pr.Diff, pr.Files) {
-		fmt.Fprintf(os.Stderr, "Setup PR detected — skipping review\n")
-		if opts.Post {
-			if err := PostComment(repo, opts.PRNumber,
-				"## \U0001F425 CodeCanary\n\nSetup PR detected \u2014 skipping automated review. Future PRs will be reviewed automatically. \U0001F389"); err != nil {
-				return fmt.Errorf("posting setup PR comment: %w", err)
+	// 1. Fetch PR data if not pre-fetched (GitHub mode).
+	if pr == nil {
+		repo := opts.Repo
+		if repo == "" {
+			detected, err := DetectRepo()
+			if err != nil {
+				return fmt.Errorf("detecting repo: %w", err)
 			}
+			repo = detected
+			opts.Repo = repo
 		}
-		return nil
+		// Propagate resolved repo to the platform adapter.
+		if gp, ok := platform.(*GithubPlatform); ok && gp.Repo == "" {
+			gp.Repo = repo
+		}
+
+		fetched, err := FetchPR(repo, opts.PRNumber)
+		if err != nil {
+			return fmt.Errorf("fetching PR: %w", err)
+		}
+		pr = fetched
+
+		// Skip setup PRs (workflow file being added for the first time).
+		if isSetupPR(pr.Diff, pr.Files) {
+			fmt.Fprintf(os.Stderr, "Setup PR detected — skipping review\n")
+			if opts.Post {
+				if err := PostComment(repo, opts.PRNumber,
+					"## \U0001F425 CodeCanary\n\nSetup PR detected \u2014 skipping automated review. Future PRs will be reviewed automatically. \U0001F389"); err != nil {
+					return fmt.Errorf("posting setup PR comment: %w", err)
+				}
+			}
+			return nil
+		}
 	}
 
-	// 3. Prepare shared review context.
+	// 2. Prepare shared review context.
 	rctx, err := prepareReview(pr, opts.ConfigPath)
 	if err != nil {
 		return err
 	}
 	cfg := rctx.Config
-	env := rctx.Env
-	provider := NewProvider(cfg, env)
+	provider := NewProvider(cfg, rctx.Env)
 	tracker := rctx.Tracker
 
-	// Check for previous review threads.
-	threads, _ := FetchReviewThreads(repo, opts.PRNumber)
-	startIndex := len(threads) // continue fix_ref numbering after all existing threads
-	var reviewThreads []ReviewThread
-	for _, t := range threads {
-		if !t.Resolved {
-			reviewThreads = append(reviewThreads, t)
-		}
-	}
-	previousSHA := FetchPreviousReviewSHA(repo, opts.PRNumber)
+	// 3. Load previous findings via the platform adapter.
+	reviewThreads, previousSHA, startIndex := platform.LoadPreviousFindings()
 
 	// Reply-only mode: bail early if there are no threads to evaluate.
 	if opts.ReplyOnly && (len(reviewThreads) == 0 || previousSHA == "") {
@@ -366,192 +329,44 @@ func Run(opts RunOptions) error {
 		return nil
 	}
 
+	// 4. Triage & build prompt.
 	var prompt string
 	var fixed []fixedThread
 	var stillOpenFindings []Finding
 	isIncremental := len(reviewThreads) > 0 && previousSHA != ""
+
 	if isIncremental {
-		// Incremental review.
-		Stderrf(ansiBold, "Re-reviewing PR #%d (%d unresolved threads, base %s)\n", opts.PRNumber, len(reviewThreads), previousSHA[:8])
-		incrementalDiff, diffErr := GetIncrementalDiff(previousSHA)
-		if diffErr != nil {
-			fmt.Fprintf(os.Stderr, "Could not compute incremental diff, will use full PR diff for reevaluation\n")
-		} else {
-			// Scope incremental diff to only PR files to exclude main-branch
-			// changes pulled in by rebases.
-			allowed := make(map[string]bool, len(pr.Files))
-			for _, f := range pr.Files {
-				allowed[f] = true
-			}
-			incrementalDiff = ScopeDiffToFiles(incrementalDiff, allowed)
-		}
-
-		// Phase 1: Go-driven triage — classify threads using GitHub's outdated
-		// flag and presence of human replies. Only threads that need evaluation
-		// will trigger a Claude call.
-		reevalDiff := incrementalDiff
-		if diffErr != nil {
-			reevalDiff = pr.Diff
-		}
-
-		botLogin := ""
-		if len(reviewThreads) > 0 {
-			botLogin = reviewThreads[0].Author
-		}
-		if botLogin == "" {
-			fmt.Fprintf(os.Stderr, "Warning: could not determine bot login from thread author\n")
-		}
-		triaged := ClassifyThreads(reviewThreads, reevalDiff, botLogin)
-
-		if opts.DryRun {
-			LogTriage(triaged)
-			for _, t := range triaged {
-				if t.Class == TriageSkip {
-					continue
-				}
-				fmt.Print("\n---\n\n")
-				fmt.Print(BuildPerThreadPrompt(t, cfg))
-			}
-			fmt.Print("\n---\n\n")
-		} else {
-			LogTriage(triaged)
-			needsEval := countNonSkipped(triaged)
-			if needsEval > 0 {
-				resolutions := EvaluateThreadsParallel(triaged, provider, cfg, 3, cfg.EffectiveTriageModel(), tracker, cfg.MaxBudgetUSD)
-				LogResolutions(triaged, resolutions)
-				fixed = toFixedThreads(resolutions)
-
-				// Resolve or acknowledge threads on GitHub.
-				for _, f := range fixed {
-					if f.Index >= 0 && f.Index < len(reviewThreads) {
-						t := reviewThreads[f.Index]
-						label := threadLabel(t)
-						if f.Reason == "code_change" {
-							// Actually fixed — resolve on GitHub.
-							if err := ResolveThread(t.ID); err != nil {
-								if strings.Contains(err.Error(), "Resource not accessible") {
-									fmt.Fprintf(os.Stderr, "  ~ %s (auto-resolve unavailable: token lacks permission)\n", label)
-								} else {
-									fmt.Fprintf(os.Stderr, "  ! %s — resolved, but failed to update thread: %v\n", label, err)
-								}
-							}
-						} else {
-							// Not fixed by code — acknowledge but keep open for re-triage.
-							if !hasAcknowledgmentReply(t, f.Reason) {
-								msg := acknowledgmentMessage(f.Reason)
-								if err := ReplyToThread(t.ID, msg); err != nil {
-									fmt.Fprintf(os.Stderr, "  ! %s — failed to post acknowledgment: %v\n", label, err)
-								}
-							}
-						}
-					}
-				}
-			} else {
-				fmt.Fprintf(os.Stderr, "No threads need re-evaluation — skipping Claude\n")
-			}
-		}
-
-		if !opts.ReplyOnly {
-			// Phase 2: Build review prompt for new findings.
-			// Only code_change threads are truly resolved. Other reasons
-			// (dismissed, acknowledged, rebutted) stay in unresolved so they
-			// get re-triaged on future pushes.
-			fixedSet := make(map[int]bool, len(fixed))
-			for _, f := range fixed {
-				if f.Index >= 0 && f.Index < len(reviewThreads) && f.Reason == "code_change" {
-					fixedSet[f.Index] = true
-				}
-			}
-			var unresolved []ReviewThread
-			for i, t := range reviewThreads {
-				if !fixedSet[i] {
-					unresolved = append(unresolved, t)
-				}
-			}
-
-			// Convert unresolved threads to findings for terminal display.
-			for _, t := range unresolved {
-				stillOpenFindings = append(stillOpenFindings, FindingFromThread(t))
-			}
-
-			// Build resolved context for the incremental review prompt (anti-ping-pong).
-			// Only code_change threads are added — acknowledged/dismissed/rebutted
-			// threads stay open and should be re-checked if related code changes.
-			var resolvedCtx []ResolvedContext
-			for _, f := range fixed {
-				if f.Index >= 0 && f.Index < len(reviewThreads) && f.Reason == "code_change" {
-					t := reviewThreads[f.Index]
-					title := t.Body
-					if nl := strings.Index(title, "\n"); nl >= 0 {
-						title = title[:nl]
-					}
-					resolvedCtx = append(resolvedCtx, ResolvedContext{
-						Path:   t.Path,
-						Line:   t.Line,
-						Title:  title,
-						Reason: f.Reason,
-					})
-				}
-			}
-
-			if diffErr != nil {
-				// No incremental diff available — fall back to full review.
-				fbPlural := "s"
-				if len(unresolved) == 1 {
-					fbPlural = ""
-				}
-				fmt.Fprintf(os.Stderr, "Falling back to full review (%d known issue%s excluded)...\n", len(unresolved), fbPlural)
-				prompt = BuildPrompt(pr, cfg, startIndex, rctx.ProjectDocs)
-			} else {
-				// Scope file contents to only files in the incremental diff to
-				// prevent hallucinations about unrelated files from the full PR.
-				incFiles := FilesFromDiff(incrementalDiff)
-				incContents := make(map[string]string, len(incFiles))
-				for _, f := range incFiles {
-					if content, ok := pr.FileContents[f]; ok {
-						incContents[f] = content
-					}
-				}
-				plural := "s"
-				if len(unresolved) == 1 {
-					plural = ""
-				}
-				fmt.Fprintf(os.Stderr, "Reviewing new changes (%d known issue%s excluded)...\n", len(unresolved), plural)
-				prompt = BuildIncrementalPrompt(incrementalDiff, cfg, unresolved, opts.PRNumber, startIndex, incContents, incFiles, resolvedCtx, rctx.ProjectDocs)
-			}
-		}
-	} else if opts.LocalDetect && !isIncremental {
-		// LocalDetect mode: no GitHub threads but may have local state from a
-		// previous local run. Use local state for incremental detection.
-		prompt, stillOpenFindings, isIncremental, startIndex = buildLocalIncrementalPrompt(
-			pr, cfg, rctx.ProjectDocs, opts.PRNumber, startIndex, provider, tracker,
+		prompt, fixed, stillOpenFindings = runTriage(
+			pr, cfg, rctx.ProjectDocs, provider, tracker, platform,
+			reviewThreads, previousSHA, startIndex, opts,
 		)
-		if prompt == "" && !isIncremental {
-			Stderrf(ansiBold, "Reviewing PR #%d...\n", opts.PRNumber)
-			prompt = BuildPrompt(pr, cfg, startIndex, rctx.ProjectDocs)
-		}
 	} else {
-		// First review — full PR diff.
-		Stderrf(ansiBold, "Reviewing PR #%d...\n", opts.PRNumber)
+		// First review — full diff.
+		label := pr.HeadBranch
+		if opts.PRNumber > 0 {
+			label = fmt.Sprintf("PR #%d", opts.PRNumber)
+		}
+		Stderrf(ansiBold, "Reviewing %s...\n", label)
 		prompt = BuildPrompt(pr, cfg, startIndex, rctx.ProjectDocs)
 	}
 
 	// 5. Dry run — print prompt and return.
 	if opts.DryRun {
-		fmt.Print(prompt)
+		if prompt != "" {
+			fmt.Print(prompt)
+		}
 		return nil
 	}
 
+	// 6. Budget check & LLM call.
 	var findings []Finding
 	if !opts.ReplyOnly && prompt != "" {
-		// Budget check: skip review if triage phase already exceeded the budget.
 		if err := CheckBudget(tracker, cfg.MaxBudgetUSD); err != nil {
 			fmt.Fprintf(os.Stderr, "Skipping review call: %v\n", err)
 			prompt = ""
 		}
 	}
 	if !opts.ReplyOnly && prompt != "" {
-		// 6. Run LLM.
 		claudeOut, err := provider.Run(context.Background(), prompt, RunOpts{
 			Model:        cfg.EffectiveReviewModel(),
 			MaxBudgetUSD: cfg.MaxBudgetUSD,
@@ -562,347 +377,195 @@ func Run(opts RunOptions) error {
 		}
 		trackUsage(tracker, claudeOut, "review")
 
-		// 7. Process findings.
 		findings, err = processFindings(claudeOut.Text, pr.Files, isIncremental)
 		if err != nil {
 			return err
 		}
 	}
 
-	// Get current HEAD SHA for tracking.
+	// 7. Build result.
 	headSHA, err := currentHEAD()
 	if err != nil {
 		return fmt.Errorf("resolving HEAD: %w", err)
 	}
-
-	// 8. Build result.
 	result := &ReviewResult{
 		PRNumber:  opts.PRNumber,
-		Repo:      repo,
+		Repo:      opts.Repo,
 		Findings:  findings,
 		StillOpen: stillOpenFindings,
 		SHA:       headSHA,
 	}
 
-	// 9. Format and print output (skip when posting to avoid noisy CI logs).
-	outputFormat := resolveOutputFormat(opts.Output)
-	if !opts.Post {
-		formatted, err := formatResult(result, outputFormat)
-		if err != nil {
-			return err
-		}
-		fmt.Print(formatted)
-		if outputFormat == "terminal" {
-			fmt.Fprint(os.Stderr, FormatUsageTable(tracker.Calls(), colorsEnabled()))
-		}
+	// Handle early return for "no new changes" with no open findings.
+	if prompt == "" && len(findings) == 0 && len(stillOpenFindings) == 0 && isIncremental {
+		return nil
 	}
 
-	// 11. Post review if requested.
+	// 8. Publish results via the platform adapter.
 	// In reply-only mode, per-thread ack replies are posted earlier;
 	// skip top-level review comments, minimization, and all-clear posts.
-	if opts.Post && !opts.ReplyOnly {
-		// Step 5: Minimize ALL previous reviews where all inline
-		// findings are resolved. This runs before posting so the new
-		// message is always the final one on the timeline.
-		minimizeFailed := false
-		if len(reviewThreads) > 0 {
-			if nodeIDs, err := FindReviewNodeIDs(repo, opts.PRNumber); err == nil {
-				if allResolved(reviewThreads, fixed) {
-					// All resolved — minimize every previous review.
-					for _, nodeID := range nodeIDs {
-						if err := MinimizeComment(nodeID); err != nil {
-							fmt.Fprintf(os.Stderr, "Warning: could not minimize review: %v\n", err)
-							minimizeFailed = true
-						}
-					}
-					if len(nodeIDs) > 0 && !minimizeFailed {
-						fmt.Fprintf(os.Stderr, "Minimized %d previous review(s)\n", len(nodeIDs))
-					}
-				} else {
-					// Partially resolved — minimize only reviews whose findings are ALL resolved.
-					resolvedIDs := resolvedFindingIDs(threads, reviewThreads, fixed)
-					minimizeFullyResolvedReviews(repo, opts.PRNumber, resolvedIDs)
-				}
-			} else {
-				fmt.Fprintf(os.Stderr, "Warning: could not fetch reviews for minimization: %v\n", err)
-				minimizeFailed = true
-			}
-		}
-
-		// Step 6: Post one of the following.
-		if len(findings) > 0 {
-			// New findings — post review with inline comments.
-			if err := PostReview(repo, opts.PRNumber, result, pr.Diff, result.SHA); err != nil {
-				return fmt.Errorf("posting review: %w", err)
-			}
-			Stderrf(ansiGreen, "Review posted to PR #%d\n", opts.PRNumber)
-		} else if len(reviewThreads) > 0 && allResolved(reviewThreads, fixed) {
-			// Re-review: all resolved — post all-clear.
-			if err := PostAllClearReview(repo, opts.PRNumber, minimizeFailed); err != nil {
-				return fmt.Errorf("posting all-clear review: %w", err)
-			}
-			Stderrf(ansiGreen, "All clear! No issues remaining.\n")
-		} else if len(reviewThreads) > 0 {
-			// Re-review: some still unresolved, no new findings — nothing to post.
-			codeFixedSet := make(map[int]bool, len(fixed))
-			for _, f := range fixed {
-				if f.Index >= 0 && f.Index < len(reviewThreads) && f.Reason == "code_change" {
-					codeFixedSet[f.Index] = true
-				}
-			}
-			unresolvedCount := len(reviewThreads) - len(codeFixedSet)
-			fmt.Fprintf(os.Stderr, "No new findings. %d previous thread(s) still unresolved.\n", unresolvedCount)
-		} else {
-			// First review, no issues.
-			if err := PostCleanReview(repo, opts.PRNumber); err != nil {
-				return fmt.Errorf("posting review: %w", err)
-			}
-			Stderrf(ansiGreen, "Review posted to PR #%d\n", opts.PRNumber)
+	if !opts.ReplyOnly {
+		if err := platform.Publish(result, pr, reviewThreads, fixed); err != nil {
+			return err
 		}
 	}
 
-	// Save local state when running locally (auto-detected PR, not in CI).
+	// 9. Save state for future incremental reviews.
 	// Skip in reply-only mode to avoid overwriting previous findings with an empty slice.
-	if opts.LocalDetect && !opts.DryRun && !opts.ReplyOnly {
-		branch, branchErr := currentBranch()
-		if branchErr == nil {
-			// Merge with existing findings, deduplicating by ID+file+line.
-			allFindings := findings
-			existingState, loadErr := LoadLocalState(branch)
-			if loadErr != nil {
-				Stderrf(ansiYellow, "Warning: could not load local state for merge: %v\n", loadErr)
-			}
-			if existingState != nil {
-				allFindings = mergeFindings(existingState.Findings, findings)
-			}
-			if saveErr := SaveLocalState(branch, &LocalState{
-				SHA:      result.SHA,
-				Branch:   branch,
-				Findings: allFindings,
-			}); saveErr != nil {
-				Stderrf(ansiYellow, "Warning: could not save local state: %v\n", saveErr)
-			}
+	if !opts.DryRun && !opts.ReplyOnly {
+		if err := platform.SaveState(result, stillOpenFindings, isIncremental); err != nil {
+			return err
 		}
 	}
 
-	// Export usage data for the costs step.
-	if report := tracker.Report(repo, opts.PRNumber); len(report.Calls) > 0 {
-		if err := WriteUsageEnv(report); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not write usage env: %v\n", err)
-		}
-	}
+	// 10. Report usage.
+	platform.ReportUsage(tracker)
 
 	return nil
 }
 
-// buildLocalIncrementalPrompt checks for a previous local state and builds
-// the appropriate prompt (incremental or empty). Returns the prompt, still-open
-// findings, whether the review is incremental, and the start index.
-// Used by both Run (LocalDetect mode) and runLocal.
-//
-// When provider and tracker are non-nil, previous findings are triaged against
-// the incremental diff (same as the PR flow). Findings resolved by code changes
-// are removed from known issues and the still-open list.
-func buildLocalIncrementalPrompt(
-	pr *PRData, cfg *ReviewConfig, projectDocs map[string]string, prNumber int, startIndex int,
-	provider ModelProvider, tracker *UsageTracker,
-) (prompt string, stillOpen []Finding, incremental bool, newStartIndex int) {
-	newStartIndex = startIndex
+// runTriage handles the incremental review: classify previous threads, evaluate
+// via LLM, handle resolutions, and build the incremental prompt.
+// Returns the prompt, fixed threads, and still-open findings.
+func runTriage(
+	pr *PRData, cfg *ReviewConfig, projectDocs map[string]string,
+	provider ModelProvider, tracker *UsageTracker, platform ReviewPlatform,
+	reviewThreads []ReviewThread, previousSHA string, startIndex int,
+	opts RunOptions,
+) (string, []fixedThread, []Finding) {
+	Stderrf(ansiBold, "Re-evaluating %d unresolved thread(s) (base %s)...\n", len(reviewThreads), shortSHA(previousSHA))
 
-	branch, branchErr := currentBranch()
-	if branchErr != nil {
-		return "", nil, false, newStartIndex
-	}
-
-	state, stateErr := LoadLocalState(branch)
-	if stateErr != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not load local state: %v\n", stateErr)
-	}
-	if state == nil || state.SHA == "" || !isAncestor(state.SHA) {
-		return "", nil, false, newStartIndex
-	}
-
-	incremental = true
-	newStartIndex = len(state.Findings)
-	fmt.Fprintf(os.Stderr, "Found previous local review at %s (%d findings)\n", shortSHA(state.SHA), len(state.Findings))
-
-	inc, err := prepareIncrementalDiff(state.SHA, pr.Files, pr.FileContents)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Could not compute incremental diff, falling back to full review\n")
-		return BuildPrompt(pr, cfg, newStartIndex, projectDocs), nil, true, newStartIndex
-	}
-	if strings.TrimSpace(inc.Diff) == "" {
-		// No new changes — show previous findings as still-open.
-		for _, f := range state.Findings {
-			sf := f
-			sf.Status = "still open"
-			stillOpen = append(stillOpen, sf)
+	// Compute incremental diff.
+	incrementalDiff, diffErr := GetIncrementalDiff(previousSHA)
+	if diffErr != nil {
+		fmt.Fprintf(os.Stderr, "Could not compute incremental diff, will use full PR diff for reevaluation\n")
+	} else {
+		allowed := make(map[string]bool, len(pr.Files))
+		for _, f := range pr.Files {
+			allowed[f] = true
 		}
-		Stderrf(ansiGreen, "No new changes since last review\n")
-		return "", stillOpen, true, newStartIndex
+		incrementalDiff = ScopeDiffToFiles(incrementalDiff, allowed)
 	}
 
-	// Triage previous findings against the incremental diff.
-	threads := findingsToKnownIssues(state.Findings)
-	fixedSet := make(map[int]bool)
-	var resolvedCtx []ResolvedContext
+	// Phase 1: Go-driven triage — classify threads.
+	reevalDiff := incrementalDiff
+	if diffErr != nil {
+		reevalDiff = pr.Diff
+	}
 
-	if provider != nil && len(threads) > 0 {
-		triaged := ClassifyThreads(threads, inc.Diff, "")
+	botLogin := platform.ExcludedAuthor(reviewThreads)
+	if botLogin == "" && len(reviewThreads) > 0 {
+		// In local mode, botLogin is expected to be empty. Only warn in GitHub mode.
+		if _, ok := platform.(*GithubPlatform); ok {
+			fmt.Fprintf(os.Stderr, "Warning: could not determine bot login from thread author\n")
+		}
+	}
+	triaged := ClassifyThreads(reviewThreads, reevalDiff, botLogin)
+
+	var fixed []fixedThread
+
+	if opts.DryRun {
+		LogTriage(triaged)
+		for _, t := range triaged {
+			if t.Class == TriageSkip {
+				continue
+			}
+			fmt.Print("\n---\n\n")
+			fmt.Print(BuildPerThreadPrompt(t, cfg))
+		}
+		fmt.Print("\n---\n\n")
+	} else {
 		LogTriage(triaged)
 		needsEval := countNonSkipped(triaged)
 		if needsEval > 0 {
 			resolutions := EvaluateThreadsParallel(triaged, provider, cfg, 3, cfg.EffectiveTriageModel(), tracker, cfg.MaxBudgetUSD)
 			LogResolutions(triaged, resolutions)
-			for _, f := range toFixedThreads(resolutions) {
-				if f.Reason == "code_change" {
-					fixedSet[f.Index] = true
-					if f.Index >= 0 && f.Index < len(state.Findings) {
-						sf := state.Findings[f.Index]
-						resolvedCtx = append(resolvedCtx, ResolvedContext{
-							Path:   sf.File,
-							Line:   sf.Line,
-							Title:  sf.Title,
-							Reason: f.Reason,
-						})
-					}
-				}
-			}
+			fixed = toFixedThreads(resolutions)
+
+			// Delegate resolution handling to the platform adapter.
+			platform.HandleResolutions(reviewThreads, fixed)
 		} else {
-			fmt.Fprintf(os.Stderr, "No findings need re-evaluation — skipping triage\n")
+			fmt.Fprintf(os.Stderr, "No threads need re-evaluation — skipping Claude\n")
 		}
 	}
 
-	// Build known issues and still-open lists, excluding resolved findings.
-	var knownIssues []ReviewThread
-	for i, f := range state.Findings {
+	if opts.ReplyOnly {
+		return "", fixed, nil
+	}
+
+	// Phase 2: Build review prompt for new findings.
+	// Only code_change threads are truly resolved. Other reasons
+	// (dismissed, acknowledged, rebutted) stay in unresolved so they
+	// get re-triaged on future pushes.
+	fixedSet := make(map[int]bool, len(fixed))
+	for _, f := range fixed {
+		if f.Index >= 0 && f.Index < len(reviewThreads) && f.Reason == "code_change" {
+			fixedSet[f.Index] = true
+		}
+	}
+	var unresolved []ReviewThread
+	var stillOpenFindings []Finding
+	for i, t := range reviewThreads {
 		if fixedSet[i] {
 			continue
 		}
-		sf := f
-		sf.Status = "still open"
-		stillOpen = append(stillOpen, sf)
-		knownIssues = append(knownIssues, threads[i])
+		unresolved = append(unresolved, t)
+		stillOpenFindings = append(stillOpenFindings, FindingFromThread(t))
+	}
+
+	// Build resolved context for the incremental review prompt (anti-ping-pong).
+	var resolvedCtx []ResolvedContext
+	for _, f := range fixed {
+		if f.Index >= 0 && f.Index < len(reviewThreads) && f.Reason == "code_change" {
+			t := reviewThreads[f.Index]
+			title := t.Body
+			if nl := strings.Index(title, "\n"); nl >= 0 {
+				title = title[:nl]
+			}
+			resolvedCtx = append(resolvedCtx, ResolvedContext{
+				Path:   t.Path,
+				Line:   t.Line,
+				Title:  title,
+				Reason: f.Reason,
+			})
+		}
 	}
 
 	resolved := len(fixedSet)
 	if resolved > 0 {
 		fmt.Fprintf(os.Stderr, "%d finding(s) resolved by code changes\n", resolved)
 	}
-	Stderrf(ansiBold, "Reviewing incremental changes (%d known issues excluded)...\n", len(knownIssues))
-	prompt = BuildIncrementalPrompt(inc.Diff, cfg, knownIssues, prNumber, newStartIndex, inc.Contents, inc.Files, resolvedCtx, projectDocs)
-	return prompt, stillOpen, true, newStartIndex
-}
 
-// runLocal handles the local review flow (no PR, no GitHub interaction).
-func runLocal(opts RunOptions) error {
-	pr := opts.PR
-
-	// Prepare shared review context.
-	rctx, err := prepareReview(pr, opts.ConfigPath)
-	if err != nil {
-		return err
-	}
-
-	// Build prompt (incremental or full).
-	branch := pr.HeadBranch
-	provider := NewProvider(rctx.Config, rctx.Env)
 	var prompt string
-	var stillOpenFindings []Finding
-	var isIncremental bool
-
-	prompt, stillOpenFindings, isIncremental, _ = buildLocalIncrementalPrompt(
-		pr, rctx.Config, rctx.ProjectDocs, 0, 0, provider, rctx.Tracker,
-	)
-	if prompt == "" && !isIncremental {
-		// First local review — full diff.
-		Stderrf(ansiBold, "Reviewing local changes on %s...\n", branch)
-		prompt = BuildPrompt(pr, rctx.Config, 0, rctx.ProjectDocs)
-	} else if prompt == "" && isIncremental && len(stillOpenFindings) > 0 {
-		// No new changes — still-open findings returned, but no Claude call needed.
-		// Fall through to display.
-	}
-
-	// Handle early return for "no new changes since last review" when there are no open findings.
-	if prompt == "" && len(stillOpenFindings) == 0 && isIncremental {
-		return nil
-	}
-
-	// Dry run — print prompt and return.
-	if opts.DryRun {
-		if prompt != "" {
-			fmt.Print(prompt)
+	if diffErr != nil {
+		// No incremental diff — fall back to full review.
+		fbPlural := "s"
+		if len(unresolved) == 1 {
+			fbPlural = ""
 		}
-		return nil
-	}
-	var findings []Finding
-	if prompt != "" {
-		// Budget check: skip review if triage phase already exceeded the budget.
-		if err := CheckBudget(rctx.Tracker, rctx.Config.MaxBudgetUSD); err != nil {
-			fmt.Fprintf(os.Stderr, "Skipping review call: %v\n", err)
-			prompt = ""
+		fmt.Fprintf(os.Stderr, "Falling back to full review (%d known issue%s excluded)...\n", len(unresolved), fbPlural)
+		prompt = BuildPrompt(pr, cfg, startIndex, projectDocs)
+	} else if strings.TrimSpace(incrementalDiff) == "" {
+		// No new changes — return previous findings as still-open.
+		Stderrf(ansiGreen, "No new changes since last review\n")
+		return "", fixed, stillOpenFindings
+	} else {
+		incFiles := FilesFromDiff(incrementalDiff)
+		incContents := make(map[string]string, len(incFiles))
+		for _, f := range incFiles {
+			if content, ok := pr.FileContents[f]; ok {
+				incContents[f] = content
+			}
 		}
-	}
-	if prompt != "" {
-		claudeOut, err := provider.Run(context.Background(), prompt, RunOpts{
-			Model:        rctx.Config.EffectiveReviewModel(),
-			MaxBudgetUSD: rctx.Config.MaxBudgetUSD,
-			Timeout:      rctx.Config.EffectiveTimeout(),
-		})
-		if err != nil {
-			return err
+		plural := "s"
+		if len(unresolved) == 1 {
+			plural = ""
 		}
-		trackUsage(rctx.Tracker, claudeOut, "review")
-
-		findings, err = processFindings(claudeOut.Text, pr.Files, isIncremental)
-		if err != nil {
-			return err
-		}
+		Stderrf(ansiBold, "Reviewing incremental changes (%d known issue%s excluded)...\n", len(unresolved), plural)
+		prompt = BuildIncrementalPrompt(incrementalDiff, cfg, unresolved, opts.PRNumber, startIndex, incContents, incFiles, resolvedCtx, projectDocs)
 	}
 
-	// Build result.
-	headSHA, err := currentHEAD()
-	if err != nil {
-		return err
-	}
-	result := &ReviewResult{
-		Findings:  findings,
-		StillOpen: stillOpenFindings,
-		SHA:       headSHA,
-	}
-
-	// Format and print.
-	outputFormat := resolveOutputFormat(opts.Output)
-	formatted, err := formatResult(result, outputFormat)
-	if err != nil {
-		return err
-	}
-	fmt.Print(formatted)
-
-	// Print usage table to stderr for terminal output.
-	if outputFormat == "terminal" {
-		fmt.Fprint(os.Stderr, FormatUsageTable(rctx.Tracker.Calls(), colorsEnabled()))
-	}
-
-	// Save local state for future incremental reviews.
-	// Use stillOpenFindings as the base — triage already removed resolved findings.
-	// Strip the "still open" status tag before saving.
-	var survivingFindings []Finding
-	for _, f := range stillOpenFindings {
-		sf := f
-		sf.Status = ""
-		survivingFindings = append(survivingFindings, sf)
-	}
-	allFindings := mergeFindings(survivingFindings, findings)
-	if saveErr := SaveLocalState(branch, &LocalState{
-		SHA:      headSHA,
-		Branch:   branch,
-		Findings: allFindings,
-	}); saveErr != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not save local state: %v\n", saveErr)
-	}
-
-	return nil
+	return prompt, fixed, stillOpenFindings
 }
 
 // loadReviewConfig loads the review config from the given path (or default).
@@ -989,13 +652,3 @@ func hasAcknowledgmentReply(t ReviewThread, reason string) bool {
 	return false
 }
 
-func setEnv(env []string, key, value string) []string {
-	prefix := key + "="
-	for i, e := range env {
-		if len(e) >= len(prefix) && e[:len(prefix)] == prefix {
-			env[i] = prefix + value
-			return env
-		}
-	}
-	return append(env, prefix+value)
-}
