@@ -43,6 +43,12 @@ func RunGitHub(canary bool) error {
 	// 4. Handle existing setup branch.
 	branch := "codecanary/review-setup"
 	if err := exec.Command("git", "show-ref", "--verify", "refs/heads/"+branch).Run(); err == nil {
+		// Check if we're currently on that branch.
+		currentBranch, _ := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output()
+		if strings.TrimSpace(string(currentBranch)) == branch {
+			return fmt.Errorf("you are currently on branch %s — switch to another branch first, then retry", branch)
+		}
+
 		var deleteBranch bool
 		if err := huh.NewForm(
 			huh.NewGroup(

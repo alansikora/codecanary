@@ -19,7 +19,7 @@ var authStatusCmd = &cobra.Command{
 	Short: "Show stored credential status",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		fmt.Println("Provider credentials:")
-		for _, envVar := range credentials.KnownProviderEnvVars {
+		for _, envVar := range credentials.KnownProviderEnvVars() {
 			if _, err := credentials.Retrieve(envVar); err == nil {
 				fmt.Printf("  %s: stored in system keychain\n", envVar)
 			} else {
@@ -36,7 +36,7 @@ var authDeleteCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Find which keys are stored.
 		var stored []string
-		for _, envVar := range credentials.KnownProviderEnvVars {
+		for _, envVar := range credentials.KnownProviderEnvVars() {
 			if _, err := credentials.Retrieve(envVar); err == nil {
 				stored = append(stored, envVar)
 			}

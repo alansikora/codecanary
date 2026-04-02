@@ -18,6 +18,8 @@ func ValidateAPIKey(provider, apiKey string) error {
 		return validateOpenAI(apiKey)
 	case "openrouter":
 		return validateOpenRouter(apiKey)
+	case "claude":
+		return nil // Claude CLI uses its own auth; use CheckClaudeCLI() instead
 	default:
 		return fmt.Errorf("unknown provider: %s", provider)
 	}

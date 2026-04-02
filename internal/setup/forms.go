@@ -90,20 +90,6 @@ func SelectModel(provider string) (string, error) {
 	return reviewModel, err
 }
 
-// ConfirmConfigGeneration asks whether to generate config by analyzing the project.
-func ConfirmConfigGeneration() (bool, error) {
-	var generate bool
-	err := huh.NewForm(
-		huh.NewGroup(
-			huh.NewConfirm().
-				Title("Generate a review config by analyzing this project?").
-				Description("Uses the AI provider to create rules tailored to your codebase").
-				Value(&generate),
-		),
-	).Run()
-	return generate, err
-}
-
 // writeFileWithConfirm writes data to path, prompting to overwrite if it already exists.
 func writeFileWithConfirm(path string, data []byte) error {
 	action := "Created"

@@ -1,6 +1,8 @@
 package setup
 
-import "fmt"
+import (
+	"github.com/alansikora/codecanary/internal/credentials"
+)
 
 // ProviderGuidance returns human-readable guidance on where to get credentials for a provider.
 func ProviderGuidance(provider string) string {
@@ -19,17 +21,9 @@ func ProviderGuidance(provider string) string {
 }
 
 // ProviderEnvVar returns the default env var name for a provider's API key.
+// Delegates to the credentials package (single source of truth).
 func ProviderEnvVar(provider string) string {
-	switch provider {
-	case "anthropic":
-		return "ANTHROPIC_API_KEY"
-	case "openai":
-		return "OPENAI_API_KEY"
-	case "openrouter":
-		return "OPENROUTER_API_KEY"
-	default:
-		return ""
-	}
+	return credentials.DefaultEnvVar(provider)
 }
 
 // GitHubPermissionsGuidance returns an explanation of the GitHub Actions permissions.
@@ -41,17 +35,13 @@ func GitHubPermissionsGuidance() string {
 }
 
 // ProviderSecretName returns the GitHub secret name for a provider.
+// For API-key providers this is the same as the env var; for Claude it's the OAuth token.
 func ProviderSecretName(provider string) string {
-	switch provider {
-	case "anthropic":
-		return "ANTHROPIC_API_KEY"
-	case "openai":
-		return "OPENAI_API_KEY"
-	case "openrouter":
-		return "OPENROUTER_API_KEY"
-	case "claude":
+	if provider == "claude" {
 		return "CLAUDE_CODE_OAUTH_TOKEN"
-	default:
-		return fmt.Sprintf("%s_API_KEY", provider)
 	}
+	if envVar := credentials.DefaultEnvVar(provider); envVar != "" {
+		return envVar
+	}
+	return provider + "_API_KEY"
 }

@@ -4,11 +4,26 @@ import "github.com/zalando/go-keyring"
 
 const serviceName = "codecanary"
 
+// providerEnvVars maps API-key-based providers to their default env var names.
+var providerEnvVars = map[string]string{
+	"anthropic":  "ANTHROPIC_API_KEY",
+	"openai":     "OPENAI_API_KEY",
+	"openrouter": "OPENROUTER_API_KEY",
+}
+
 // KnownProviderEnvVars returns the default env var names for each API-key-based provider.
-var KnownProviderEnvVars = []string{
-	"ANTHROPIC_API_KEY",
-	"OPENAI_API_KEY",
-	"OPENROUTER_API_KEY",
+func KnownProviderEnvVars() []string {
+	vars := make([]string, 0, len(providerEnvVars))
+	for _, v := range providerEnvVars {
+		vars = append(vars, v)
+	}
+	return vars
+}
+
+// DefaultEnvVar returns the default environment variable name for a provider.
+// Returns "" for providers that don't use API keys (e.g. "claude").
+func DefaultEnvVar(provider string) string {
+	return providerEnvVars[provider]
 }
 
 // Store saves an API key in the OS keychain under the given env var name.
@@ -24,18 +39,4 @@ func Retrieve(envVarName string) (string, error) {
 // Delete removes an API key from the OS keychain.
 func Delete(envVarName string) error {
 	return keyring.Delete(serviceName, envVarName)
-}
-
-// DefaultEnvVar returns the default environment variable name for a provider.
-func DefaultEnvVar(provider string) string {
-	switch provider {
-	case "anthropic":
-		return "ANTHROPIC_API_KEY"
-	case "openai":
-		return "OPENAI_API_KEY"
-	case "openrouter":
-		return "OPENROUTER_API_KEY"
-	default:
-		return ""
-	}
 }
