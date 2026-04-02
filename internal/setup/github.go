@@ -47,7 +47,7 @@ func RunGitHub(canary bool) error {
 		// the current branch, refuse to delete conservatively.
 		currentBranch, err := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output()
 		if err != nil {
-			return fmt.Errorf("could not determine current branch: %w — refusing to delete %s; switch branches and retry", err, branch)
+			return fmt.Errorf("could not determine current branch (git error: %w) — refusing to delete %s; switch branches and retry", err, branch)
 		}
 		if strings.TrimSpace(string(currentBranch)) == branch {
 			return fmt.Errorf("you are currently on branch %s — switch to another branch first, then retry", branch)
