@@ -2,6 +2,7 @@ package review
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -63,17 +64,33 @@ func (u *UsageTracker) TotalCost() float64 {
 	return total
 }
 
-// CheckBudget returns an error if the tracker's total cost exceeds the given
-// limit. A limit of 0 means unlimited (no check performed).
+// BudgetExceededError is returned when accumulated cost exceeds the budget limit.
+type BudgetExceededError struct {
+	Spent float64
+	Limit float64
+}
+
+func (e *BudgetExceededError) Error() string {
+	return fmt.Sprintf("budget exceeded: $%.4f spent of $%.4f limit", e.Spent, e.Limit)
+}
+
+// CheckBudget returns a BudgetExceededError if the tracker's total cost exceeds
+// the given limit. A limit of 0 means unlimited (no check performed).
 func CheckBudget(tracker *UsageTracker, limit float64) error {
 	if limit <= 0 {
 		return nil
 	}
 	spent := tracker.TotalCost()
 	if spent > limit {
-		return fmt.Errorf("budget exceeded: $%.4f spent of $%.4f limit", spent, limit)
+		return &BudgetExceededError{Spent: spent, Limit: limit}
 	}
 	return nil
+}
+
+// isBudgetError checks whether an error is a BudgetExceededError.
+func isBudgetError(err error) bool {
+	var budgetErr *BudgetExceededError
+	return errors.As(err, &budgetErr)
 }
 
 // Report builds a UsageReport from accumulated calls.

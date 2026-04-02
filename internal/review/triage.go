@@ -409,7 +409,6 @@ func EvaluateThreadsParallel(triaged []TriagedThread, provider ModelProvider, cf
 		}
 		// Soft budget cap: skip remaining evaluations if budget is exceeded.
 		if err := CheckBudget(tracker, maxBudgetUSD); err != nil {
-			fmt.Fprintf(os.Stderr, "  [skip]     %s — %v\n", threadLabel(t.Thread), err)
 			results[i] = ThreadResolution{Index: t.Index, Error: err}
 			continue
 		}
@@ -513,7 +512,11 @@ func LogResolutions(triaged []TriagedThread, resolutions []ThreadResolution) {
 		}
 		label := threadLabel(triaged[i].Thread)
 		if r.Error != nil {
-			fmt.Fprintf(os.Stderr, "  [error]    %s — evaluation failed: %v\n", label, r.Error)
+			if isBudgetError(r.Error) {
+				fmt.Fprintf(os.Stderr, "  [skip]     %s — %v\n", label, r.Error)
+			} else {
+				fmt.Fprintf(os.Stderr, "  [error]    %s — evaluation failed: %v\n", label, r.Error)
+			}
 		} else if r.Resolved {
 			switch r.Reason {
 			case "code_change":
