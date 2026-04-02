@@ -28,8 +28,8 @@ func init() {
 			{"o1-mini", modelPricing{0.55, 2.20, 0.55, 0.55}},
 			{"o1", modelPricing{15, 60, 15, 7.50}},
 		},
-		DefaultReviewModel: "gpt-5.4",
-		DefaultTriageModel: "gpt-5.4-mini",
+		SuggestedReviewModel: "gpt-5.4",
+		SuggestedTriageModel: "gpt-5.4-mini",
 	}
 }
 

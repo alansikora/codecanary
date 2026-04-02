@@ -146,8 +146,13 @@ func RunGitHub(canary bool) error {
 		fmt.Fprintf(os.Stderr, "  gh secret set %s --repo %s\n\n", secretName, repo)
 	}
 
-	// 9. Select model.
+	// 9. Select models.
 	reviewModel, err := SelectModel(provider)
+	if err != nil {
+		return err
+	}
+
+	triageModel, err := SelectTriageModel(provider)
 	if err != nil {
 		return err
 	}
@@ -179,7 +184,7 @@ func RunGitHub(canary bool) error {
 
 	// 12. Generate config.
 	configPath := filepath.Join(".codecanary", "config.yml")
-	if err := writeConfig(provider, reviewModel, configPath); err != nil {
+	if err := writeConfig(provider, reviewModel, triageModel, configPath); err != nil {
 		return err
 	}
 

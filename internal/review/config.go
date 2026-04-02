@@ -25,7 +25,7 @@ type ReviewConfig struct {
 	MaxBudgetUSD float64           `yaml:"max_budget_usd"`  // per-invocation spending limit in USD (default 0 = unlimited)
 	TimeoutMins  int               `yaml:"timeout_minutes"` // per-invocation timeout in minutes (default 5)
 	ReviewModel  string            `yaml:"review_model"`    // model for main review (default: sonnet)
-	TriageModel  string            `yaml:"triage_model"`    // model for thread re-evaluation (default: haiku)
+	TriageModel  string            `yaml:"triage_model"`    // model for thread re-evaluation (required)
 	Provider     string            `yaml:"provider"`        // "anthropic", "openai", "openrouter", or "claude"
 	APIBase      string            `yaml:"api_base"`        // override base URL (openai provider only)
 	APIKeyEnv    string            `yaml:"api_key_env"`     // env var name for API key (default depends on provider)
@@ -46,24 +46,16 @@ func (c *ReviewConfig) EffectiveReviewModel() string {
 	if !ok {
 		panic(fmt.Sprintf("unknown provider %q (should have been caught by config validation)", c.Provider))
 	}
-	return pf.DefaultReviewModel
+	return pf.SuggestedReviewModel
 }
 
 // EffectiveTriageModel returns the configured triage model.
-// Each provider has its own default when triage_model is not set.
-// Panics on nil config or unknown provider — both should be caught by Validate().
+// triage_model is required — Validate() rejects configs without it.
 func (c *ReviewConfig) EffectiveTriageModel() string {
 	if c == nil {
 		panic("EffectiveTriageModel called with nil config")
 	}
-	if c.TriageModel != "" {
-		return c.TriageModel
-	}
-	pf, ok := providers[c.Provider]
-	if !ok {
-		panic(fmt.Sprintf("unknown provider %q (should have been caught by config validation)", c.Provider))
-	}
-	return pf.DefaultTriageModel
+	return c.TriageModel
 }
 
 // EvaluationConfig holds per-evaluation-type settings for re-evaluation prompts.
@@ -133,6 +125,9 @@ func (c *ReviewConfig) Validate() error {
 	}
 	if c.Provider == "" {
 		return fmt.Errorf("provider is required (valid: %s)", strings.Join(providerNames(), ", "))
+	}
+	if c.TriageModel == "" {
+		return fmt.Errorf("triage_model is required — set the model used for thread re-evaluation")
 	}
 	pf, ok := providers[c.Provider]
 	if !ok {

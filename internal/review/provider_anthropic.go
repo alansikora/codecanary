@@ -31,8 +31,8 @@ func init() {
 			// Haiku 3
 			{"claude-haiku-3", modelPricing{0.25, 1.25, 0.30, 0.03}},
 		},
-		DefaultReviewModel: "claude-sonnet-4-6",
-		DefaultTriageModel: "claude-haiku-4-5-20251001",
+		SuggestedReviewModel: "claude-sonnet-4-6",
+		SuggestedTriageModel: "claude-haiku-4-5-20251001",
 	}
 }
 

@@ -40,7 +40,8 @@ codecanary setup local
 This walks you through:
 1. Choosing an AI provider (Anthropic, OpenAI, OpenRouter, or Claude CLI)
 2. Entering and validating your API key (stored securely in your system keychain or `~/.codecanary/credentials.json`)
-3. Creating a `.codecanary/config.yml` with your provider and model
+3. Selecting your review model and triage model
+4. Creating a `.codecanary/config.yml` with your provider and models
 
 Then review your changes:
 
@@ -127,10 +128,10 @@ ignore:
 ```yaml
 version: 1
 provider: openai
+triage_model: gpt-5.4-mini
 # api_key_env: OPENAI_API_KEY  # default
 # api_base: https://api.openai.com/v1  # default; override for Azure, Ollama, etc.
 # review_model: gpt-5.4  # default
-# triage_model: gpt-5.4-mini  # default
 ```
 
 ### OpenRouter
@@ -138,9 +139,9 @@ provider: openai
 ```yaml
 version: 1
 provider: openrouter
+triage_model: anthropic/claude-haiku-4-5-20251001
 # api_key_env: OPENROUTER_API_KEY  # default
 # review_model: anthropic/claude-sonnet-4-6  # default
-# triage_model: anthropic/claude-haiku-4-5-20251001  # default
 ```
 
 ### Claude CLI
@@ -148,8 +149,8 @@ provider: openrouter
 ```yaml
 version: 1
 provider: claude
+triage_model: haiku
 # review_model: claude-sonnet-4-6  # default
-# triage_model: claude-haiku-4-5-20251001  # default
 ```
 
 Uses your Claude CLI's authentication — make sure you're logged in by running `claude`.
@@ -161,7 +162,7 @@ version: 1
 provider: anthropic             # required: anthropic, openai, openrouter, or claude
 
 review_model: claude-sonnet-4-6 # model for main review (provider-specific default)
-triage_model: claude-haiku-4-5-20251001  # model for thread re-evaluation
+triage_model: claude-haiku-4-5-20251001  # required: model for thread re-evaluation
 
 api_key_env: ANTHROPIC_API_KEY  # env var holding the API key (default per provider)
 api_base: https://...           # override base URL (openai provider only)
@@ -196,14 +197,14 @@ evaluation:
 
 ### Models
 
-Each provider has sensible defaults. Override with `review_model` and `triage_model`:
+`review_model` has a sensible default per provider. `triage_model` is required — there is no default, since providers like OpenRouter can proxy any model.
 
-| Provider | Review default | Triage default |
-|----------|---------------|----------------|
+| Provider | Review default | Triage (example) |
+|----------|---------------|------------------|
 | `anthropic` | `claude-sonnet-4-6` | `claude-haiku-4-5-20251001` |
 | `openai` | `gpt-5.4` | `gpt-5.4-mini` |
 | `openrouter` | `anthropic/claude-sonnet-4-6` | `anthropic/claude-haiku-4-5-20251001` |
-| `claude` | `claude-sonnet-4-6` | `claude-haiku-4-5-20251001` |
+| `claude` | `claude-sonnet-4-6` | `haiku` |
 
 ### Budget Enforcement
 
@@ -246,8 +247,8 @@ func init() {
             {"my-model-large", modelPricing{InputPerMTok: 3, OutputPerMTok: 15, CacheWritePerMTok: 3.75, CacheReadPerMTok: 0.30}},
             {"my-model-small", modelPricing{InputPerMTok: 1, OutputPerMTok: 5, CacheWritePerMTok: 1.25, CacheReadPerMTok: 0.10}},
         },
-        DefaultReviewModel: "my-model-large",
-        DefaultTriageModel: "my-model-small",
+        SuggestedReviewModel: "my-model-large",
+        SuggestedTriageModel: "my-model-small",
     }
 }
 ```

@@ -40,8 +40,8 @@ type ProviderFactory struct {
 	New                func(cfg *ReviewConfig, env []string) ModelProvider
 	Validate           func(cfg *ReviewConfig) error
 	Pricing            []PricingEntry
-	DefaultReviewModel string
-	DefaultTriageModel string
+	SuggestedReviewModel string
+	SuggestedTriageModel string
 }
 
 // providers maps provider names to their factories.

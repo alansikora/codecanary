@@ -94,6 +94,26 @@ func SelectModel(provider string) (string, error) {
 	return reviewModel, err
 }
 
+// SelectTriageModel prompts the user to choose a triage model.
+func SelectTriageModel(provider string) (string, error) {
+	options := triageModelOptions(provider)
+	if len(options) == 0 {
+		return "", nil
+	}
+
+	var triageModel string
+	err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Triage model").
+				Description("Cheaper/faster model used to re-evaluate threads on incremental reviews").
+				Options(options...).
+				Value(&triageModel),
+		),
+	).Run()
+	return triageModel, err
+}
+
 // writeFileWithConfirm writes data to path, prompting to overwrite if it already exists.
 func writeFileWithConfirm(path string, data []byte) error {
 	action := "Created"
@@ -119,6 +139,37 @@ func writeFileWithConfirm(path string, data []byte) error {
 	}
 	fmt.Fprintf(os.Stderr, "%s %s\n", action, path)
 	return nil
+}
+
+func triageModelOptions(provider string) []huh.Option[string] {
+	switch provider {
+	case "anthropic":
+		return []huh.Option[string]{
+			huh.NewOption("claude-haiku-4-5-20251001 (recommended)", "claude-haiku-4-5-20251001"),
+			huh.NewOption("claude-sonnet-4-6", "claude-sonnet-4-6"),
+			huh.NewOption("claude-opus-4-6", "claude-opus-4-6"),
+		}
+	case "openai":
+		return []huh.Option[string]{
+			huh.NewOption("gpt-5.4-mini (recommended)", "gpt-5.4-mini"),
+			huh.NewOption("gpt-5.4", "gpt-5.4"),
+		}
+	case "openrouter":
+		return []huh.Option[string]{
+			huh.NewOption("anthropic/claude-haiku-4-5-20251001 (recommended)", "anthropic/claude-haiku-4-5-20251001"),
+			huh.NewOption("anthropic/claude-sonnet-4-6", "anthropic/claude-sonnet-4-6"),
+			huh.NewOption("openai/gpt-5.4-mini", "openai/gpt-5.4-mini"),
+			huh.NewOption("openai/gpt-5.4", "openai/gpt-5.4"),
+		}
+	case "claude":
+		return []huh.Option[string]{
+			huh.NewOption("haiku (recommended)", "haiku"),
+			huh.NewOption("sonnet", "sonnet"),
+			huh.NewOption("opus", "opus"),
+		}
+	default:
+		return nil
+	}
 }
 
 func modelOptions(provider string) []huh.Option[string] {

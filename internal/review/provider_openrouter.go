@@ -11,8 +11,8 @@ func init() {
 		Validate: validateOpenRouter,
 		// No pricing entries — OpenRouter proxies other providers' models,
 		// which are matched by substring from those providers' pricing tables.
-		DefaultReviewModel: "anthropic/claude-sonnet-4-6",
-		DefaultTriageModel: "anthropic/claude-haiku-4-5-20251001",
+		SuggestedReviewModel: "anthropic/claude-sonnet-4-6",
+		SuggestedTriageModel: "anthropic/claude-haiku-4-5-20251001",
 	}
 }
 

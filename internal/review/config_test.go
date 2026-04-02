@@ -75,24 +75,17 @@ func TestEffectiveReviewModel_Custom(t *testing.T) {
 	}
 }
 
-func TestEffectiveTriageModel_Anthropic(t *testing.T) {
-	cfg := &ReviewConfig{Provider: "anthropic"}
-	if got := cfg.EffectiveTriageModel(); got != "claude-haiku-4-5-20251001" {
-		t.Errorf("EffectiveTriageModel() = %q, want %q", got, "claude-haiku-4-5-20251001")
-	}
-}
-
-func TestEffectiveTriageModel_Claude(t *testing.T) {
-	cfg := &ReviewConfig{Provider: "claude"}
-	if got := cfg.EffectiveTriageModel(); got != "claude-haiku-4-5-20251001" {
-		t.Errorf("EffectiveTriageModel() = %q, want %q", got, "claude-haiku-4-5-20251001")
-	}
-}
-
-func TestEffectiveTriageModel_Custom(t *testing.T) {
+func TestEffectiveTriageModel(t *testing.T) {
 	cfg := &ReviewConfig{Provider: "anthropic", TriageModel: "claude-sonnet-4-20250514"}
 	if got := cfg.EffectiveTriageModel(); got != "claude-sonnet-4-20250514" {
 		t.Errorf("EffectiveTriageModel() = %q, want %q", got, "claude-sonnet-4-20250514")
+	}
+}
+
+func TestValidate_TriageModelRequired(t *testing.T) {
+	cfg := &ReviewConfig{Provider: "anthropic"}
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for missing triage_model")
 	}
 }
 
@@ -111,7 +104,7 @@ func TestValidate_InvalidProvider(t *testing.T) {
 }
 
 func TestValidate_InvalidModelForClaude(t *testing.T) {
-	cfg := &ReviewConfig{Provider: "claude", ReviewModel: "gpt-4"}
+	cfg := &ReviewConfig{Provider: "claude", ReviewModel: "gpt-4", TriageModel: "haiku"}
 	if err := cfg.Validate(); err == nil {
 		t.Error("expected error for invalid review_model on claude provider")
 	}
@@ -138,8 +131,14 @@ func TestValidate_ValidCLIModels(t *testing.T) {
 }
 
 func TestValidate_ValidProviders(t *testing.T) {
+	triageModels := map[string]string{
+		"anthropic":  "claude-haiku-4-5-20251001",
+		"openai":     "gpt-5.4-mini",
+		"openrouter": "anthropic/claude-haiku-4-5-20251001",
+		"claude":     "haiku",
+	}
 	for _, p := range []string{"anthropic", "openai", "openrouter", "claude"} {
-		cfg := &ReviewConfig{Provider: p}
+		cfg := &ReviewConfig{Provider: p, TriageModel: triageModels[p]}
 		if err := cfg.Validate(); err != nil {
 			t.Errorf("unexpected error for provider %q: %v", p, err)
 		}
