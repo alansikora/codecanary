@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/alansikora/codecanary/internal/credentials"
 )
 
 // RunOptions configures a review run.
@@ -39,18 +41,31 @@ var allowedEnvKeys = map[string]bool{
 
 // resolveEnv builds a filtered environment for the Claude subprocess,
 // passing only variables needed for normal operation and CI.
+// For known provider env vars not already present, it checks the OS keychain
+// (set by `codecanary setup local`). Env vars always take priority.
 func resolveEnv() []string {
 	var filtered []string
+	present := make(map[string]bool)
 	for _, e := range os.Environ() {
 		key, _, _ := strings.Cut(e, "=")
 		if allowedEnvKeys[key] {
 			filtered = append(filtered, e)
+			present[key] = true
 			continue
 		}
 		for _, prefix := range allowedEnvPrefixes {
 			if strings.HasPrefix(key, prefix) {
 				filtered = append(filtered, e)
+				present[key] = true
 				break
+			}
+		}
+	}
+	// Inject keychain credentials for known providers if not already in env.
+	for _, envVar := range credentials.KnownProviderEnvVars {
+		if !present[envVar] {
+			if val, err := credentials.Retrieve(envVar); err == nil && val != "" {
+				filtered = append(filtered, envVar+"="+val)
 			}
 		}
 	}

@@ -75,7 +75,7 @@ type anthropicResponse struct {
 func (p *anthropicProvider) Run(ctx context.Context, prompt string, opts RunOpts) (*claudeResult, error) {
 	apiKey := lookupEnvVar(p.env, p.keyEnv)
 	if apiKey == "" {
-		return nil, fmt.Errorf("API key not found: set %s environment variable", p.keyEnv)
+		return nil, fmt.Errorf("API key not found: set %s or run `codecanary setup local`", p.keyEnv)
 	}
 
 	timeout := opts.Timeout

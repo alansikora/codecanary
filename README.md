@@ -17,34 +17,44 @@ Most AI code review tools are one-shot: paste a PR, get feedback, repeat from sc
 - **Transparent** — every resolution is visible in the PR thread: why a finding was resolved, what the author said, and how CodeCanary interpreted it. No black-box decisions.
 - **Configuration-as-code** — project-specific rules, severity levels, ignore patterns, and context in `.codecanary/config.yml`.
 
-## Quick Setup
-
-Run this in your repo:
+## Install
 
 ```sh
-curl -fsSL https://codecanary.sh/setup | sh
+curl -fsSL https://codecanary.sh/install | sh
 ```
 
-This walks you through:
-1. Installing the CodeCanary Review GitHub App
-2. Authenticating (Anthropic API key, OpenAI key, OpenRouter key, or Claude OAuth)
-3. Creating the GitHub Actions workflow
-4. Creating a `.codecanary/config.yml` starter template
-5. Opening a PR with everything ready to merge
+This downloads the `codecanary` binary and installs it to `/usr/local/bin` (or `~/.local/bin`).
 
-## Canary
-
-Want the canary version of CodeCanary? Living dangerously has never been this meta.
+## Setup
 
 ```sh
-curl -fsSL https://codecanary.sh/setup | sh -s -- --canary
+codecanary setup local    # review changes on this machine
+codecanary setup github   # automated PR reviews via GitHub Actions
 ```
 
-This installs the latest prerelease and pins your workflow to `@canary` instead of `@v1`.
+Or just run `codecanary setup` to choose interactively.
+
+**Local setup** walks you through:
+1. Choosing an AI provider (Anthropic, OpenAI, OpenRouter, or Claude CLI)
+2. Entering and validating your API key (stored securely in macOS Keychain / Linux Secret Service)
+3. Creating a `.codecanary/config.yml` with your provider and model
+
+**GitHub setup** does all of the above, plus:
+4. Installing the CodeCanary Review GitHub App
+5. Setting your API key as a GitHub repo secret
+6. Creating the GitHub Actions workflow
+7. Opening a PR with everything ready to merge
+
+### Canary
+
+Want the canary version? Living dangerously has never been this meta.
+
+```sh
+curl -fsSL https://codecanary.sh/install | sh -s -- --canary
+codecanary setup github --canary
+```
 
 ## Local Review
-
-CodeCanary can also review your changes locally, without CI:
 
 ```sh
 codecanary review          # auto-detects PR or diffs against main
@@ -64,6 +74,15 @@ CI.run do
   step "Code Review", "codecanary", "review"
 end
 ```
+
+## Credential Management
+
+```sh
+codecanary auth status    # show stored credentials
+codecanary auth delete    # remove a stored credential
+```
+
+API keys are stored in macOS Keychain or Linux Secret Service (via `codecanary setup local`). Environment variables always override stored credentials — useful for CI or testing with a different key.
 
 ## Config
 
@@ -125,7 +144,7 @@ provider: claude
 # triage_model: claude-haiku-4-5-20251001  # default
 ```
 
-Requires the `claude` CLI binary in PATH and `CLAUDE_CODE_OAUTH_TOKEN`.
+Uses your Claude CLI's authentication — make sure you're logged in by running `claude`.
 
 ### Full config reference
 

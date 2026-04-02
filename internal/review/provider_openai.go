@@ -30,7 +30,7 @@ func newOpenAIProvider(cfg *ReviewConfig, env []string) ModelProvider {
 func (p *openaiProvider) Run(ctx context.Context, prompt string, opts RunOpts) (*claudeResult, error) {
 	apiKey := lookupEnvVar(p.env, p.keyEnv)
 	if apiKey == "" {
-		return nil, fmt.Errorf("API key not found: set %s environment variable", p.keyEnv)
+		return nil, fmt.Errorf("API key not found: set %s or run `codecanary setup local`", p.keyEnv)
 	}
 
 	chatResp, durationMS, err := doChat(ctx, p.apiBase, apiKey, opts.Model, prompt, opts.Timeout)

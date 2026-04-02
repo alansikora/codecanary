@@ -2,7 +2,15 @@
 set -eu
 
 REPO="alansikora/codecanary"
-INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
+
+# Prefer /usr/local/bin if writable, fall back to ~/.local/bin.
+if [ -z "${INSTALL_DIR:-}" ]; then
+  if [ -w /usr/local/bin ]; then
+    INSTALL_DIR="/usr/local/bin"
+  else
+    INSTALL_DIR="$HOME/.local/bin"
+  fi
+fi
 
 TAG=""
 while [ $# -gt 0 ]; do
@@ -88,4 +96,18 @@ mkdir -p "${INSTALL_DIR}"
 cp "${TMPDIR}/codecanary" "${INSTALL_DIR}/codecanary"
 chmod +x "${INSTALL_DIR}/codecanary"
 
+echo ""
 echo "codecanary ${VERSION} installed to ${INSTALL_DIR}/codecanary"
+
+# Check if install dir is on PATH.
+case ":$PATH:" in
+  *":${INSTALL_DIR}:"*) ;;
+  *)
+    echo ""
+    echo "Add ${INSTALL_DIR} to your PATH:"
+    echo "  export PATH=\"${INSTALL_DIR}:\$PATH\""
+    ;;
+esac
+
+echo ""
+echo "Run 'codecanary setup' to get started."

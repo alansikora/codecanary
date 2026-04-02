@@ -6,13 +6,14 @@ AI-powered code review for GitHub pull requests.
 
 ```
 cmd/
-  review/          # Review binary (used by GitHub Action)
+  review/          # Main binary — review CLI + setup wizard
     main.go        # Entry point
     cli/           # Cobra commands
       root.go      # Root "codecanary" command
       review.go    # codecanary review <pr>
-      generate.go  # codecanary review generate
-  setup/           # Setup binary (used by curl | sh installer)
+      setup.go     # codecanary setup [local|github]
+      auth.go      # codecanary auth [status|delete]
+  setup/           # Legacy setup binary (deprecated, kept for transition)
     main.go        # Interactive setup wizard (single file, no framework)
 internal/
   review/
@@ -41,15 +42,25 @@ internal/
     state.go             # Local state persistence
     generate.go          # Config generation from repo analysis
     docs.go              # Project doc discovery
+  credentials/     # OS keychain integration (macOS Keychain, Linux Secret Service)
+    keyring.go     # Store/Retrieve/Delete via go-keyring
+    resolve.go     # API key resolution: env var → keychain → error
+  setup/           # Setup wizard logic (huh forms)
+    forms.go       # Shared huh form components
+    validate.go    # API key validation via test calls
+    guidance.go    # Token/permissions guidance text
+    workflow.go    # GitHub Actions workflow template
+    local.go       # RunLocal() — local setup flow
+    github.go      # RunGitHub() — GitHub Actions setup flow
   auth/            # OAuth PKCE flow, GitHub App installation
 worker/            # Cloudflare Worker — OIDC token proxy (TypeScript)
-setup.sh           # Thin shell wrapper — downloads and runs codecanary-setup
+install.sh         # Downloads and installs codecanary binary permanently
 ```
 
-## Two binaries
+## Binary
 
-- **`codecanary`** — review binary, called by the GitHub Action. Users never install this.
-- **`codecanary-setup`** — interactive setup wizard, downloaded temporarily by `setup.sh` and cleaned up after.
+- **`codecanary`** — single binary for reviews, setup, and credential management. Installed locally via `install.sh`, also used by the GitHub Action.
+- **`codecanary-setup`** — legacy setup binary (deprecated, will be removed).
 
 ## Build
 
@@ -62,10 +73,12 @@ Version is set via ldflags: `-X main.version=v{version}`
 
 ## Key dependencies
 
-- `spf13/cobra` — CLI framework (review binary only)
+- `spf13/cobra` — CLI framework
+- `charmbracelet/huh` — terminal form builder (setup wizard)
+- `zalando/go-keyring` — OS keychain (macOS Keychain, Linux Secret Service)
 - `bmatcuk/doublestar` — glob pattern matching for ignore rules
 - `gopkg.in/yaml.v3` — config parsing
-- `golang.org/x/term` — secure password input (setup binary)
+- `golang.org/x/term` — terminal detection
 
 ## Architecture
 
@@ -110,7 +123,8 @@ There is a **single `Run()` function** — not separate paths for GitHub vs. loc
 - **Dual marker detection**: reads both `codecanary:review` and legacy `clanopy:review` HTML markers for backward compatibility
 - **Anti-hallucination**: explicit file allowlist, line validation against diff, max finding distance threshold
 - **Worker** (`worker/`): OIDC token exchange proxy at `oidc.codecanary.sh` — verifies GitHub Actions OIDC token, returns GitHub App installation token
-- **Setup** is a standalone binary with no CLI framework — just a sequential interactive flow
+- **Setup** is a subcommand (`codecanary setup`) using `charmbracelet/huh` forms, with `local` and `github` sub-flows
+- **Credentials** are stored in the OS keychain via `go-keyring`. `resolveEnv()` in `runner.go` injects keychain credentials into the filtered env when not already set. Env vars always take priority.
 
 ## Rules
 
@@ -118,7 +132,7 @@ There is a **single `Run()` function** — not separate paths for GitHub vs. loc
 - **Use the adapter/provider pattern for new integrations.** New LLM backends → implement `ModelProvider` + register in factory. New deployment targets → implement `ReviewPlatform` + wire in CLI. Never fork the pipeline.
 - **One pipeline, not two.** There must be a single `Run()` path. GitHub and local modes differ only in which `ReviewPlatform` implementation is injected — the orchestration logic is shared.
 - **Shared types for similar providers.** OpenAI-compatible APIs share request/response types via `provider_openai_compat.go`. Don't duplicate HTTP client logic across providers.
-- **Minimize shell code.** `setup.sh` and the GitHub Action (`alansikora/codecanary-action`) should be kept as thin as possible. All logic must live in Go.
-- **Keep the setup generator in sync.** `cmd/setup/main.go` contains an embedded workflow template. Any change to `.github/workflows/codecanary.yml` (actions, steps, permissions, etc.) must also be applied to that template, and vice versa.
+- **Minimize shell code.** `install.sh` and the GitHub Action (`alansikora/codecanary-action`) should be kept as thin as possible. All logic must live in Go.
+- **Keep the workflow template in sync.** `internal/setup/workflow.go` contains the embedded workflow template. Any change to `.github/workflows/codecanary.yml` (actions, steps, permissions, etc.) must also be applied to that template, and vice versa.
 - **Keep the breaking-change manifest in sync.** `.github/workflows/breaking-change-check.yml` contains a manifest of user-facing files. When adding new user-facing surfaces (config fields, CLI flags, public endpoints, etc.), add them to the manifest.
 - Tests exist for config, findings, formatting, and triage. Be careful with refactors — run `go test ./...` and `go vet ./...`.

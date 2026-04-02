@@ -433,6 +433,21 @@ func parseGeneratedConfig(output string) (string, error) {
 	return strings.TrimSpace(raw), nil
 }
 
+// StarterRulesSection contains the commented-out rules/context/ignore section
+// appended to generated configs as a reference for customization.
+const StarterRulesSection = `# rules:
+#   - id: example-rule
+#     description: "Describe what to check for"
+#     severity: warning
+#
+# context: |
+#   Describe your project stack and conventions here.
+#
+# ignore:
+#   - "dist/**"
+#   - "*.lock"
+`
+
 // StarterConfig is the static template used when creating a new config.
 const StarterConfig = `version: 1
 
@@ -454,15 +469,4 @@ const StarterConfig = `version: 1
 # review_model: claude-sonnet-4-6
 # triage_model: claude-haiku-4-5-20251001
 
-# rules:
-#   - id: example-rule
-#     description: "Describe what to check for"
-#     severity: warning
-#
-# context: |
-#   Describe your project stack and conventions here.
-#
-# ignore:
-#   - "dist/**"
-#   - "*.lock"
-`
+` + StarterRulesSection
