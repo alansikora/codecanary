@@ -192,7 +192,7 @@ var authRefreshCmd = &cobra.Command{
 				return err
 			}
 			if !replace {
-				fmt.Println("Keeping existing credential.")
+				fmt.Fprintf(os.Stderr, "Keeping existing credential.\n")
 				return nil
 			}
 			return promptAndStoreNewKey(provider, target, repo)
@@ -213,7 +213,7 @@ var authRefreshCmd = &cobra.Command{
 			return err
 		}
 		if !replace {
-			fmt.Println("Keeping existing credential.")
+			fmt.Fprintf(os.Stderr, "Keeping existing credential.\n")
 			return nil
 		}
 		return promptAndStoreNewKey(provider, target, repo)
