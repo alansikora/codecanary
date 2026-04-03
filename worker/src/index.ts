@@ -63,6 +63,11 @@ export default {
         return Response.json({ error: "Invalid or missing repository claim in OIDC token" }, { status: 400 });
       }
 
+      // Analytics: log hashed repo name for usage tracking without exposing private repo names.
+      const repoHash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(repository));
+      const repoHex = [...new Uint8Array(repoHash)].map(b => b.toString(16).padStart(2, "0")).join("");
+      console.log(JSON.stringify({ event: "review", repo: repoHex }));
+
       // 4. Generate GitHub App JWT.
       const appJwt = await generateAppJwt(env.APP_ID, env.APP_PRIVATE_KEY);
 
