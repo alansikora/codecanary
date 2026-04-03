@@ -6,6 +6,112 @@ import (
 	"strings"
 )
 
+// allResolved checks if all review threads have been resolved by code changes.
+// Threads resolved by other reasons (dismissed, acknowledged, rebutted) are kept
+// open and do not count as resolved.
+func allResolved(threads []ReviewThread, fixed []fixedThread) bool {
+	fixedSet := make(map[int]bool, len(fixed))
+	for _, f := range fixed {
+		if f.Reason == "code_change" {
+			fixedSet[f.Index] = true
+		}
+	}
+	for i := range threads {
+		if !fixedSet[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// resolvedFindingIDs builds the set of finding IDs that are resolved.
+// It combines threads already resolved on GitHub with threads just fixed by code changes.
+// Threads resolved by other reasons (dismissed, acknowledged, rebutted) are not included
+// since they are kept open for re-triage.
+func resolvedFindingIDs(allThreads, unresolved []ReviewThread, fixed []fixedThread) map[string]bool {
+	resolved := make(map[string]bool)
+	for _, t := range allThreads {
+		if t.Resolved {
+			if id := FindingIDFromThread(t.Body); id != "" {
+				resolved[id] = true
+			}
+		}
+	}
+	fixedSet := make(map[int]bool, len(fixed))
+	for _, f := range fixed {
+		if f.Reason == "code_change" {
+			fixedSet[f.Index] = true
+		}
+	}
+	for i, t := range unresolved {
+		if fixedSet[i] {
+			if id := FindingIDFromThread(t.Body); id != "" {
+				resolved[id] = true
+			}
+		}
+	}
+	return resolved
+}
+
+// minimizeFullyResolvedReviews minimizes reviews whose findings are all resolved.
+func minimizeFullyResolvedReviews(repo string, prNumber int, resolvedIDs map[string]bool) {
+	reviews, err := FindReviews(repo, prNumber)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not fetch reviews for minimization: %v\n", err)
+		return
+	}
+	minimized := 0
+	for _, rev := range reviews {
+		allResolved := len(rev.FindingIDs) > 0
+		for _, fid := range rev.FindingIDs {
+			if !resolvedIDs[fid] {
+				allResolved = false
+				break
+			}
+		}
+		if !allResolved {
+			continue
+		}
+		if err := MinimizeComment(rev.NodeID); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not minimize review: %v\n", err)
+		} else {
+			minimized++
+		}
+	}
+	if minimized > 0 {
+		fmt.Fprintf(os.Stderr, "Minimized %d previous review(s)\n", minimized)
+	}
+}
+
+// acknowledgmentMessage returns a reply body for non-code-change resolutions.
+// Each message includes a hidden HTML marker for dedup detection.
+func acknowledgmentMessage(reason string) string {
+	marker := fmt.Sprintf("%s%s -->", ackMarkerPrefix, reason)
+	switch reason {
+	case "dismissed":
+		return marker + "\nAuthor dismissed this finding. Keeping open \u2014 will re-check if related code changes."
+	case "acknowledged":
+		return marker + "\nAuthor acknowledged this finding. Keeping open \u2014 will re-check on future pushes."
+	case "rebutted":
+		return marker + "\nAuthor provided a technical rebuttal. Keeping open \u2014 will re-check if related code changes."
+	default:
+		return fmt.Sprintf("%sunknown -->", ackMarkerPrefix) + "\nFinding acknowledged. Keeping open \u2014 will re-check on future pushes."
+	}
+}
+
+// hasAcknowledgmentReply checks if an acknowledgment reply already exists
+// on the thread for the given reason, to avoid posting duplicate replies.
+func hasAcknowledgmentReply(t ReviewThread, reason string) bool {
+	newMarker := fmt.Sprintf("%s%s -->", ackMarkerPrefix, reason)
+	oldMarker := fmt.Sprintf("%s%s -->", legacyAckPrefix, reason)
+	for _, r := range t.Replies {
+		if strings.Contains(r.Body, newMarker) || strings.Contains(r.Body, oldMarker) {
+			return true
+		}
+	}
+	return false
+}
+
 // GithubPlatform implements ReviewPlatform for GitHub Actions / PR mode.
 type GithubPlatform struct {
 	Repo         string

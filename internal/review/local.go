@@ -6,6 +6,11 @@ import (
 	"strings"
 )
 
+// isAncestor checks if the given SHA is an ancestor of HEAD.
+func isAncestor(sha string) bool {
+	return exec.Command("git", "merge-base", "--is-ancestor", sha, "HEAD").Run() == nil
+}
+
 // FetchLocalDiff computes a diff of the current branch against the default
 // branch and returns a PRData suitable for review without a GitHub PR.
 func FetchLocalDiff() (*PRData, error) {

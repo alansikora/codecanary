@@ -23,7 +23,7 @@ internal/
     provider_openai.go
     provider_openrouter.go
     provider_claude.go   # Claude CLI wrapper
-    provider_openai_compat.go  # Shared types for OpenAI-compatible APIs
+    provider_compat.go   # Shared types for OpenAI-compatible APIs
     pricing.go           # Token-based cost estimation
     # Platform layer (environment abstraction)
     platform.go          # ReviewPlatform interface
@@ -38,7 +38,6 @@ internal/
     github.go            # GitHub API calls (fetch threads, post reviews)
     local.go             # Local diff & git operations
     state.go             # Local state persistence
-    generate.go          # Config generation from repo analysis
     docs.go              # Project doc discovery
   credentials/     # Credential storage (keychain with file fallback)
     keyring.go     # Store/Retrieve/Delete — keychain first, ~/.codecanary/credentials.json fallback
@@ -126,8 +125,9 @@ There is a **single `Run()` function** — not separate paths for GitHub vs. loc
 - **Keep the core engine agnostic.** `runner.go`, `triage.go`, `prompt.go`, `findings.go` must never import or reference a specific LLM provider or platform. All provider/platform specifics go behind the `ModelProvider` or `ReviewPlatform` interfaces. No `if provider == "openai"` in core logic.
 - **Use the adapter/provider pattern for new integrations.** New LLM backends → create `provider_<name>.go` with a `ProviderFactory` registration in `init()`. New deployment targets → implement `ReviewPlatform` + wire in CLI. Never fork the pipeline.
 - **One pipeline, not two.** There must be a single `Run()` path. GitHub and local modes differ only in which `ReviewPlatform` implementation is injected — the orchestration logic is shared.
-- **Shared types for similar providers.** OpenAI-compatible APIs share request/response types via `provider_openai_compat.go`. Don't duplicate HTTP client logic across providers.
+- **Shared types for similar providers.** OpenAI-compatible APIs share request/response types via `provider_compat.go`. Don't duplicate HTTP client logic across providers.
 - **Don't repeat yourself.** Before writing new code, search the codebase for existing functions, mappings, or logic that already does what you need — then call it instead of reimplementing it. This applies to everything: switch statements, helper functions, validation logic, data mappings, HTTP calls. One source of truth, callers import it. Don't merge scaffolding or unused exports — if it's not called yet, it doesn't ship yet.
+- **File names are ownership boundaries.** A function defined in `local.go` implies it belongs to the local flow; one in `github.go` implies it belongs to GitHub. If a function is called by multiple files in the same package, it belongs in a shared file (e.g., `forms.go` for setup helpers, `platform.go` for platform-shared logic). Never define shared infrastructure in a flow-specific file — move it to the file that matches its actual scope.
 - **Canonical provider registration points.** Provider names live in the factory map in `provider.go`. Provider-to-env-var mapping lives in `providerEnvVars` in `internal/credentials/keyring.go`. When adding a new provider, update both of these plus config validation in `config.go` — don't add ad-hoc mappings elsewhere.
 - **Minimize shell code.** `install.sh` and the GitHub Action (`alansikora/codecanary-action`) should be kept as thin as possible. All logic must live in Go.
 - **Keep the workflow template in sync.** `internal/setup/workflow.go` contains the embedded workflow template. Any change to `.github/workflows/codecanary.yml` (actions, steps, permissions, etc.) must also be applied to that template, and vice versa.

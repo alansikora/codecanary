@@ -34,7 +34,6 @@ var breakingManifest = []breakingSurface{
 	{"internal/review/config.go", "Config Schema", "Users may need to update `.codecanary/config.yml` field names, types, or values"},
 	{"cmd/review/cli/review.go", "CLI Flags", "CLI flag names or defaults may have changed"},
 	{"cmd/review/cli/root.go", "CLI Flags", "CLI flag names or defaults may have changed"},
-	{"cmd/review/cli/generate.go", "CLI Generate", "`codecanary review generate` behavior may have changed"},
 	{"cmd/review/cli/costs.go", "CLI Costs", "`codecanary review costs` behavior may have changed"},
 	{"cmd/review/cli/setup.go", "Setup Command", "`codecanary setup` behavior may have changed"},
 	{"cmd/review/cli/auth.go", "Auth Command", "`codecanary auth` behavior may have changed"},
