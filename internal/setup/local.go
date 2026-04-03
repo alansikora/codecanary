@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 
 	"github.com/alansikora/codecanary/internal/credentials"
-	"github.com/alansikora/codecanary/internal/review"
 )
 
 // RunLocal executes the interactive local setup wizard.
@@ -67,25 +66,7 @@ func RunLocal() error {
 	}
 
 	fmt.Fprintf(os.Stderr, "\nSetup complete! Run `codecanary review` to review your current changes.\n")
+	fmt.Fprintf(os.Stderr, "Add review rules and context in .codecanary/review.yml\n")
 	return nil
 }
 
-func writeConfig(provider, reviewModel, triageModel, configPath string) error {
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
-		return fmt.Errorf("creating config directory: %w", err)
-	}
-
-	if triageModel == "" {
-		return fmt.Errorf("triage_model is required")
-	}
-
-	// Build a minimal working config.
-	config := fmt.Sprintf("version: 1\nprovider: %s\n", provider)
-	if reviewModel != "" {
-		config += fmt.Sprintf("review_model: %s\n", reviewModel)
-	}
-	config += fmt.Sprintf("triage_model: %s\n", triageModel)
-	config += "\n" + review.StarterRulesSection
-
-	return writeFileWithConfirm(configPath, []byte(config))
-}
