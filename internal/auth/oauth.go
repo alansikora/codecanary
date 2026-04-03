@@ -195,6 +195,21 @@ func exchangeCode(code, verifier, redirectURI, state string) (string, error) {
 	return token, nil
 }
 
+// GitHubSecretExists checks whether a secret with the given name exists on a GitHub repo.
+func GitHubSecretExists(repo, name string) bool {
+	out, err := exec.Command("gh", "secret", "list", "--repo", repo).Output()
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) > 0 && fields[0] == name {
+			return true
+		}
+	}
+	return false
+}
+
 // SetGitHubSecret sets a secret on a GitHub repo using gh CLI.
 func SetGitHubSecret(repo, name, value string) error {
 	cmd := exec.Command("gh", "secret", "set", name, "--repo", repo)

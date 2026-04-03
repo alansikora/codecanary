@@ -11,6 +11,7 @@ import (
 	"github.com/alansikora/codecanary/internal/auth"
 	"github.com/alansikora/codecanary/internal/credentials"
 	"github.com/charmbracelet/huh"
+	"gopkg.in/yaml.v3"
 )
 
 // RunGitHub executes the interactive GitHub Actions setup wizard.
@@ -85,62 +86,92 @@ func RunGitHub(canary bool) error {
 
 	// 7. Provider-specific auth and secret setup.
 	secretName := ProviderSecretName()
-	var apiKey string
+	secretExists := auth.GitHubSecretExists(repo, secretName)
+	previousProvider := readPreviousProvider()
 
-	if provider == "claude" {
-		// OAuth flow for Claude CLI.
-		if err := auth.InstallGitHubApp(repo, reader); err != nil {
-			return fmt.Errorf("installing Claude GitHub App: %w", err)
+	needNewSecret := true
+	if secretExists {
+		providerChanged := previousProvider != "" && previousProvider != provider
+
+		var updateSecret bool
+		if providerChanged {
+			updateSecret = true // default to updating when provider changed
+			err = huh.NewForm(
+				huh.NewGroup(
+					huh.NewConfirm().
+						Title(fmt.Sprintf("You changed your provider from %s to %s", previousProvider, provider)).
+						Description(fmt.Sprintf("You probably want to update the %s secret with a new API key.", secretName)).
+						Affirmative("Yes, update secret").
+						Negative("No, keep existing").
+						Value(&updateSecret),
+				),
+			).Run()
+		} else {
+			title := fmt.Sprintf("%s secret already exists on %s", secretName, repo)
+			desc := "You might want to keep the existing secret."
+			if previousProvider != "" {
+				title = fmt.Sprintf("You kept the same provider (%s)", provider)
+				desc = fmt.Sprintf("The %s secret already exists — you might want to keep it.", secretName)
+			}
+			err = huh.NewForm(
+				huh.NewGroup(
+					huh.NewConfirm().
+						Title(title).
+						Description(desc).
+						Affirmative("Update secret").
+						Negative("Keep existing").
+						Value(&updateSecret),
+				),
+			).Run()
 		}
-		token, err := auth.OAuthToken()
-		if err != nil {
-			return fmt.Errorf("OAuth authentication failed: %w", err)
-		}
-		apiKey = token
-	} else {
-		// Collect API key.
-		key, err := InputAPIKey(provider)
 		if err != nil {
 			return err
 		}
-
-		fmt.Fprintf(os.Stderr, "Validating API key...")
-		if err := ValidateAPIKey(provider, key); err != nil {
-			fmt.Fprintf(os.Stderr, " failed\n")
-			return fmt.Errorf("API key validation failed: %w", err)
-		}
-		fmt.Fprintf(os.Stderr, " valid!\n")
-
-		apiKey = key
-
-		// Also store locally for `codecanary review` usage.
-		if err := credentials.Store(key); err != nil {
-			fmt.Fprintf(os.Stderr, "Note: could not store key locally: %v\n", err)
-		}
+		needNewSecret = updateSecret
 	}
 
-	// 8. Set GitHub secret.
-	var setSecret bool
-	err = huh.NewForm(
-		huh.NewGroup(
-			huh.NewConfirm().
-				Title(fmt.Sprintf("Set %s as a secret on %s?", secretName, repo)).
-				Value(&setSecret),
-		),
-	).Run()
-	if err != nil {
-		return err
-	}
+	if needNewSecret {
+		var apiKey string
+		if provider == "claude" {
+			// OAuth flow for Claude CLI.
+			if err := auth.InstallGitHubApp(repo, reader); err != nil {
+				return fmt.Errorf("installing Claude GitHub App: %w", err)
+			}
+			token, err := auth.OAuthToken()
+			if err != nil {
+				return fmt.Errorf("OAuth authentication failed: %w", err)
+			}
+			apiKey = token
+		} else {
+			// Collect API key.
+			key, err := InputAPIKey(provider)
+			if err != nil {
+				return err
+			}
 
-	if setSecret {
+			fmt.Fprintf(os.Stderr, "Validating API key...")
+			if err := ValidateAPIKey(provider, key); err != nil {
+				fmt.Fprintf(os.Stderr, " failed\n")
+				return fmt.Errorf("API key validation failed: %w", err)
+			}
+			fmt.Fprintf(os.Stderr, " valid!\n")
+
+			apiKey = key
+
+			// Also store locally for `codecanary review` usage.
+			if err := credentials.Store(key); err != nil {
+				fmt.Fprintf(os.Stderr, "Note: could not store key locally: %v\n", err)
+			}
+		}
+
+		// Set GitHub secret.
 		fmt.Fprintf(os.Stderr, "Setting %s secret on %s...\n", secretName, repo)
 		if err := auth.SetGitHubSecret(repo, secretName, apiKey); err != nil {
 			return fmt.Errorf("setting secret: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, "  Done!\n\n")
 	} else {
-		fmt.Fprintf(os.Stderr, "Skipped. Set the secret manually:\n")
-		fmt.Fprintf(os.Stderr, "  gh secret set %s --repo %s\n\n", secretName, repo)
+		fmt.Fprintf(os.Stderr, "Keeping existing %s secret.\n\n", secretName)
 	}
 
 	// 9. Select models.
@@ -245,4 +276,20 @@ func RunGitHub(canary bool) error {
 	fmt.Fprintf(os.Stderr, "Customize review rules and context in .codecanary/review.yml\n")
 
 	return nil
+}
+
+// readPreviousProvider reads the provider from an existing .codecanary/config.yml.
+// Returns empty string if the file doesn't exist or can't be parsed.
+func readPreviousProvider() string {
+	data, err := os.ReadFile(filepath.Join(".codecanary", "config.yml"))
+	if err != nil {
+		return ""
+	}
+	var cfg struct {
+		Provider string `yaml:"provider"`
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return ""
+	}
+	return cfg.Provider
 }
