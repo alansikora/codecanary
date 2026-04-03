@@ -228,27 +228,11 @@ func promptAndStoreNewKey(provider string, target refreshTarget, repo string) er
 		return err
 	}
 
-	// For local targets, always store. For remote targets, ask first.
-	storeLocally := true
-	if target.isRemote {
-		if err := huh.NewForm(
-			huh.NewGroup(
-				huh.NewConfirm().
-					Title("Also store credential locally?").
-					Description("Keeps the local keychain in sync for `codecanary review` usage.").
-					Value(&storeLocally),
-			),
-		).Run(); err != nil {
-			return err
-		}
-	}
-
-	if storeLocally {
-		if err := credentials.Store(apiKey); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not store credential locally: %v\n", err)
-		} else {
-			fmt.Fprintf(os.Stderr, "Local credential updated.\n")
-		}
+	// Always store locally (matches setup flows — keeps local keychain in sync).
+	if err := credentials.Store(apiKey); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not store credential locally: %v\n", err)
+	} else {
+		fmt.Fprintf(os.Stderr, "Local credential updated.\n")
 	}
 
 	// For remote target, also update the GitHub secret.
