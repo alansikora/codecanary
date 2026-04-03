@@ -1,8 +1,8 @@
 version: 1
 
-provider: claude
+provider: anthropic
 review_model: claude-sonnet-4-6
-triage_model: haiku
+triage_model: claude-haiku-4-5-20251001
 
 context: |
   Go CLI tool for AI-powered GitHub PR code reviews. Single binary with review, setup,
