@@ -10,6 +10,7 @@ import (
 
 	"github.com/alansikora/codecanary/internal/auth"
 	"github.com/alansikora/codecanary/internal/credentials"
+	"github.com/alansikora/codecanary/internal/review"
 	"github.com/charmbracelet/huh"
 	"gopkg.in/yaml.v3"
 )
@@ -84,7 +85,14 @@ func RunGitHub(canary bool) error {
 		return err
 	}
 
-	// 7. Provider-specific auth and secret setup.
+	// 7. Install provider app if needed.
+	if appReq := review.GetAppRequirement(provider); appReq != nil {
+		if err := PromptAppInstall(appReq.Name, appReq.InstallURL, repo, reader); err != nil {
+			return fmt.Errorf("installing %s app: %w", appReq.Name, err)
+		}
+	}
+
+	// 8. Provider-specific auth and secret setup.
 	secretName := ProviderSecretName()
 	secretExists := auth.GitHubSecretExists(repo, secretName)
 	previousProvider := readPreviousProvider()
@@ -132,16 +140,18 @@ func RunGitHub(canary bool) error {
 
 	if needNewSecret {
 		var apiKey string
-		if provider == "claude" {
-			// OAuth flow for Claude CLI.
-			if err := auth.InstallGitHubApp(repo, reader); err != nil {
-				return fmt.Errorf("installing Claude GitHub App: %w", err)
-			}
-			token, err := auth.OAuthToken()
+		if oauthCfg := review.GetOAuthConfig(provider); oauthCfg != nil {
+			// OAuth flow.
+			token, err := auth.OAuthToken(oauthCfg.ClientID, oauthCfg.AuthorizeURL, oauthCfg.TokenURL, oauthCfg.Scope)
 			if err != nil {
 				return fmt.Errorf("OAuth authentication failed: %w", err)
 			}
 			apiKey = token
+
+			// Also store locally for `codecanary review` usage.
+			if err := credentials.Store(token); err != nil {
+				fmt.Fprintf(os.Stderr, "Note: could not store token locally: %v\n", err)
+			}
 		} else {
 			// Collect API key.
 			key, err := InputAPIKey(provider)

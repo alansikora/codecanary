@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/alansikora/codecanary/internal/auth"
 	"github.com/alansikora/codecanary/internal/review"
 	"github.com/charmbracelet/huh"
 	"gopkg.in/yaml.v3"
@@ -325,6 +327,35 @@ func setYAMLScalar(mapping *yaml.Node, key, value string, kind yaml.Kind, tag st
 	keyNode := &yaml.Node{Kind: yaml.ScalarNode, Value: key}
 	valNode := &yaml.Node{Kind: kind, Value: value, Tag: tag}
 	mapping.Content = append(mapping.Content, keyNode, valNode)
+}
+
+// PromptAppInstall asks the user whether to install a provider app and, if confirmed,
+// opens the install URL in the browser and waits for the user to finish.
+func PromptAppInstall(name, installURL, repo string, reader *bufio.Reader) error {
+	var install bool
+	err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title(fmt.Sprintf("Install the %s app on %s?", name, repo)).
+				Value(&install),
+		),
+	).Run()
+	if err != nil {
+		return err
+	}
+	if !install {
+		return fmt.Errorf("skipped — %s app installation is required", name)
+	}
+
+	fmt.Fprintf(os.Stderr, "Opening browser to install the %s app...\n", name)
+	fmt.Fprintf(os.Stderr, "  → Select the repository: %s\n\n", repo)
+	if err := auth.OpenBrowser(installURL); err != nil {
+		fmt.Fprintf(os.Stderr, "Could not open browser: %v\nOpen this URL in your browser:\n%s\n\n", err, installURL)
+	}
+	fmt.Fprintf(os.Stderr, "Press Enter after installing the app...")
+	_, _ = reader.ReadString('\n')
+	fmt.Fprintln(os.Stderr)
+	return nil
 }
 
 func triageModelOptions(provider string) []huh.Option[string] {

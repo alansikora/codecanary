@@ -33,6 +33,22 @@ type PricingEntry struct {
 	Pricing   modelPricing
 }
 
+// AppRequirement describes an external app (e.g. a GitHub App) that must be
+// installed for a provider to work. Used by the setup wizard to prompt the user.
+type AppRequirement struct {
+	Name       string // Human-readable name, e.g. "Claude"
+	InstallURL string // URL to install the app
+}
+
+// OAuthConfig holds the parameters needed to run an OAuth PKCE flow for a provider.
+// Providers that use OAuth (instead of API keys) set this on their factory.
+type OAuthConfig struct {
+	ClientID     string
+	AuthorizeURL string
+	TokenURL     string
+	Scope        string
+}
+
 // ProviderFactory holds everything needed to construct, validate, and
 // price a provider. Each provider file registers one of these via init().
 type ProviderFactory struct {
@@ -41,6 +57,8 @@ type ProviderFactory struct {
 	Pricing              []PricingEntry
 	SuggestedReviewModel string
 	SuggestedTriageModel string
+	AppRequirement       *AppRequirement
+	OAuthConfig          *OAuthConfig
 }
 
 // providers maps provider names to their factories.
@@ -91,6 +109,24 @@ func GetSuggestedTriageModel(provider string) string {
 		return ""
 	}
 	return pf.SuggestedTriageModel
+}
+
+// GetAppRequirement returns the app requirement for a provider, or nil if none.
+func GetAppRequirement(provider string) *AppRequirement {
+	pf, ok := providers[provider]
+	if !ok {
+		return nil
+	}
+	return pf.AppRequirement
+}
+
+// GetOAuthConfig returns the OAuth config for a provider, or nil if it uses API keys.
+func GetOAuthConfig(provider string) *OAuthConfig {
+	pf, ok := providers[provider]
+	if !ok {
+		return nil
+	}
+	return pf.OAuthConfig
 }
 
 // lookupEnvVar finds a variable by name in the filtered environment.
