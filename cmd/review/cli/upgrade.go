@@ -20,7 +20,7 @@ var upgradeCmd = &cobra.Command{
 			tag = "canary"
 		}
 
-		if err := selfupdate.Upgrade(Version, tag, os.Stderr); err != nil {
+		if err := selfupdate.Upgrade(cmd.Context(), Version, tag, os.Stderr); err != nil {
 			return fmt.Errorf("upgrade failed: %w", err)
 		}
 		return nil

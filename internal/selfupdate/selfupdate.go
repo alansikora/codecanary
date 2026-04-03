@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -161,8 +162,13 @@ func writeCache(latest string) error {
 	return os.WriteFile(filepath.Join(dir, cacheFile), data, 0o644)
 }
 
+// pending tracks background cache refresh goroutines.
+var pending sync.WaitGroup
+
 // CheckCached returns the latest version using a 24h cache.
-// On cache miss, a synchronous check with a short timeout (3s) is performed.
+// On cache hit, returns immediately. On cache miss, starts a background
+// refresh (result available next run) and returns the stale value if any.
+// Call Wait() before process exit to let the refresh complete.
 func CheckCached(currentVersion string) (latest string, hasUpdate bool) {
 	if currentVersion == "dev" || currentVersion == "" {
 		return "", false
@@ -173,28 +179,40 @@ func CheckCached(currentVersion string) (latest string, hasUpdate bool) {
 		return cache.LatestVersion, IsNewer(currentVersion, cache.LatestVersion)
 	}
 
-	// Cache stale or missing — synchronous check with short timeout.
-	ctx, cancel := context.WithTimeout(context.Background(), checkTimeout)
-	defer cancel()
+	// Cache stale or missing — refresh in background so we never block.
+	pending.Add(1)
+	go func() {
+		defer pending.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), checkTimeout)
+		defer cancel()
+		if rel, err := fetchRelease(ctx, "latest"); err == nil {
+			_ = writeCache(rel.TagName)
+		}
+	}()
 
-	rel, err := fetchRelease(ctx, "latest")
-	if err != nil {
-		return "", false
+	// Return stale cache value if available.
+	if cache != nil {
+		return cache.LatestVersion, IsNewer(currentVersion, cache.LatestVersion)
 	}
-	_ = writeCache(rel.TagName)
-	return rel.TagName, IsNewer(currentVersion, rel.TagName)
+	return "", false
+}
+
+// Wait blocks until any pending background cache refresh completes.
+// Call this before process exit.
+func Wait() {
+	pending.Wait()
 }
 
 // Upgrade downloads and installs the specified release (or latest).
 // tag should be "" for latest, "canary" for canary, or a specific version tag.
-func Upgrade(currentVersion, tag string, w io.Writer) error {
+func Upgrade(ctx context.Context, currentVersion, tag string, w io.Writer) error {
 	if tag == "" {
 		tag = "latest"
 	}
 
 	_, _ = fmt.Fprintf(w, "Checking for updates...\n")
 
-	apiCtx, apiCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	apiCtx, apiCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer apiCancel()
 
 	rel, err := fetchRelease(apiCtx, tag)
@@ -238,7 +256,7 @@ func Upgrade(currentVersion, tag string, w io.Writer) error {
 
 	// Each download gets its own timeout so a slow archive download
 	// cannot starve the checksums fetch.
-	dlCtx, dlCancel := context.WithTimeout(context.Background(), upgradeTimeout)
+	dlCtx, dlCancel := context.WithTimeout(ctx, upgradeTimeout)
 	defer dlCancel()
 
 	archiveData, err := downloadAsset(dlCtx, asset.BrowserDownloadURL)
@@ -246,7 +264,7 @@ func Upgrade(currentVersion, tag string, w io.Writer) error {
 		return fmt.Errorf("downloading archive: %w", err)
 	}
 
-	csCtx, csCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	csCtx, csCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer csCancel()
 
 	checksumsData, err := downloadAsset(csCtx, checksumsAsset.BrowserDownloadURL)
