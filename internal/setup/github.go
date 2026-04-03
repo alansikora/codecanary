@@ -104,7 +104,7 @@ func RunGitHub(canary bool) error {
 		var updateSecret bool
 		if providerChanged {
 			updateSecret = true // default to updating when provider changed
-			err = huh.NewForm(
+			if err := huh.NewForm(
 				huh.NewGroup(
 					huh.NewConfirm().
 						Title(fmt.Sprintf("You changed your provider from %s to %s", previousProvider, provider)).
@@ -113,7 +113,9 @@ func RunGitHub(canary bool) error {
 						Negative("No, keep existing").
 						Value(&updateSecret),
 				),
-			).Run()
+			).Run(); err != nil {
+				return err
+			}
 		} else {
 			title := fmt.Sprintf("%s secret already exists on %s", secretName, repo)
 			desc := "You might want to keep the existing secret."
@@ -121,7 +123,7 @@ func RunGitHub(canary bool) error {
 				title = fmt.Sprintf("You kept the same provider (%s)", provider)
 				desc = fmt.Sprintf("The %s secret already exists — you might want to keep it.", secretName)
 			}
-			err = huh.NewForm(
+			if err := huh.NewForm(
 				huh.NewGroup(
 					huh.NewConfirm().
 						Title(title).
@@ -130,10 +132,9 @@ func RunGitHub(canary bool) error {
 						Negative("Keep existing").
 						Value(&updateSecret),
 				),
-			).Run()
-		}
-		if err != nil {
-			return err
+			).Run(); err != nil {
+				return err
+			}
 		}
 		needNewSecret = updateSecret
 	}
@@ -147,11 +148,6 @@ func RunGitHub(canary bool) error {
 				return fmt.Errorf("OAuth authentication failed: %w", err)
 			}
 			apiKey = token
-
-			// Also store locally for `codecanary review` usage.
-			if err := credentials.Store(token); err != nil {
-				fmt.Fprintf(os.Stderr, "Note: could not store token locally: %v\n", err)
-			}
 		} else {
 			// Collect API key.
 			key, err := InputAPIKey(provider)
@@ -167,11 +163,6 @@ func RunGitHub(canary bool) error {
 			fmt.Fprintf(os.Stderr, " valid!\n")
 
 			apiKey = key
-
-			// Also store locally for `codecanary review` usage.
-			if err := credentials.Store(key); err != nil {
-				fmt.Fprintf(os.Stderr, "Note: could not store key locally: %v\n", err)
-			}
 		}
 
 		// Set GitHub secret.
@@ -180,6 +171,11 @@ func RunGitHub(canary bool) error {
 			return fmt.Errorf("setting secret: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, "  Done!\n\n")
+
+		// Store locally for `codecanary review` usage (after remote secret succeeds).
+		if err := credentials.Store(apiKey); err != nil {
+			fmt.Fprintf(os.Stderr, "Note: could not store credential locally: %v\n", err)
+		}
 	} else {
 		fmt.Fprintf(os.Stderr, "Keeping existing %s secret.\n\n", secretName)
 	}

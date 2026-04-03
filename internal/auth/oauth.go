@@ -168,13 +168,12 @@ func exchangeCode(code, verifier, redirectURI, state, clientID, tokenURL string)
 
 // GitHubSecretExists checks whether a secret with the given name exists on a GitHub repo.
 func GitHubSecretExists(repo, name string) bool {
-	out, err := exec.Command("gh", "secret", "list", "--repo", repo).Output()
+	out, err := exec.Command("gh", "secret", "list", "--repo", repo, "--json", "name", "--jq", ".[].name").Output()
 	if err != nil {
 		return false
 	}
-	for _, line := range strings.Split(string(out), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) > 0 && fields[0] == name {
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == name {
 			return true
 		}
 	}
