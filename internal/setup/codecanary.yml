@@ -48,6 +48,8 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
+      # Prevent fork PRs from poisoning config to redirect secrets to an
+      # attacker-controlled endpoint (pull_request_target + checkout attack).
       - name: Pin config to base branch
         if: >-
           env.skip != 'true' &&
