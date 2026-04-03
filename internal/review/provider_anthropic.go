@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/alansikora/codecanary/internal/credentials"
 )
 
 func init() {
@@ -52,7 +54,7 @@ type anthropicProvider struct {
 }
 
 func newAnthropicProvider(mc *ModelConfig, env []string) ModelProvider {
-	keyEnv := "CODECANARY_PROVIDER_SECRET"
+	keyEnv := credentials.EnvVar
 	if mc.APIKeyEnv != "" {
 		keyEnv = mc.APIKeyEnv
 	}

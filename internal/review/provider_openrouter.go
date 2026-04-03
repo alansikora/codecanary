@@ -3,6 +3,8 @@ package review
 import (
 	"context"
 	"fmt"
+
+	"github.com/alansikora/codecanary/internal/credentials"
 )
 
 func init() {
@@ -33,7 +35,7 @@ type openrouterProvider struct {
 }
 
 func newOpenRouterProvider(mc *ModelConfig, env []string) ModelProvider {
-	keyEnv := "CODECANARY_PROVIDER_SECRET"
+	keyEnv := credentials.EnvVar
 	if mc.APIKeyEnv != "" {
 		keyEnv = mc.APIKeyEnv
 	}

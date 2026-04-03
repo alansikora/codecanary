@@ -17,9 +17,9 @@ func isValidURL(s string) bool {
 
 type ReviewConfig struct {
 	Version      int               `yaml:"version"`
-	Rules        []Rule            `yaml:"rules"`
-	Context      string            `yaml:"context"`
-	Ignore       []string          `yaml:"ignore"`
+	Rules        []Rule            `yaml:"-"`
+	Context      string            `yaml:"-"`
+	Ignore       []string          `yaml:"-"`
 	MaxFileSize  int               `yaml:"max_file_size"`  // per-file content limit in bytes (default 100KB)
 	MaxTotalSize int               `yaml:"max_total_size"` // total file content limit in bytes (default 500KB)
 	MaxBudgetUSD float64           `yaml:"max_budget_usd"`  // per-invocation spending limit in USD (default 0 = unlimited)

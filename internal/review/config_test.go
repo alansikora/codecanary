@@ -218,45 +218,36 @@ triage_model: claude-haiku-4-5-20251001
 	}
 }
 
-func TestLoadConfig_ReviewPolicyOverridesConfig(t *testing.T) {
+func TestLoadConfig_ConfigYmlIgnoresReviewFields(t *testing.T) {
 	dir := t.TempDir()
 	configDir := filepath.Join(dir, ".codecanary")
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		t.Fatalf("creating config dir: %v", err)
 	}
 
+	// config.yml with rules/context — should be ignored
 	configYAML := `version: 1
 provider: anthropic
 review_model: claude-sonnet-4-6
 triage_model: claude-haiku-4-5-20251001
-context: "from config"
+context: "should be ignored"
 rules:
-  - id: config-rule
-    description: "From config"
+  - id: ignored-rule
+    description: "Should be ignored"
     severity: bug
 `
 	if err := os.WriteFile(filepath.Join(configDir, "config.yml"), []byte(configYAML), 0644); err != nil {
 		t.Fatalf("writing config.yml: %v", err)
 	}
 
-	reviewYAML := `context: "from review"
-rules:
-  - id: review-rule
-    description: "From review"
-    severity: warning
-`
-	if err := os.WriteFile(filepath.Join(configDir, "review.yml"), []byte(reviewYAML), 0644); err != nil {
-		t.Fatalf("writing review.yml: %v", err)
-	}
-
 	cfg, err := LoadConfig(filepath.Join(configDir, "config.yml"))
 	if err != nil {
 		t.Fatalf("LoadConfig failed: %v", err)
 	}
-	if len(cfg.Rules) != 1 || cfg.Rules[0].ID != "review-rule" {
-		t.Errorf("expected review.yml rules to override, got %v", cfg.Rules)
+	if len(cfg.Rules) != 0 {
+		t.Errorf("expected rules in config.yml to be ignored, got %v", cfg.Rules)
 	}
-	if cfg.Context != "from review" {
-		t.Errorf("expected context from review.yml, got %q", cfg.Context)
+	if cfg.Context != "" {
+		t.Errorf("expected context in config.yml to be ignored, got %q", cfg.Context)
 	}
 }

@@ -3,6 +3,8 @@ package review
 import (
 	"context"
 	"fmt"
+
+	"github.com/alansikora/codecanary/internal/credentials"
 )
 
 func init() {
@@ -56,7 +58,7 @@ func newOpenAIProvider(mc *ModelConfig, env []string) ModelProvider {
 	if mc.APIBase != "" {
 		apiBase = mc.APIBase
 	}
-	keyEnv := "CODECANARY_PROVIDER_SECRET"
+	keyEnv := credentials.EnvVar
 	if mc.APIKeyEnv != "" {
 		keyEnv = mc.APIKeyEnv
 	}
