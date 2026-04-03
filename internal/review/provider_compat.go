@@ -90,7 +90,7 @@ func doChat(ctx context.Context, apiBase, apiKey, model, prompt string, timeout 
 		}
 		return nil, 0, fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	durationMS := int(time.Since(start).Milliseconds())
 
 	body, err := io.ReadAll(resp.Body)

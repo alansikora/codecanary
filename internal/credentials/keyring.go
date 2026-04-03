@@ -116,13 +116,13 @@ func writeCredentials(creds map[string]string) error {
 	}
 	tmpPath := tmp.Name()
 	_, writeErr := tmp.Write(data)
-	tmp.Close()
+	_ = tmp.Close()
 	if writeErr != nil {
-		os.Remove(tmpPath) // best-effort cleanup
+		_ = os.Remove(tmpPath) // best-effort cleanup
 		return writeErr
 	}
 	if err := os.Chmod(tmpPath, 0600); err != nil {
-		os.Remove(tmpPath) // best-effort cleanup
+		_ = os.Remove(tmpPath) // best-effort cleanup
 		return err
 	}
 	return os.Rename(tmpPath, path)

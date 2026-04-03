@@ -183,9 +183,7 @@ func (g *GithubPlatform) Publish(result *ReviewResult, pr *PRData, threads []Rev
 			return err
 		}
 		fmt.Print(formatted)
-		if outputFormat == "terminal" {
-			// Usage table is printed by ReportUsage.
-		}
+		// Usage table is printed by ReportUsage for terminal output.
 		return nil
 	}
 

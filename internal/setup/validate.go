@@ -50,7 +50,7 @@ func validateAnthropic(apiKey string) error {
 	if err != nil {
 		return fmt.Errorf("connection failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == 401 {
 		return fmt.Errorf("invalid API key (401 Unauthorized)")
@@ -79,7 +79,7 @@ func validateOpenAI(apiKey string) error {
 	if err != nil {
 		return fmt.Errorf("connection failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == 401 {
 		return fmt.Errorf("invalid API key (401 Unauthorized)")
@@ -103,7 +103,7 @@ func validateOpenRouter(apiKey string) error {
 	if err != nil {
 		return fmt.Errorf("connection failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == 401 {
 		return fmt.Errorf("invalid API key (401 Unauthorized)")

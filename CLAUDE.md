@@ -65,6 +65,14 @@ go build ./cmd/review    # builds codecanary
 
 Version is set via ldflags: `-X main.version=v{version}`
 
+## Lint
+
+```sh
+golangci-lint run ./...
+```
+
+All code must pass `golangci-lint` with default linters (errcheck, staticcheck, etc.). Run this before committing.
+
 ## Key dependencies
 
 - `spf13/cobra` — CLI framework
