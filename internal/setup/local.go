@@ -66,6 +66,7 @@ func RunLocal() error {
 	}
 
 	fmt.Fprintf(os.Stderr, "\nSetup complete! Run `codecanary review` to review your current changes.\n")
+	fmt.Fprintf(os.Stderr, "Add review rules and context in .codecanary/review.yml\n")
 	return nil
 }
 
