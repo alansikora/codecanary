@@ -20,10 +20,9 @@ func ProviderGuidance(provider string) string {
 	}
 }
 
-// ProviderEnvVar returns the default env var name for a provider's API key.
-// Delegates to the credentials package (single source of truth).
-func ProviderEnvVar(provider string) string {
-	return credentials.DefaultEnvVar(provider)
+// ProviderEnvVar returns the environment variable name used for provider credentials.
+func ProviderEnvVar() string {
+	return credentials.EnvVar
 }
 
 // GitHubPermissionsGuidance returns an explanation of the GitHub Actions permissions.
@@ -35,7 +34,6 @@ func GitHubPermissionsGuidance() string {
 }
 
 // ProviderSecretName returns the GitHub secret name for the provider API key.
-// All providers use a single generic secret name for simplicity.
 func ProviderSecretName() string {
-	return "CODECANARY_PROVIDER_SECRET"
+	return credentials.EnvVar
 }

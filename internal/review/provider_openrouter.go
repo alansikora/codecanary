@@ -33,7 +33,7 @@ type openrouterProvider struct {
 }
 
 func newOpenRouterProvider(mc *ModelConfig, env []string) ModelProvider {
-	keyEnv := "OPENROUTER_API_KEY"
+	keyEnv := "CODECANARY_PROVIDER_SECRET"
 	if mc.APIKeyEnv != "" {
 		keyEnv = mc.APIKeyEnv
 	}

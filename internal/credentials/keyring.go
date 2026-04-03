@@ -6,65 +6,44 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 
 	"github.com/zalando/go-keyring"
 )
 
 const serviceName = "codecanary"
 
-// providerEnvVars maps API-key-based providers to their default env var names.
-var providerEnvVars = map[string]string{
-	"anthropic":  "ANTHROPIC_API_KEY",
-	"openai":     "OPENAI_API_KEY",
-	"openrouter": "OPENROUTER_API_KEY",
-}
+// EnvVar is the single environment variable used for all provider credentials.
+const EnvVar = "CODECANARY_PROVIDER_SECRET"
 
-// KnownProviderEnvVars returns the default env var names for each API-key-based provider.
-func KnownProviderEnvVars() []string {
-	vars := make([]string, 0, len(providerEnvVars))
-	for _, v := range providerEnvVars {
-		vars = append(vars, v)
-	}
-	slices.Sort(vars)
-	return vars
-}
-
-// DefaultEnvVar returns the default environment variable name for a provider.
-// Returns "" for providers that don't use API keys (e.g. "claude").
-func DefaultEnvVar(provider string) string {
-	return providerEnvVars[provider]
-}
-
-// Store saves an API key. Tries the OS keychain first, falls back to
+// Store saves a credential. Tries the OS keychain first, falls back to
 // ~/.codecanary/credentials.json (mode 0600) if no keychain is available.
-func Store(envVarName, value string) error {
-	if err := keyring.Set(serviceName, envVarName, value); err == nil {
+func Store(value string) error {
+	if err := keyring.Set(serviceName, EnvVar, value); err == nil {
 		return nil
 	}
-	return fileStore(envVarName, value)
+	return fileStore(EnvVar, value)
 }
 
-// Retrieve fetches an API key. Tries the OS keychain first, falls back to
+// Retrieve fetches the stored credential. Tries the OS keychain first, falls back to
 // the credentials file. Returns the value and the storage location ("keychain"
 // or "credentials file").
-func Retrieve(envVarName string) (value string, source string, err error) {
-	if val, err := keyring.Get(serviceName, envVarName); err == nil {
+func Retrieve() (value string, source string, err error) {
+	if val, err := keyring.Get(serviceName, EnvVar); err == nil {
 		return val, "keychain", nil
 	}
-	val, err := fileRetrieve(envVarName)
+	val, err := fileRetrieve(EnvVar)
 	if err != nil {
 		return "", "", err
 	}
 	return val, "credentials file", nil
 }
 
-// Delete removes an API key from both the OS keychain and the credentials file.
-func Delete(envVarName string) error {
-	if err := keyring.Delete(serviceName, envVarName); err != nil && !errors.Is(err, keyring.ErrNotFound) {
+// Delete removes the stored credential from both the OS keychain and the credentials file.
+func Delete() error {
+	if err := keyring.Delete(serviceName, EnvVar); err != nil && !errors.Is(err, keyring.ErrNotFound) {
 		return fmt.Errorf("removing from keychain: %w", err)
 	}
-	return fileDelete(envVarName)
+	return fileDelete(EnvVar)
 }
 
 // --- file-based fallback (for systems without a keychain) ---
@@ -128,33 +107,33 @@ func writeCredentials(creds map[string]string) error {
 	return os.Rename(tmpPath, path)
 }
 
-func fileStore(envVarName, value string) error {
+func fileStore(key, value string) error {
 	creds, err := readCredentials()
 	if err != nil {
 		return err
 	}
-	creds[envVarName] = value
+	creds[key] = value
 	return writeCredentials(creds)
 }
 
-func fileRetrieve(envVarName string) (string, error) {
+func fileRetrieve(key string) (string, error) {
 	creds, err := readCredentials()
 	if err != nil {
 		return "", err
 	}
-	val, ok := creds[envVarName]
+	val, ok := creds[key]
 	if !ok {
-		return "", fmt.Errorf("key %s not found", envVarName)
+		return "", fmt.Errorf("key %s not found", key)
 	}
 	return val, nil
 }
 
-func fileDelete(envVarName string) error {
+func fileDelete(key string) error {
 	creds, err := readCredentials()
 	if err != nil {
 		return err
 	}
-	delete(creds, envVarName)
+	delete(creds, key)
 	if len(creds) == 0 {
 		path, err := credentialsPath()
 		if err != nil {

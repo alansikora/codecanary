@@ -39,10 +39,9 @@ func RunLocal() error {
 		fmt.Fprintf(os.Stderr, " valid!\n")
 
 		// Store credential (system keychain, or ~/.codecanary/credentials.json fallback).
-		envVar := ProviderEnvVar(provider)
-		if err := credentials.Store(envVar, apiKey); err != nil {
+		if err := credentials.Store(apiKey); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not store API key: %v\n", err)
-			fmt.Fprintf(os.Stderr, "Set %s as an environment variable instead.\n\n", envVar)
+			fmt.Fprintf(os.Stderr, "Set %s as an environment variable instead.\n\n", credentials.EnvVar)
 		} else {
 			fmt.Fprintf(os.Stderr, "API key stored securely.\n\n")
 		}

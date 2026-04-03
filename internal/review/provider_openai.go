@@ -56,7 +56,7 @@ func newOpenAIProvider(mc *ModelConfig, env []string) ModelProvider {
 	if mc.APIBase != "" {
 		apiBase = mc.APIBase
 	}
-	keyEnv := "OPENAI_API_KEY"
+	keyEnv := "CODECANARY_PROVIDER_SECRET"
 	if mc.APIKeyEnv != "" {
 		keyEnv = mc.APIKeyEnv
 	}

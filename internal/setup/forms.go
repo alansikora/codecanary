@@ -53,14 +53,13 @@ func InputAPIKey(provider string) (string, error) {
 	}
 
 	guidance := ProviderGuidance(provider)
-	envVar := ProviderEnvVar(provider)
 
 	var apiKey string
 	err := huh.NewForm(
 		huh.NewGroup(
 			huh.NewNote().
 				Title(fmt.Sprintf("%s API Key", strings.ToTitle(provider[:1])+provider[1:])).
-				Description(fmt.Sprintf("%s\nEnvironment variable: %s", guidance, envVar)),
+				Description(fmt.Sprintf("%s\nEnvironment variable: %s", guidance, ProviderEnvVar())),
 			huh.NewInput().
 				Title("API Key").
 				EchoMode(huh.EchoModePassword).

@@ -52,7 +52,7 @@ type anthropicProvider struct {
 }
 
 func newAnthropicProvider(mc *ModelConfig, env []string) ModelProvider {
-	keyEnv := "ANTHROPIC_API_KEY"
+	keyEnv := "CODECANARY_PROVIDER_SECRET"
 	if mc.APIKeyEnv != "" {
 		keyEnv = mc.APIKeyEnv
 	}

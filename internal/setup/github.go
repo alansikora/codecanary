@@ -114,8 +114,7 @@ func RunGitHub(canary bool) error {
 		apiKey = key
 
 		// Also store locally for `codecanary review` usage.
-		envVar := ProviderEnvVar(provider)
-		if err := credentials.Store(envVar, key); err != nil {
+		if err := credentials.Store(key); err != nil {
 			fmt.Fprintf(os.Stderr, "Note: could not store key locally: %v\n", err)
 		}
 	}

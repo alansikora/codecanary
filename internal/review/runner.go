@@ -26,11 +26,9 @@ type RunOptions struct {
 
 // allowedEnvPrefixes lists environment variable prefixes passed to the LLM subprocess.
 var allowedEnvPrefixes = []string{
-	"ANTHROPIC_",
+	"CODECANARY_",
 	"CLAUDE_",
 	"GITHUB_",
-	"OPENAI_",
-	"OPENROUTER_",
 }
 
 // allowedEnvKeys lists exact environment variable names passed to the Claude subprocess.
@@ -61,12 +59,10 @@ func resolveEnv() []string {
 			}
 		}
 	}
-	// Inject keychain credentials for known providers if not already in env.
-	for _, envVar := range credentials.KnownProviderEnvVars() {
-		if !present[envVar] {
-			if val, _, err := credentials.Retrieve(envVar); err == nil && val != "" {
-				filtered = append(filtered, envVar+"="+val)
-			}
+	// Inject keychain credential if not already in env.
+	if !present[credentials.EnvVar] {
+		if val, _, err := credentials.Retrieve(); err == nil && val != "" {
+			filtered = append(filtered, credentials.EnvVar+"="+val)
 		}
 	}
 	return filtered
