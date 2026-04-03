@@ -73,10 +73,15 @@ func RunGitHub(canary bool) error {
 		}
 	}
 
-	// 5. Install CodeCanary GitHub App.
+	// 5. Install CodeCanary GitHub App (skip if already installed).
 	reader := bufio.NewReader(os.Stdin)
-	if err := auth.InstallCodeCanaryApp(repo, reader); err != nil {
-		return fmt.Errorf("installing CodeCanary app: %w", err)
+	fmt.Fprintf(os.Stderr, "Checking CodeCanary app installation...\n")
+	if auth.CheckCodeCanaryAppInstalled(repo) {
+		fmt.Fprintf(os.Stderr, "CodeCanary app is already installed on %s — skipping.\n\n", repo)
+	} else {
+		if err := auth.InstallCodeCanaryApp(repo, reader); err != nil {
+			return fmt.Errorf("installing CodeCanary app: %w", err)
+		}
 	}
 
 	// 6. Select provider.
