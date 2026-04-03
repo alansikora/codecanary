@@ -64,7 +64,7 @@ jobs:
             fi
           done
 
-      - uses: alansikora/codecanary@v1
+      - uses: alansikora/codecanary@canary
         if: env.skip != 'true'
         with:
           provider_secret: ${{ secrets.CODECANARY_PROVIDER_SECRET }}
