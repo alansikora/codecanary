@@ -2,10 +2,18 @@ package cli
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 
+	"github.com/alansikora/codecanary/internal/auth"
 	"github.com/alansikora/codecanary/internal/credentials"
+	"github.com/alansikora/codecanary/internal/review"
+	"github.com/alansikora/codecanary/internal/setup"
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var authCmd = &cobra.Command{
@@ -61,8 +69,225 @@ var authDeleteCmd = &cobra.Command{
 	},
 }
 
+// refreshTarget identifies which credential store to refresh.
+type refreshTarget struct {
+	label    string // "Local" or "GitHub Actions"
+	isRemote bool
+}
+
+var authRefreshCmd = &cobra.Command{
+	Use:   "refresh",
+	Short: "Check and update stored credentials",
+	Long:  "Validate the current API key and optionally replace it.",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if !term.IsTerminal(int(os.Stdin.Fd())) {
+			return fmt.Errorf("auth refresh requires an interactive terminal")
+		}
+
+		// Detect installs.
+		hasLocal := hasLocalInstall()
+		hasRemote, repo := hasRemoteInstall()
+
+		if !hasLocal && !hasRemote {
+			return fmt.Errorf("no CodeCanary installation found — run `codecanary setup` first")
+		}
+
+		// Determine target.
+		var target refreshTarget
+		if hasLocal && hasRemote {
+			var choice string
+			if err := huh.NewForm(
+				huh.NewGroup(
+					huh.NewSelect[string]().
+						Title("Both local and GitHub Actions installs detected. Which credential do you want to refresh?").
+						Options(
+							huh.NewOption("Local", "local"),
+							huh.NewOption(fmt.Sprintf("GitHub Actions (%s)", repo), "github"),
+						).
+						Value(&choice),
+				),
+			).Run(); err != nil {
+				return err
+			}
+			if choice == "github" {
+				target = refreshTarget{label: "GitHub Actions", isRemote: true}
+			} else {
+				target = refreshTarget{label: "Local", isRemote: false}
+			}
+		} else if hasRemote {
+			target = refreshTarget{label: "GitHub Actions", isRemote: true}
+		} else {
+			target = refreshTarget{label: "Local", isRemote: false}
+		}
+
+		fmt.Fprintf(os.Stderr, "Refreshing %s credentials\n\n", target.label)
+
+		// Load provider from config.
+		configPath, err := review.FindConfig()
+		if err != nil {
+			return fmt.Errorf("could not find config: %w", err)
+		}
+		cfg, err := review.LoadConfig(configPath)
+		if err != nil {
+			return fmt.Errorf("loading config: %w", err)
+		}
+
+		provider := cfg.Provider
+		if provider == "claude" {
+			fmt.Fprintf(os.Stderr, "Provider is Claude CLI — credentials are managed by the Claude CLI itself.\n")
+			fmt.Fprintf(os.Stderr, "Run `claude` to check your authentication status.\n")
+			return nil
+		}
+
+		fmt.Fprintf(os.Stderr, "Provider: %s\n", provider)
+
+		// Retrieve current credential.
+		currentKey, source, err := credentials.Retrieve()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "No stored credential found.\n")
+			return promptAndStoreNewKey(provider, target, repo)
+		}
+		fmt.Fprintf(os.Stderr, "Credential found in %s\n", source)
+
+		// Validate current credential.
+		fmt.Fprintf(os.Stderr, "Validating current API key...")
+		if err := setup.ValidateAPIKey(provider, currentKey); err != nil {
+			fmt.Fprintf(os.Stderr, " invalid (%v)\n\n", err)
+			fmt.Fprintf(os.Stderr, "The current credential does not work. You should replace it.\n\n")
+
+			var replace bool
+			if err := huh.NewForm(
+				huh.NewGroup(
+					huh.NewConfirm().
+						Title("Replace credential?").
+						Affirmative("Yes, enter new key").
+						Negative("No, keep invalid key").
+						Value(&replace),
+				),
+			).Run(); err != nil {
+				return err
+			}
+			if !replace {
+				fmt.Fprintf(os.Stderr, "Keeping existing credential.\n")
+				return nil
+			}
+			return promptAndStoreNewKey(provider, target, repo)
+		}
+
+		fmt.Fprintf(os.Stderr, " valid!\n\n")
+
+		var replace bool
+		if err := huh.NewForm(
+			huh.NewGroup(
+				huh.NewConfirm().
+					Title("Credential is valid. Replace it anyway?").
+					Affirmative("Yes, replace").
+					Negative("No, keep current").
+					Value(&replace),
+			),
+		).Run(); err != nil {
+			return err
+		}
+		if !replace {
+			fmt.Fprintf(os.Stderr, "Keeping existing credential.\n")
+			return nil
+		}
+		return promptAndStoreNewKey(provider, target, repo)
+	},
+}
+
+// promptAndStoreNewKey collects a new API key (or runs OAuth), validates it,
+// and stores it in the appropriate location (local keychain or GitHub secret).
+func promptAndStoreNewKey(provider string, target refreshTarget, repo string) error {
+	var apiKey string
+
+	if oauthCfg := review.GetOAuthConfig(provider); oauthCfg != nil {
+		token, err := auth.OAuthToken(oauthCfg.ClientID, oauthCfg.AuthorizeURL, oauthCfg.TokenURL, oauthCfg.Scope)
+		if err != nil {
+			return fmt.Errorf("OAuth authentication failed: %w", err)
+		}
+		apiKey = token
+	} else {
+		key, err := setup.InputAPIKey(provider)
+		if err != nil {
+			return err
+		}
+
+		fmt.Fprintf(os.Stderr, "Validating new API key...")
+		if err := setup.ValidateAPIKey(provider, key); err != nil {
+			fmt.Fprintf(os.Stderr, " failed\n")
+			return fmt.Errorf("API key validation failed: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, " valid!\n")
+		apiKey = key
+	}
+
+	// Store locally (always — even for remote targets, the local copy is kept in sync).
+	if err := credentials.Store(apiKey); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not store credential locally: %v\n", err)
+	} else {
+		fmt.Fprintf(os.Stderr, "Local credential updated.\n")
+	}
+
+	// For remote target, also update the GitHub secret.
+	if target.isRemote {
+		secretName := setup.ProviderSecretName()
+		fmt.Fprintf(os.Stderr, "Setting %s secret on %s...\n", secretName, repo)
+		if err := auth.SetGitHubSecret(repo, secretName, apiKey); err != nil {
+			return fmt.Errorf("setting GitHub secret: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "GitHub secret updated.\n")
+	}
+
+	fmt.Fprintf(os.Stderr, "\nCredential refreshed successfully.\n")
+	return nil
+}
+
+// hasLocalInstall checks if a .codecanary/config.yml exists (local or GitHub — it's always there).
+func hasLocalInstall() bool {
+	_, err := review.FindConfig()
+	return err == nil
+}
+
+// hasRemoteInstall checks if a .github/workflows/codecanary.yml exists and
+// detects the GitHub repo via gh CLI. Returns false if not a GitHub Actions setup.
+func hasRemoteInstall() (bool, string) {
+	// Check for workflow file by walking up to find the repo root (same dir as .codecanary/).
+	dir, err := os.Getwd()
+	if err != nil {
+		return false, ""
+	}
+	for {
+		workflowPath := filepath.Join(dir, ".github", "workflows", "codecanary.yml")
+		if _, err := os.Stat(workflowPath); err == nil {
+			// Found workflow — try to detect repo name.
+			repo := detectRepo()
+			if repo != "" {
+				return true, repo
+			}
+			return false, ""
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return false, ""
+}
+
+// detectRepo returns "owner/repo" via gh CLI, or empty string on failure.
+func detectRepo() string {
+	out, err := exec.Command("gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 func init() {
 	authCmd.AddCommand(authStatusCmd)
 	authCmd.AddCommand(authDeleteCmd)
+	authCmd.AddCommand(authRefreshCmd)
 	rootCmd.AddCommand(authCmd)
 }
