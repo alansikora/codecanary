@@ -27,6 +27,17 @@ func severityIcon(severity string) string {
 	}
 }
 
+// threadLabel returns a short label for logging: "path:line — severity — id".
+func threadLabel(t ReviewThread) string {
+	sev := severityFromThreadBody(t.Body)
+	id := FindingIDFromThread(t.Body)
+	icon := severityIcon(sev)
+	if id != "" {
+		return fmt.Sprintf("%s:%d \u2014 %s %s \u2014 %s", t.Path, t.Line, icon, sev, id)
+	}
+	return fmt.Sprintf("%s:%d", t.Path, t.Line)
+}
+
 // severityOrder returns a sort rank for a severity level (lower = more severe).
 func severityOrder(severity string) int {
 	switch strings.ToLower(severity) {

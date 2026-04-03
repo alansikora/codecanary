@@ -37,19 +37,6 @@ type ThreadResolution struct {
 	Error    error
 }
 
-// threadLabel returns a short label for logging: "path:line — severity — id".
-// It extracts the severity and finding ID from the thread body's header line
-// and formats them cleanly without raw markdown syntax.
-func threadLabel(t ReviewThread) string {
-	sev := severityFromThreadBody(t.Body)
-	id := FindingIDFromThread(t.Body)
-	icon := severityIcon(sev)
-	if id != "" {
-		return fmt.Sprintf("%s:%d \u2014 %s %s \u2014 %s", t.Path, t.Line, icon, sev, id)
-	}
-	return fmt.Sprintf("%s:%d", t.Path, t.Line)
-}
-
 // ExtractFileDiff extracts all diff hunks for a specific file from a unified diff.
 func ExtractFileDiff(fullDiff, filePath string) string {
 	lines := strings.Split(fullDiff, "\n")
