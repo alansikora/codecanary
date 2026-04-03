@@ -1,0 +1,109 @@
+name: 'CodeCanary PR Review'
+description: 'AI-powered PR review using Claude Code'
+branding:
+  icon: 'eye'
+  color: 'yellow'
+
+inputs:
+  provider_secret:
+    description: 'Provider API key or OAuth token (set as CODECANARY_PROVIDER_SECRET repo secret)'
+    required: false
+  config_path:
+    description: 'Path to .codecanary/config.yml'
+    required: false
+    default: '.codecanary/config.yml'
+  post_comment:
+    description: 'Post findings as PR comment'
+    required: false
+    default: 'true'
+  codecanary_version:
+    description: 'CodeCanary CLI version to install (e.g. "v0.1.0"). Defaults to latest release.'
+    required: false
+    default: 'latest'
+  reply_only:
+    description: 'Evaluate thread replies only, skip new findings'
+    required: false
+    default: 'false'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install CodeCanary
+      shell: bash
+      env:
+        CODECANARY_VERSION: ${{ inputs.codecanary_version }}
+      run: |
+        ARGS=()
+        if [ "$CODECANARY_VERSION" != "latest" ]; then
+          ARGS+=(--version "$CODECANARY_VERSION")
+        fi
+        curl -fsSL https://raw.githubusercontent.com/alansikora/codecanary/main/install.sh | sh -s -- "${ARGS[@]}"
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+    - name: Detect provider
+      id: detect-provider
+      shell: bash
+      run: |
+        CONFIG="${{ inputs.config_path }}"
+        if [ -f "$CONFIG" ]; then
+          PROVIDER=$(grep -E '^provider:' "$CONFIG" | awk '{print $2}')
+        fi
+        echo "provider=${PROVIDER:-anthropic}" >> $GITHUB_OUTPUT
+
+    - name: Install Claude Code
+      if: steps.detect-provider.outputs.provider == 'claude'
+      shell: bash
+      run: |
+        curl -fsSL https://claude.ai/install.sh | bash > /dev/null 2>&1
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+        claude --version
+
+    - name: Generate review token
+      id: review-token
+      shell: bash
+      run: |
+        # Request OIDC token from GitHub Actions (requires id-token: write permission).
+        if [ -z "$ACTIONS_ID_TOKEN_REQUEST_URL" ]; then
+          echo "::error::OIDC not available. Add 'id-token: write' permission to your workflow and install the CodeCanary Review app."
+          exit 1
+        fi
+        OIDC_TOKEN=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+          "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=codecanary" | jq -r '.value')
+        if [ -z "$OIDC_TOKEN" ] || [ "$OIDC_TOKEN" = "null" ]; then
+          echo "::error::Failed to obtain OIDC token."
+          exit 1
+        fi
+        # Exchange OIDC token for a GitHub App installation token.
+        RESPONSE=$(curl -sS -X POST https://oidc.codecanary.sh/token \
+          -H "Authorization: Bearer $OIDC_TOKEN" \
+          -H "Content-Type: application/json")
+        TOKEN=$(echo "$RESPONSE" | jq -r '.token // empty')
+        if [ -n "$TOKEN" ]; then
+          echo "token=$TOKEN" >> $GITHUB_OUTPUT
+        else
+          ERROR=$(echo "$RESPONSE" | jq -r '.error // "unknown error"')
+          echo "::error::Failed to get CodeCanary Review app token: $ERROR. Install the app at https://github.com/apps/codecanary-bot"
+          exit 1
+        fi
+
+    - name: Run review
+      shell: bash
+      env:
+        CODECANARY_PROVIDER_SECRET: ${{ inputs.provider_secret }}
+        GH_TOKEN: ${{ steps.review-token.outputs.token }}
+      run: |
+        PR_NUMBER="${{ github.event.pull_request.number }}"
+        REPO="${{ github.repository }}"
+        POST_FLAG=""
+        if [ "${{ inputs.post_comment }}" = "true" ]; then
+          POST_FLAG="--post"
+        fi
+        REPLY_ONLY_FLAG=""
+        if [ "${{ inputs.reply_only }}" = "true" ]; then
+          REPLY_ONLY_FLAG="--reply-only"
+        fi
+        codecanary review "$PR_NUMBER" \
+          --repo "$REPO" \
+          --config "${{ inputs.config_path }}" \
+          $POST_FLAG \
+          $REPLY_ONLY_FLAG

@@ -1,8 +1,20 @@
 package setup
 
 import (
+	_ "embed"
 	"fmt"
 	"regexp"
+	"strings"
+)
+
+//go:embed codecanary.yml
+var canonicalWorkflow string
+
+// Sentinel values in the canonical workflow that get replaced per-user.
+const (
+	sentinelActionRef   = "alansikora/codecanary@main"
+	sentinelSecretRef   = "secrets.CODECANARY_PROVIDER_SECRET"
+	sentinelVersionLine = "\n          codecanary_version: canary"
 )
 
 var validSecretName = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
@@ -19,65 +31,30 @@ func GenerateWorkflow(secretName, actionRef string) (string, error) {
 		return "", fmt.Errorf("invalid action ref %q — must match [a-zA-Z0-9._-]+", actionRef)
 	}
 
-	return fmt.Sprintf(`name: CodeCanary
-on:
-  pull_request_target:
-    types: [opened, reopened, synchronize, ready_for_review]
-  pull_request_review_comment:
-    types: [created]
+	result := canonicalWorkflow
 
-permissions:
-  contents: read
-  id-token: write
-  pull-requests: write
+	// Validate that all sentinel values exist in the embedded template.
+	for _, sentinel := range []string{sentinelActionRef, sentinelSecretRef, sentinelVersionLine} {
+		if !strings.Contains(result, sentinel) {
+			return "", fmt.Errorf("workflow template is missing expected sentinel %q — the embedded codecanary.yml may have been modified incorrectly", sentinel)
+		}
+	}
 
-jobs:
-  review:
-    if: >-
-      (
-        github.event_name == 'pull_request_target' &&
-        github.event.pull_request.draft == false
-      ) || (
-        github.event.comment.user.login != 'codecanary-bot[bot]' &&
-        github.event.comment.in_reply_to_id
-      )
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check if codecanary thread
-        id: check
-        if: github.event_name == 'pull_request_review_comment'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          BODY=$(gh api repos/${{ github.repository }}/pulls/comments/${{ github.event.comment.in_reply_to_id }} --jq '.body')
-          if echo "$BODY" | grep -qF "codecanary:finding" || echo "$BODY" | grep -qF "codecanary fix" || echo "$BODY" | grep -qF "clanopy fix"; then
-            echo "is_codecanary_thread=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "Skipping: not a codecanary thread"
-            exit 0
-          fi
+	// 1. Replace action ref.
+	// For canary, actionRef="canary" maps to @main (already the canonical value).
+	targetRef := actionRef
+	if actionRef == "canary" {
+		targetRef = "main"
+	}
+	result = strings.Replace(result, sentinelActionRef, "alansikora/codecanary@"+targetRef, 1)
 
-      - name: Skip if not codecanary thread
-        if: github.event_name == 'pull_request_review_comment' && steps.check.outputs.is_codecanary_thread != 'true'
-        run: |
-          echo "skip=true" >> "$GITHUB_ENV"
+	// 2. Replace secret name.
+	result = strings.Replace(result, sentinelSecretRef, "secrets."+secretName, 1)
 
-      - uses: actions/checkout@v6
-        if: env.skip != 'true'
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+	// 3. For non-canary (stable), remove the version line entirely.
+	if actionRef != "canary" {
+		result = strings.Replace(result, sentinelVersionLine, "", 1)
+	}
 
-      - uses: alansikora/codecanary-action@%s
-        if: env.skip != 'true'
-        with:
-          provider_secret: ${{ secrets.%s }}
-          config_path: .codecanary/config.yml
-          reply_only: ${{ github.event_name == 'pull_request_review_comment' }}
-
-      - name: Usage
-        if: always() && env.skip != 'true' && env.CODECANARY_USAGE != ''
-        env:
-          USAGE_DATA: ${{ env.CODECANARY_USAGE }}
-        run: codecanary review costs --data "$USAGE_DATA"
-`, actionRef, secretName), nil
+	return result, nil
 }

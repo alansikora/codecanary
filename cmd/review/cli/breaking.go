@@ -38,6 +38,7 @@ var breakingManifest = []breakingSurface{
 	{"cmd/review/cli/setup.go", "Setup Command", "`codecanary setup` behavior may have changed"},
 	{"cmd/review/cli/auth.go", "Auth Command", "`codecanary auth` behavior may have changed"},
 	{"internal/setup/workflow.go", "Workflow Template", "Users may need to re-run setup or manually update their workflow file"},
+	{"action.yml", "GitHub Action", "Action inputs, steps, or behavior changed — users may need to update their workflow"},
 	{"install.sh", "Install Script", "Install behavior changed — users re-installing will get different behavior"},
 	{"worker/src/index.ts", "Worker API", "Token exchange endpoint changed; action may behave differently"},
 	{"internal/review/formatter.go", "Comment Format", "PR comment markers or format changed; existing threads may not be detected"},
