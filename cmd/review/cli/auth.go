@@ -228,21 +228,17 @@ func promptAndStoreNewKey(provider string, target refreshTarget, repo string) er
 		return err
 	}
 
-	// For remote target, update the GitHub secret first so a failure
-	// doesn't leave local and remote out of sync.
-	// All providers share the same secret name (CODECANARY_PROVIDER_SECRET).
+	// Local and remote installs may use different providers, so only
+	// store the credential in the target the user selected.
 	if target.isRemote {
+		// All providers share the same secret name (CODECANARY_PROVIDER_SECRET).
 		secretName := setup.ProviderSecretName()
 		fmt.Fprintf(os.Stderr, "Setting %s secret on %s...\n", secretName, repo)
 		if err := auth.SetGitHubSecret(repo, secretName, apiKey); err != nil {
 			return fmt.Errorf("setting GitHub secret: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, "GitHub secret updated.\n")
-	}
-
-	// Store locally when the user targeted local, or when both installs
-	// exist (keeps the local keychain in sync with the remote secret).
-	if !target.isRemote || hasLocalInstall() {
+	} else {
 		if err := credentials.Store(apiKey); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not store credential locally: %v\n", err)
 		} else {

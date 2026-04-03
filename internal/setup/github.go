@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/alansikora/codecanary/internal/auth"
-	"github.com/alansikora/codecanary/internal/credentials"
 	"github.com/alansikora/codecanary/internal/review"
 	"github.com/charmbracelet/huh"
 	"gopkg.in/yaml.v3"
@@ -151,11 +150,6 @@ func RunGitHub(canary bool) error {
 			return fmt.Errorf("setting secret: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, "  Done!\n\n")
-
-		// Store locally for `codecanary review` usage (after remote secret succeeds).
-		if err := credentials.Store(apiKey); err != nil {
-			fmt.Fprintf(os.Stderr, "Note: could not store credential locally: %v\n", err)
-		}
 	} else {
 		fmt.Fprintf(os.Stderr, "Keeping existing %s secret.\n\n", secretName)
 	}
