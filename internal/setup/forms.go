@@ -126,7 +126,11 @@ func SelectTriageModel(provider string) (string, error) {
 // Returns true if the file was written, false if the user declined to overwrite.
 func writeFileWithConfirm(path string, data []byte) (bool, error) {
 	action := "Created"
-	if _, err := os.Stat(path); err == nil {
+	if existing, err := os.ReadFile(path); err == nil {
+		if bytes.Equal(existing, data) {
+			fmt.Fprintf(os.Stderr, "%s is up to date\n", path)
+			return true, nil
+		}
 		var overwrite bool
 		if err := huh.NewForm(
 			huh.NewGroup(
