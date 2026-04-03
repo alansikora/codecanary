@@ -20,11 +20,13 @@ import (
 )
 
 const (
-	repo         = "alansikora/codecanary"
-	apiBase      = "https://api.github.com"
-	cacheTTL     = 24 * time.Hour
-	checkTimeout = 3 * time.Second
-	cacheFile    = "version-check.json"
+	repo             = "alansikora/codecanary"
+	apiBase          = "https://api.github.com"
+	cacheTTL         = 24 * time.Hour
+	checkTimeout     = 3 * time.Second
+	upgradeTimeout   = 5 * time.Minute
+	maxDownloadBytes = 256 << 20 // 256 MB
+	cacheFile        = "version-check.json"
 )
 
 // Release represents a GitHub release.
@@ -159,8 +161,8 @@ func writeCache(latest string) error {
 	return os.WriteFile(filepath.Join(dir, cacheFile), data, 0o644)
 }
 
-// CheckCached returns the latest version using a 24h cache.
-// Returns empty strings on any error or for dev builds.
+// CheckCached returns the latest version from a 24h cache.
+// If the cache is stale, it refreshes asynchronously (result available next run).
 func CheckCached(currentVersion string) (latest string, hasUpdate bool) {
 	if currentVersion == "dev" || currentVersion == "" {
 		return "", false
@@ -171,16 +173,21 @@ func CheckCached(currentVersion string) (latest string, hasUpdate bool) {
 		return cache.LatestVersion, IsNewer(currentVersion, cache.LatestVersion)
 	}
 
-	// Cache stale or missing — quick check with short timeout.
-	ctx, cancel := context.WithTimeout(context.Background(), checkTimeout)
-	defer cancel()
+	// Cache stale or missing — refresh in the background so we never block.
+	// The result will be available on the next invocation.
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), checkTimeout)
+		defer cancel()
+		if rel, err := fetchRelease(ctx, "latest"); err == nil {
+			_ = writeCache(rel.TagName)
+		}
+	}()
 
-	rel, err := fetchRelease(ctx, "latest")
-	if err != nil {
-		return "", false
+	// If we had a stale cache, still report its value.
+	if cache != nil {
+		return cache.LatestVersion, IsNewer(currentVersion, cache.LatestVersion)
 	}
-	_ = writeCache(rel.TagName)
-	return rel.TagName, IsNewer(currentVersion, rel.TagName)
+	return "", false
 }
 
 // Upgrade downloads and installs the specified release (or latest).
@@ -190,9 +197,12 @@ func Upgrade(currentVersion, tag string, w io.Writer) error {
 		tag = "latest"
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), upgradeTimeout)
+	defer cancel()
+
 	_, _ = fmt.Fprintf(w, "Checking for updates...\n")
 
-	rel, err := fetchRelease(context.Background(), tag)
+	rel, err := fetchRelease(ctx, tag)
 	if err != nil {
 		return fmt.Errorf("fetching release: %w", err)
 	}
@@ -217,7 +227,7 @@ func Upgrade(currentVersion, tag string, w io.Writer) error {
 		return fmt.Errorf("no release asset found for %s/%s in %s", osName, arch, rel.TagName)
 	}
 
-	// Find checksums asset.
+	// Find checksums asset — required for integrity verification.
 	var checksumsAsset *Asset
 	for i := range rel.Assets {
 		if rel.Assets[i].Name == "checksums.txt" {
@@ -225,24 +235,24 @@ func Upgrade(currentVersion, tag string, w io.Writer) error {
 			break
 		}
 	}
+	if checksumsAsset == nil {
+		return fmt.Errorf("release %s is missing checksums.txt — refusing to install unverified binary", rel.TagName)
+	}
 
 	_, _ = fmt.Fprintf(w, "Downloading codecanary %s for %s/%s...\n", rel.TagName, osName, arch)
 
-	// Download archive.
-	archiveData, err := downloadAsset(asset.BrowserDownloadURL)
+	// Download archive and checksums.
+	archiveData, err := downloadAsset(ctx, asset.BrowserDownloadURL)
 	if err != nil {
 		return fmt.Errorf("downloading archive: %w", err)
 	}
 
-	// Verify checksum if available.
-	if checksumsAsset != nil {
-		checksumsData, err := downloadAsset(checksumsAsset.BrowserDownloadURL)
-		if err != nil {
-			return fmt.Errorf("downloading checksums: %w", err)
-		}
-		if err := verifyChecksum(archiveData, asset.Name, checksumsData); err != nil {
-			return fmt.Errorf("checksum verification failed: %w", err)
-		}
+	checksumsData, err := downloadAsset(ctx, checksumsAsset.BrowserDownloadURL)
+	if err != nil {
+		return fmt.Errorf("downloading checksums: %w", err)
+	}
+	if err := verifyChecksum(archiveData, asset.Name, checksumsData); err != nil {
+		return fmt.Errorf("checksum verification failed: %w", err)
 	}
 
 	// Extract binary from tarball.
@@ -279,8 +289,12 @@ func Upgrade(currentVersion, tag string, w io.Writer) error {
 	return nil
 }
 
-func downloadAsset(url string) ([]byte, error) {
-	resp, err := http.Get(url) //nolint:gosec // URL comes from GitHub API response
+func downloadAsset(ctx context.Context, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -289,7 +303,7 @@ func downloadAsset(url string) ([]byte, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("HTTP %d from %s", resp.StatusCode, url)
 	}
-	return io.ReadAll(resp.Body)
+	return io.ReadAll(io.LimitReader(resp.Body, maxDownloadBytes))
 }
 
 func verifyChecksum(archiveData []byte, assetName string, checksumsData []byte) error {
@@ -324,8 +338,16 @@ func extractBinary(archiveData []byte) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("reading tar: %w", err)
 		}
-		if filepath.Base(hdr.Name) == "codecanary" && hdr.Typeflag == tar.TypeReg {
-			return io.ReadAll(tr)
+		if hdr.Typeflag != tar.TypeReg {
+			continue
+		}
+		// Validate the entry name: must be a clean relative path with no traversal.
+		clean := filepath.Clean(hdr.Name)
+		if strings.HasPrefix(clean, "/") || strings.HasPrefix(clean, "..") {
+			continue
+		}
+		if filepath.Base(clean) == "codecanary" {
+			return io.ReadAll(io.LimitReader(tr, maxDownloadBytes))
 		}
 	}
 	return nil, fmt.Errorf("codecanary binary not found in archive")
