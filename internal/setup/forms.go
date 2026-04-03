@@ -2,6 +2,7 @@ package setup
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -158,6 +159,8 @@ func writeReviewPolicy(configPath string) (bool, error) {
 	if _, err := os.Stat(policyPath); err == nil {
 		fmt.Fprintf(os.Stderr, "Keeping existing %s\n", policyPath)
 		return false, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return false, fmt.Errorf("checking %s: %w", policyPath, err)
 	}
 
 	content := `# Review rules — custom checks CodeCanary enforces on every PR.
@@ -213,7 +216,14 @@ func writeConfig(provider, reviewModel, triageModel, configPath string) (bool, e
 	// Read existing file into a yaml.Node tree to preserve comments and
 	// user-added fields. If the file doesn't exist, start from scratch.
 	existing, err := os.ReadFile(configPath)
-	if err != nil || len(bytes.TrimSpace(existing)) == 0 {
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return false, fmt.Errorf("reading %s: %w", configPath, err)
+		}
+		// File doesn't exist — fall through to fresh write.
+	}
+
+	if len(bytes.TrimSpace(existing)) == 0 {
 		// No existing file (or empty) — write fresh.
 		config := fmt.Sprintf("version: 1\n\nprovider: %s\n", provider)
 		config += fmt.Sprintf("review_model: %s\n", reviewModel)
@@ -236,10 +246,43 @@ func writeConfig(provider, reviewModel, triageModel, configPath string) (bool, e
 	}
 
 	mapping := doc.Content[0]
-	setYAMLScalar(mapping, "version", "1", yaml.ScalarNode, "!!int")
-	setYAMLScalar(mapping, "provider", provider, yaml.ScalarNode, "")
-	setYAMLScalar(mapping, "review_model", reviewModel, yaml.ScalarNode, "")
-	setYAMLScalar(mapping, "triage_model", triageModel, yaml.ScalarNode, "")
+	updates := []struct{ key, value string }{
+		{"version", "1"},
+		{"provider", provider},
+		{"review_model", reviewModel},
+		{"triage_model", triageModel},
+	}
+
+	// Collect changes, log what's different, skip write if nothing changed.
+	var diffs []string
+	for _, u := range updates {
+		old := getYAMLScalar(mapping, u.key)
+		if old == u.value {
+			continue
+		}
+		if old == "" {
+			diffs = append(diffs, fmt.Sprintf("  %s: %s (new)", u.key, u.value))
+		} else {
+			diffs = append(diffs, fmt.Sprintf("  %s: %s → %s", u.key, old, u.value))
+		}
+	}
+
+	if len(diffs) == 0 {
+		fmt.Fprintf(os.Stderr, "%s is up to date\n", configPath)
+		return false, nil
+	}
+
+	fmt.Fprintf(os.Stderr, "Updating %s:\n", configPath)
+	for _, d := range diffs {
+		fmt.Fprintln(os.Stderr, d)
+	}
+	for _, u := range updates {
+		tag := "!!str"
+		if u.key == "version" {
+			tag = "!!int"
+		}
+		setYAMLScalar(mapping, u.key, u.value, yaml.ScalarNode, tag)
+	}
 
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
@@ -254,8 +297,18 @@ func writeConfig(provider, reviewModel, triageModel, configPath string) (bool, e
 	if err := os.WriteFile(configPath, buf.Bytes(), 0644); err != nil {
 		return false, fmt.Errorf("writing %s: %w", configPath, err)
 	}
-	fmt.Fprintf(os.Stderr, "Updated %s\n", configPath)
 	return true, nil
+}
+
+// getYAMLScalar returns the string value of a scalar key in a YAML mapping
+// node, or "" if the key is not found.
+func getYAMLScalar(mapping *yaml.Node, key string) string {
+	for i := 0; i < len(mapping.Content)-1; i += 2 {
+		if mapping.Content[i].Value == key {
+			return mapping.Content[i+1].Value
+		}
+	}
+	return ""
 }
 
 // setYAMLScalar sets a scalar key in a YAML mapping node, updating the value
