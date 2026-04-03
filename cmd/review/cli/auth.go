@@ -103,7 +103,7 @@ var authRefreshCmd = &cobra.Command{
 						Title("Both local and GitHub Actions installs detected. Which credential do you want to refresh?").
 						Options(
 							huh.NewOption("Local", "local"),
-							huh.NewOption(fmt.Sprintf("GitHub Actions (%s)", repo), "github"),
+							huh.NewOption(fmt.Sprintf("GitHub Actions (%s)", repoLabel(repo)), "github"),
 						).
 						Value(&choice),
 				),
@@ -228,14 +228,8 @@ func promptAndStoreNewKey(provider string, target refreshTarget, repo string) er
 		return err
 	}
 
-	// Always store locally (matches setup flows — keeps local keychain in sync).
-	if err := credentials.Store(apiKey); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not store credential locally: %v\n", err)
-	} else {
-		fmt.Fprintf(os.Stderr, "Local credential updated.\n")
-	}
-
-	// For remote target, also update the GitHub secret.
+	// For remote target, update the GitHub secret first so a failure
+	// doesn't leave local and remote out of sync.
 	// All providers share the same secret name (CODECANARY_PROVIDER_SECRET).
 	if target.isRemote {
 		secretName := setup.ProviderSecretName()
@@ -246,7 +240,15 @@ func promptAndStoreNewKey(provider string, target refreshTarget, repo string) er
 		fmt.Fprintf(os.Stderr, "GitHub secret updated.\n")
 	}
 
-	fmt.Println("\nCredential refreshed successfully.")
+	// Always store locally (matches setup flows — keeps local keychain in sync).
+	fmt.Fprintf(os.Stderr, "Storing credential locally...\n")
+	if err := credentials.Store(apiKey); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not store credential locally: %v\n", err)
+	} else {
+		fmt.Fprintf(os.Stderr, "Local credential updated.\n")
+	}
+
+	fmt.Fprintf(os.Stderr, "\nCredential refreshed successfully.\n")
 	return nil
 }
 
@@ -278,8 +280,17 @@ func hasRemoteInstall() (bool, string) {
 	return false, ""
 }
 
-// repoPattern matches GitHub "owner/repo" names.
-var repoPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*/[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
+// repoLabel returns the repo name for display, or a placeholder if unknown.
+func repoLabel(repo string) string {
+	if repo == "" {
+		return "repo unknown"
+	}
+	return repo
+}
+
+// repoPattern matches GitHub "owner/repo" names. Both segments must start and
+// end with an alphanumeric character (no trailing dots or hyphens).
+var repoPattern = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?/[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$`)
 
 // detectRepo returns "owner/repo" via gh CLI, or empty string on failure.
 // The result is validated against repoPattern to reject malformed output.
