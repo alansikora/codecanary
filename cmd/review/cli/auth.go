@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/alansikora/codecanary/internal/auth"
@@ -120,6 +121,29 @@ var authRefreshCmd = &cobra.Command{
 			target = refreshTarget{label: "Local", isRemote: false}
 		}
 
+		// If targeting GitHub but repo unknown, prompt for it.
+		if target.isRemote && repo == "" {
+			fmt.Fprintf(os.Stderr, "GitHub Actions workflow found, but could not detect the repository.\n")
+			fmt.Fprintf(os.Stderr, "Make sure the gh CLI is installed and authenticated, or enter the repo manually.\n\n")
+			var manualRepo string
+			if err := huh.NewForm(
+				huh.NewGroup(
+					huh.NewInput().
+						Title("Repository (owner/repo)").
+						Validate(func(s string) error {
+							if !repoPattern.MatchString(strings.TrimSpace(s)) {
+								return fmt.Errorf("expected format: owner/repo")
+							}
+							return nil
+						}).
+						Value(&manualRepo),
+				),
+			).Run(); err != nil {
+				return err
+			}
+			repo = strings.TrimSpace(manualRepo)
+		}
+
 		fmt.Fprintf(os.Stderr, "Refreshing %s credentials\n\n", target.label)
 
 		// Load provider from config.
@@ -168,7 +192,7 @@ var authRefreshCmd = &cobra.Command{
 				return err
 			}
 			if !replace {
-				fmt.Fprintf(os.Stderr, "Keeping existing credential.\n")
+				fmt.Println("Keeping existing credential.")
 				return nil
 			}
 			return promptAndStoreNewKey(provider, target, repo)
@@ -189,7 +213,7 @@ var authRefreshCmd = &cobra.Command{
 			return err
 		}
 		if !replace {
-			fmt.Fprintf(os.Stderr, "Keeping existing credential.\n")
+			fmt.Println("Keeping existing credential.")
 			return nil
 		}
 		return promptAndStoreNewKey(provider, target, repo)
@@ -206,6 +230,13 @@ func promptAndStoreNewKey(provider string, target refreshTarget, repo string) er
 		if err != nil {
 			return fmt.Errorf("OAuth authentication failed: %w", err)
 		}
+
+		fmt.Fprintf(os.Stderr, "Validating OAuth token...")
+		if err := setup.ValidateAPIKey(provider, token); err != nil {
+			fmt.Fprintf(os.Stderr, " failed\n")
+			return fmt.Errorf("OAuth token validation failed: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, " valid!\n")
 		apiKey = token
 	} else {
 		key, err := setup.InputAPIKey(provider)
@@ -222,14 +253,31 @@ func promptAndStoreNewKey(provider string, target refreshTarget, repo string) er
 		apiKey = key
 	}
 
-	// Store locally (always — even for remote targets, the local copy is kept in sync).
-	if err := credentials.Store(apiKey); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not store credential locally: %v\n", err)
-	} else {
-		fmt.Fprintf(os.Stderr, "Local credential updated.\n")
+	// For local targets, always store. For remote targets, ask first.
+	storeLocally := true
+	if target.isRemote {
+		if err := huh.NewForm(
+			huh.NewGroup(
+				huh.NewConfirm().
+					Title("Also store credential locally?").
+					Description("Keeps the local keychain in sync for `codecanary review` usage.").
+					Value(&storeLocally),
+			),
+		).Run(); err != nil {
+			return err
+		}
+	}
+
+	if storeLocally {
+		if err := credentials.Store(apiKey); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not store credential locally: %v\n", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "Local credential updated.\n")
+		}
 	}
 
 	// For remote target, also update the GitHub secret.
+	// All providers share the same secret name (CODECANARY_PROVIDER_SECRET).
 	if target.isRemote {
 		secretName := setup.ProviderSecretName()
 		fmt.Fprintf(os.Stderr, "Setting %s secret on %s...\n", secretName, repo)
@@ -239,7 +287,7 @@ func promptAndStoreNewKey(provider string, target refreshTarget, repo string) er
 		fmt.Fprintf(os.Stderr, "GitHub secret updated.\n")
 	}
 
-	fmt.Fprintf(os.Stderr, "\nCredential refreshed successfully.\n")
+	fmt.Println("\nCredential refreshed successfully.")
 	return nil
 }
 
@@ -250,9 +298,9 @@ func hasLocalInstall() bool {
 }
 
 // hasRemoteInstall checks if a .github/workflows/codecanary.yml exists and
-// detects the GitHub repo via gh CLI. Returns false if not a GitHub Actions setup.
+// detects the GitHub repo via gh CLI. Returns (true, "") if the workflow is
+// found but the repo cannot be detected (e.g. gh CLI not installed).
 func hasRemoteInstall() (bool, string) {
-	// Check for workflow file by walking up to find the repo root (same dir as .codecanary/).
 	dir, err := os.Getwd()
 	if err != nil {
 		return false, ""
@@ -260,12 +308,7 @@ func hasRemoteInstall() (bool, string) {
 	for {
 		workflowPath := filepath.Join(dir, ".github", "workflows", "codecanary.yml")
 		if _, err := os.Stat(workflowPath); err == nil {
-			// Found workflow — try to detect repo name.
-			repo := detectRepo()
-			if repo != "" {
-				return true, repo
-			}
-			return false, ""
+			return true, detectRepo()
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
@@ -276,13 +319,21 @@ func hasRemoteInstall() (bool, string) {
 	return false, ""
 }
 
+// repoPattern matches GitHub "owner/repo" names.
+var repoPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*/[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
+
 // detectRepo returns "owner/repo" via gh CLI, or empty string on failure.
+// The result is validated against repoPattern to reject malformed output.
 func detectRepo() string {
 	out, err := exec.Command("gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner").Output()
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(out))
+	name := strings.TrimSpace(string(out))
+	if !repoPattern.MatchString(name) {
+		return ""
+	}
+	return name
 }
 
 func init() {
