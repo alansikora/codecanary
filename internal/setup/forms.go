@@ -123,7 +123,7 @@ func SelectTriageModel(provider string) (string, error) {
 }
 
 // writeFileWithConfirm writes data to path, prompting to overwrite if it already exists.
-// Returns true if the file was written, false if the user declined to overwrite.
+// Returns true if the file is up to date or was successfully written, false if the user declined to overwrite.
 func writeFileWithConfirm(path string, data []byte) (bool, error) {
 	action := "Created"
 	if existing, err := os.ReadFile(path); err == nil {
