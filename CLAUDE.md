@@ -85,7 +85,7 @@ The review engine (`runner.go`) is provider- and platform-agnostic. It depends o
 Abstracts LLM invocations. The core engine calls `provider.Run(ctx, prompt, opts)` and gets back text + usage metadata. It never knows which LLM backend is being used.
 
 **Implementations**: `anthropic`, `openai`, `openrouter`, `claude` (CLI).
-**Selection**: factory registry in `provider.go` — `NewProvider(cfg, env)` returns the right implementation based on `cfg.Provider`.
+**Selection**: factory registry in `provider.go` — `NewProviderForRole(mc, env)` returns the right implementation based on `mc.Provider`.
 
 Adding a new LLM provider means: create `provider_<name>.go` and register a `ProviderFactory` (constructor, validation, pricing, default models) via `init()`.
 
@@ -103,7 +103,7 @@ There is a **single `Run()` function** — not separate paths for GitHub vs. loc
 
 1. Fetch PR data (or local diff)
 2. Load config, project docs, file contents
-3. Create provider via `NewProvider()` (factory, provider-agnostic)
+3. Create providers via `NewProviderForRole()` (factory, provider-agnostic)
 4. Load previous findings via `platform.LoadPreviousFindings()`
 5. If incremental: triage threads, evaluate via provider, handle resolutions
 6. Build and execute main review prompt

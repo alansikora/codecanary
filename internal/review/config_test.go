@@ -54,36 +54,15 @@ func TestEffectiveMaxTotalSize_Custom(t *testing.T) {
 	}
 }
 
-func TestEffectiveReviewModel_Anthropic(t *testing.T) {
-	cfg := &ReviewConfig{Provider: "anthropic"}
-	if got := cfg.EffectiveReviewModel(); got != "claude-sonnet-4-6" {
-		t.Errorf("EffectiveReviewModel() = %q, want %q", got, "claude-sonnet-4-6")
-	}
-}
-
-func TestEffectiveReviewModel_Claude(t *testing.T) {
-	cfg := &ReviewConfig{Provider: "claude"}
-	if got := cfg.EffectiveReviewModel(); got != "claude-sonnet-4-6" {
-		t.Errorf("EffectiveReviewModel() = %q, want %q", got, "claude-sonnet-4-6")
-	}
-}
-
-func TestEffectiveReviewModel_Custom(t *testing.T) {
-	cfg := &ReviewConfig{Provider: "anthropic", ReviewModel: "claude-opus-4-6"}
-	if got := cfg.EffectiveReviewModel(); got != "claude-opus-4-6" {
-		t.Errorf("EffectiveReviewModel() = %q, want %q", got, "claude-opus-4-6")
-	}
-}
-
-func TestEffectiveTriageModel(t *testing.T) {
-	cfg := &ReviewConfig{Provider: "anthropic", TriageModel: "claude-sonnet-4-20250514"}
-	if got := cfg.EffectiveTriageModel(); got != "claude-sonnet-4-20250514" {
-		t.Errorf("EffectiveTriageModel() = %q, want %q", got, "claude-sonnet-4-20250514")
+func TestValidate_ReviewModelRequired(t *testing.T) {
+	cfg := &ReviewConfig{Provider: "anthropic", TriageModel: "claude-haiku-4-5-20251001"}
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for missing review_model")
 	}
 }
 
 func TestValidate_TriageModelRequired(t *testing.T) {
-	cfg := &ReviewConfig{Provider: "anthropic"}
+	cfg := &ReviewConfig{Provider: "anthropic", ReviewModel: "claude-sonnet-4-6"}
 	if err := cfg.Validate(); err == nil {
 		t.Error("expected error for missing triage_model")
 	}
@@ -108,7 +87,7 @@ func TestValidate_InvalidModelForClaude(t *testing.T) {
 	if err := cfg.Validate(); err == nil {
 		t.Error("expected error for invalid review_model on claude provider")
 	}
-	cfg = &ReviewConfig{Provider: "claude", TriageModel: "invalid"}
+	cfg = &ReviewConfig{Provider: "claude", ReviewModel: "sonnet", TriageModel: "invalid"}
 	if err := cfg.Validate(); err == nil {
 		t.Error("expected error for invalid triage_model on claude provider")
 	}
@@ -131,16 +110,38 @@ func TestValidate_ValidCLIModels(t *testing.T) {
 }
 
 func TestValidate_ValidProviders(t *testing.T) {
-	triageModels := map[string]string{
-		"anthropic":  "claude-haiku-4-5-20251001",
-		"openai":     "gpt-5.4-mini",
-		"openrouter": "anthropic/claude-haiku-4-5-20251001",
-		"claude":     "haiku",
+	models := map[string][2]string{
+		"anthropic":  {"claude-sonnet-4-6", "claude-haiku-4-5-20251001"},
+		"openai":     {"gpt-5.4", "gpt-5.4-mini"},
+		"openrouter": {"anthropic/claude-sonnet-4-6", "anthropic/claude-haiku-4-5-20251001"},
+		"claude":     {"sonnet", "haiku"},
 	}
 	for _, p := range []string{"anthropic", "openai", "openrouter", "claude"} {
-		cfg := &ReviewConfig{Provider: p, TriageModel: triageModels[p]}
+		m := models[p]
+		cfg := &ReviewConfig{Provider: p, ReviewModel: m[0], TriageModel: m[1]}
 		if err := cfg.Validate(); err != nil {
 			t.Errorf("unexpected error for provider %q: %v", p, err)
 		}
+	}
+}
+
+func TestLoadConfig_BothModels(t *testing.T) {
+	// Verify the ModelConfig type exists and can be constructed from ReviewConfig fields.
+	cfg := &ReviewConfig{
+		Provider:    "anthropic",
+		ReviewModel: "claude-sonnet-4-6",
+		TriageModel: "claude-haiku-4-5-20251001",
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("unexpected validation error: %v", err)
+	}
+
+	mc := &ModelConfig{
+		Provider: cfg.Provider,
+		Model:    cfg.ReviewModel,
+		APIBase:  cfg.APIBase,
+	}
+	if mc.Model != "claude-sonnet-4-6" {
+		t.Errorf("ModelConfig.Model = %q, want %q", mc.Model, "claude-sonnet-4-6")
 	}
 }

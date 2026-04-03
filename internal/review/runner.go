@@ -255,7 +255,10 @@ func Run(opts RunOptions) error {
 		return err
 	}
 	cfg := rctx.Config
-	provider := NewProvider(cfg, rctx.Env)
+	reviewMC := &ModelConfig{Provider: cfg.Provider, Model: cfg.ReviewModel, APIBase: cfg.APIBase, APIKeyEnv: cfg.APIKeyEnv}
+	triageMC := &ModelConfig{Provider: cfg.Provider, Model: cfg.TriageModel, APIBase: cfg.APIBase, APIKeyEnv: cfg.APIKeyEnv}
+	reviewProvider := NewProviderForRole(reviewMC, rctx.Env)
+	triageProvider := NewProviderForRole(triageMC, rctx.Env)
 	tracker := rctx.Tracker
 
 	// 3. Load previous findings via the platform adapter.
@@ -275,7 +278,7 @@ func Run(opts RunOptions) error {
 
 	if isIncremental {
 		prompt, fixed, stillOpenFindings = runTriage(
-			pr, cfg, rctx.ProjectDocs, provider, tracker, platform,
+			pr, cfg, rctx.ProjectDocs, triageProvider, tracker, platform,
 			reviewThreads, previousSHA, startIndex, opts,
 		)
 	} else {
@@ -305,8 +308,7 @@ func Run(opts RunOptions) error {
 		}
 	}
 	if !opts.ReplyOnly && prompt != "" {
-		claudeOut, err := provider.Run(context.Background(), prompt, RunOpts{
-			Model:        cfg.EffectiveReviewModel(),
+		claudeOut, err := reviewProvider.Run(context.Background(), prompt, RunOpts{
 			MaxBudgetUSD: cfg.MaxBudgetUSD,
 			Timeout:      cfg.EffectiveTimeout(),
 		})
@@ -367,7 +369,7 @@ func Run(opts RunOptions) error {
 // Returns the prompt, fixed threads, and still-open findings.
 func runTriage(
 	pr *PRData, cfg *ReviewConfig, projectDocs map[string]string,
-	provider ModelProvider, tracker *UsageTracker, platform ReviewPlatform,
+	triageProvider ModelProvider, tracker *UsageTracker, platform ReviewPlatform,
 	reviewThreads []ReviewThread, previousSHA string, startIndex int,
 	opts RunOptions,
 ) (string, []fixedThread, []Finding) {
@@ -411,7 +413,7 @@ func runTriage(
 		LogTriage(triaged)
 		needsEval := countNonSkipped(triaged)
 		if needsEval > 0 {
-			resolutions := EvaluateThreadsParallel(triaged, provider, cfg, 3, cfg.EffectiveTriageModel(), tracker, cfg.MaxBudgetUSD)
+			resolutions := EvaluateThreadsParallel(triaged, triageProvider, cfg, 3, tracker, cfg.MaxBudgetUSD)
 			LogResolutions(triaged, resolutions)
 			fixed = toFixedThreads(resolutions)
 

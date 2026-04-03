@@ -35,13 +35,7 @@ func GitHubPermissionsGuidance() string {
 }
 
 // ProviderSecretName returns the GitHub secret name for a provider.
-// For API-key providers this is the same as the env var; for Claude it's the OAuth token.
+// All providers use a single generic secret name for simplicity.
 func ProviderSecretName(provider string) string {
-	if provider == "claude" {
-		return "CLAUDE_CODE_OAUTH_TOKEN"
-	}
-	if envVar := credentials.DefaultEnvVar(provider); envVar != "" {
-		return envVar
-	}
-	return provider + "_API_KEY"
+	return "CODECANARY_PROVIDER_SECRET"
 }

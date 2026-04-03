@@ -84,7 +84,7 @@ func RunGitHub(canary bool) error {
 	}
 
 	// 7. Provider-specific auth and secret setup.
-	var secretName string
+	secretName := ProviderSecretName(provider)
 	var apiKey string
 
 	if provider == "claude" {
@@ -96,7 +96,6 @@ func RunGitHub(canary bool) error {
 		if err != nil {
 			return fmt.Errorf("OAuth authentication failed: %w", err)
 		}
-		secretName = "CLAUDE_CODE_OAUTH_TOKEN"
 		apiKey = token
 	} else {
 		// Collect API key.
@@ -112,7 +111,6 @@ func RunGitHub(canary bool) error {
 		}
 		fmt.Fprintf(os.Stderr, " valid!\n")
 
-		secretName = ProviderSecretName(provider)
 		apiKey = key
 
 		// Also store locally for `codecanary review` usage.

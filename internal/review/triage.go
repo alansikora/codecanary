@@ -383,7 +383,7 @@ func evalContext(cfg *ReviewConfig, evalType string) string {
 // EvaluateThreadsParallel runs the LLM in parallel for threads that need evaluation.
 // When maxBudgetUSD > 0, new goroutines are not launched once the budget is exceeded
 // (already-running goroutines are allowed to finish).
-func EvaluateThreadsParallel(triaged []TriagedThread, provider ModelProvider, cfg *ReviewConfig, maxConcurrent int, model string, tracker *UsageTracker, maxBudgetUSD float64) []ThreadResolution {
+func EvaluateThreadsParallel(triaged []TriagedThread, provider ModelProvider, cfg *ReviewConfig, maxConcurrent int, tracker *UsageTracker, maxBudgetUSD float64) []ThreadResolution {
 	results := make([]ThreadResolution, len(triaged))
 
 	sem := make(chan struct{}, maxConcurrent)
@@ -406,7 +406,7 @@ func EvaluateThreadsParallel(triaged []TriagedThread, provider ModelProvider, cf
 			defer func() { <-sem }()
 
 			prompt := BuildPerThreadPrompt(tt, cfg)
-			result, err := provider.Run(context.Background(), prompt, RunOpts{Model: model})
+			result, err := provider.Run(context.Background(), prompt, RunOpts{})
 			if err != nil {
 				results[idx] = ThreadResolution{Index: tt.Index, Error: err}
 				return

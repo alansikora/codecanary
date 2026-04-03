@@ -33,9 +33,9 @@ func init() {
 	}
 }
 
-func validateOpenAI(cfg *ReviewConfig) error {
-	if cfg.APIBase != "" && !isValidURL(cfg.APIBase) {
-		return fmt.Errorf("invalid api_base %q: must be an HTTP(S) URL", cfg.APIBase)
+func validateOpenAI(mc *ModelConfig) error {
+	if mc.APIBase != "" && !isValidURL(mc.APIBase) {
+		return fmt.Errorf("invalid api_base %q: must be an HTTP(S) URL", mc.APIBase)
 	}
 	return nil
 }
@@ -45,21 +45,22 @@ func validateOpenAI(cfg *ReviewConfig) error {
 // Also works with any OpenAI-compatible endpoint by overriding api_base
 // (e.g. Azure OpenAI, Ollama, vLLM).
 type openaiProvider struct {
+	model   string
 	apiBase string
 	keyEnv  string
 	env     []string
 }
 
-func newOpenAIProvider(cfg *ReviewConfig, env []string) ModelProvider {
+func newOpenAIProvider(mc *ModelConfig, env []string) ModelProvider {
 	apiBase := "https://api.openai.com/v1"
-	if cfg.APIBase != "" {
-		apiBase = cfg.APIBase
+	if mc.APIBase != "" {
+		apiBase = mc.APIBase
 	}
 	keyEnv := "OPENAI_API_KEY"
-	if cfg.APIKeyEnv != "" {
-		keyEnv = cfg.APIKeyEnv
+	if mc.APIKeyEnv != "" {
+		keyEnv = mc.APIKeyEnv
 	}
-	return &openaiProvider{apiBase: apiBase, keyEnv: keyEnv, env: env}
+	return &openaiProvider{model: mc.Model, apiBase: apiBase, keyEnv: keyEnv, env: env}
 }
 
 func (p *openaiProvider) Run(ctx context.Context, prompt string, opts RunOpts) (*claudeResult, error) {
@@ -68,13 +69,13 @@ func (p *openaiProvider) Run(ctx context.Context, prompt string, opts RunOpts) (
 		return nil, fmt.Errorf("API key not found: set %s or run `codecanary setup local`", p.keyEnv)
 	}
 
-	chatResp, durationMS, err := doChat(ctx, p.apiBase, apiKey, opts.Model, prompt, opts.Timeout)
+	chatResp, durationMS, err := doChat(ctx, p.apiBase, apiKey, p.model, prompt, opts.Timeout)
 	if err != nil {
 		return nil, err
 	}
 
 	usage := CallUsage{
-		Model:      opts.Model,
+		Model:      p.model,
 		DurationMS: durationMS,
 	}
 	if chatResp.Usage != nil {

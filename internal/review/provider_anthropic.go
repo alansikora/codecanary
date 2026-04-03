@@ -36,8 +36,8 @@ func init() {
 	}
 }
 
-func validateAnthropic(cfg *ReviewConfig) error {
-	if cfg.APIBase != "" {
+func validateAnthropic(mc *ModelConfig) error {
+	if mc.APIBase != "" {
 		return fmt.Errorf("api_base is not supported by the anthropic provider")
 	}
 	return nil
@@ -46,16 +46,17 @@ func validateAnthropic(cfg *ReviewConfig) error {
 // anthropicProvider implements ModelProvider using the native Anthropic Messages API.
 // Supports prompt caching for significant cost savings on repeated calls.
 type anthropicProvider struct {
+	model  string   // model to use for every call
 	keyEnv string   // env var name holding the API key
 	env    []string // filtered environment
 }
 
-func newAnthropicProvider(cfg *ReviewConfig, env []string) ModelProvider {
+func newAnthropicProvider(mc *ModelConfig, env []string) ModelProvider {
 	keyEnv := "ANTHROPIC_API_KEY"
-	if cfg.APIKeyEnv != "" {
-		keyEnv = cfg.APIKeyEnv
+	if mc.APIKeyEnv != "" {
+		keyEnv = mc.APIKeyEnv
 	}
-	return &anthropicProvider{keyEnv: keyEnv, env: env}
+	return &anthropicProvider{model: mc.Model, keyEnv: keyEnv, env: env}
 }
 
 // anthropicRequest is the Anthropic /v1/messages request format.
@@ -119,7 +120,7 @@ func (p *anthropicProvider) Run(ctx context.Context, prompt string, opts RunOpts
 
 	// Place cache_control on the content block so the prompt is cached.
 	reqBody := anthropicRequest{
-		Model:     opts.Model,
+		Model:     p.model,
 		MaxTokens: 16384,
 		Messages: []anthropicMessage{
 			{

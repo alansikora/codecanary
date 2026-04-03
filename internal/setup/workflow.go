@@ -19,18 +19,6 @@ func GenerateWorkflow(secretName, actionRef string) (string, error) {
 		return "", fmt.Errorf("invalid action ref %q — must match [a-zA-Z0-9._-]+", actionRef)
 	}
 
-	// Build the action step's with: inputs and optional step-level env: block.
-	var withAuth, stepEnv string
-	switch secretName {
-	case "ANTHROPIC_API_KEY":
-		withAuth = "          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}"
-	case "CLAUDE_CODE_OAUTH_TOKEN":
-		withAuth = "          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}"
-	default:
-		// Custom provider — pass the key as a step-level env var.
-		stepEnv = fmt.Sprintf("\n        env:\n          %s: ${{ secrets.%s }}", secretName, secretName)
-	}
-
 	return fmt.Sprintf(`name: CodeCanary
 on:
   pull_request_target:
@@ -82,14 +70,14 @@ jobs:
       - uses: alansikora/codecanary-action@%s
         if: env.skip != 'true'
         with:
-%s
+          provider_secret: ${{ secrets.%s }}
           config_path: .codecanary/config.yml
-          reply_only: ${{ github.event_name == 'pull_request_review_comment' }}%s
+          reply_only: ${{ github.event_name == 'pull_request_review_comment' }}
 
       - name: Usage
         if: always() && env.skip != 'true' && env.CODECANARY_USAGE != ''
         env:
           USAGE_DATA: ${{ env.CODECANARY_USAGE }}
         run: codecanary review costs --data "$USAGE_DATA"
-`, actionRef, withAuth, stepEnv), nil
+`, actionRef, secretName), nil
 }

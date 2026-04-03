@@ -24,7 +24,7 @@ type ReviewConfig struct {
 	MaxTotalSize int               `yaml:"max_total_size"` // total file content limit in bytes (default 500KB)
 	MaxBudgetUSD float64           `yaml:"max_budget_usd"`  // per-invocation spending limit in USD (default 0 = unlimited)
 	TimeoutMins  int               `yaml:"timeout_minutes"` // per-invocation timeout in minutes (default 5)
-	ReviewModel  string            `yaml:"review_model"`    // model for main review (default: sonnet)
+	ReviewModel  string            `yaml:"review_model"`    // model for main review (required)
 	TriageModel  string            `yaml:"triage_model"`    // model for thread re-evaluation (required)
 	Provider     string            `yaml:"provider"`        // "anthropic", "openai", "openrouter", or "claude"
 	APIBase      string            `yaml:"api_base"`        // override base URL (openai provider only)
@@ -32,30 +32,14 @@ type ReviewConfig struct {
 	Evaluation   *EvaluationConfig `yaml:"evaluation"`
 }
 
-// EffectiveReviewModel returns the configured review model.
-// Each provider has its own default when review_model is not set.
-// Panics on nil config or unknown provider — both should be caught by Validate().
-func (c *ReviewConfig) EffectiveReviewModel() string {
-	if c == nil {
-		panic("EffectiveReviewModel called with nil config")
-	}
-	if c.ReviewModel != "" {
-		return c.ReviewModel
-	}
-	pf, ok := providers[c.Provider]
-	if !ok {
-		panic(fmt.Sprintf("unknown provider %q (should have been caught by config validation)", c.Provider))
-	}
-	return pf.SuggestedReviewModel
-}
-
-// EffectiveTriageModel returns the configured triage model.
-// triage_model is required — Validate() rejects configs without it.
-func (c *ReviewConfig) EffectiveTriageModel() string {
-	if c == nil {
-		panic("EffectiveTriageModel called with nil config")
-	}
-	return c.TriageModel
+// ModelConfig holds the provider and model settings needed to construct a
+// single ModelProvider instance. Used internally to build review and triage
+// providers from the flat ReviewConfig fields.
+type ModelConfig struct {
+	Provider  string
+	Model     string
+	APIBase   string
+	APIKeyEnv string
 }
 
 // EvaluationConfig holds per-evaluation-type settings for re-evaluation prompts.
@@ -126,6 +110,9 @@ func (c *ReviewConfig) Validate() error {
 	if c.Provider == "" {
 		return fmt.Errorf("provider is required (valid: %s)", strings.Join(providerNames(), ", "))
 	}
+	if c.ReviewModel == "" {
+		return fmt.Errorf("review_model is required — set the model used for code review")
+	}
 	if c.TriageModel == "" {
 		return fmt.Errorf("triage_model is required — set the model used for thread re-evaluation")
 	}
@@ -134,7 +121,13 @@ func (c *ReviewConfig) Validate() error {
 		return fmt.Errorf("invalid provider %q (valid: %s)", c.Provider, strings.Join(providerNames(), ", "))
 	}
 	if pf.Validate != nil {
-		if err := pf.Validate(c); err != nil {
+		mc := &ModelConfig{Provider: c.Provider, Model: c.ReviewModel, APIBase: c.APIBase, APIKeyEnv: c.APIKeyEnv}
+		if err := pf.Validate(mc); err != nil {
+			return err
+		}
+		// Also validate the triage model.
+		triageMC := &ModelConfig{Provider: c.Provider, Model: c.TriageModel, APIBase: c.APIBase, APIKeyEnv: c.APIKeyEnv}
+		if err := pf.Validate(triageMC); err != nil {
 			return err
 		}
 	}
