@@ -64,8 +64,13 @@ func RunLocal() error {
 		return err
 	}
 
+	// 5. Generate placeholder review policy.
+	if err := writeReviewPolicy(configPath); err != nil {
+		return err
+	}
+
 	fmt.Fprintf(os.Stderr, "\nSetup complete! Run `codecanary review` to review your current changes.\n")
-	fmt.Fprintf(os.Stderr, "Add review rules and context in .codecanary/review.yml\n")
+	fmt.Fprintf(os.Stderr, "Customize review rules and context in .codecanary/review.yml\n")
 	return nil
 }
 

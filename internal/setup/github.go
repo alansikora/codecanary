@@ -185,7 +185,12 @@ func RunGitHub(canary bool) error {
 		return err
 	}
 
-	// 13. Create PR.
+	// 13. Generate placeholder review policy.
+	if err := writeReviewPolicy(configPath); err != nil {
+		return err
+	}
+
+	// 14. Create PR.
 	var filesToAdd []string
 	var bullets []string
 
@@ -195,6 +200,12 @@ func RunGitHub(canary bool) error {
 	if _, err := os.Stat(configPath); err == nil {
 		filesToAdd = append(filesToAdd, configPath)
 		bullets = append(bullets, "- Add `.codecanary/config.yml` review config")
+	}
+
+	policyPath := filepath.Join(".codecanary", "review.yml")
+	if _, err := os.Stat(policyPath); err == nil {
+		filesToAdd = append(filesToAdd, policyPath)
+		bullets = append(bullets, "- Add `.codecanary/review.yml` review policy placeholder")
 	}
 
 	fmt.Fprintf(os.Stderr, "\nCreating PR...\n")
@@ -225,7 +236,7 @@ func RunGitHub(canary bool) error {
 
 	fmt.Fprintf(os.Stderr, "  %s\n", strings.TrimSpace(string(prOut)))
 	fmt.Fprintf(os.Stderr, "\nDone! Merge the PR to enable automated reviews.\n")
-	fmt.Fprintf(os.Stderr, "Add review rules and context in .codecanary/review.yml\n")
+	fmt.Fprintf(os.Stderr, "Customize review rules and context in .codecanary/review.yml\n")
 
 	return nil
 }

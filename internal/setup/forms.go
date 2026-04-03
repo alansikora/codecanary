@@ -144,6 +144,41 @@ func writeFileWithConfirm(path string, data []byte) error {
 	return nil
 }
 
+func writeReviewPolicy(configPath string) error {
+	dir := filepath.Dir(configPath)
+	policyPath := filepath.Join(dir, "review.yml")
+
+	content := `# Review rules — custom checks CodeCanary enforces on every PR.
+# Each rule needs an id, description, and severity.
+# Severity: critical | bug | warning | suggestion | nitpick
+#
+# rules:
+#   - id: no-todo
+#     description: "Don't merge TODO comments — open an issue instead"
+#     severity: warning
+#   - id: api-auth
+#     description: "All new API endpoints must use the auth middleware"
+#     severity: critical
+#     paths: ["src/api/**"]
+
+# Context — free-form text that gives the reviewer background about
+# your project, stack, conventions, or anything it should keep in mind.
+#
+# context: |
+#   This is a Go backend with a React frontend.
+#   We use PostgreSQL and follow the repository pattern.
+
+# Ignore — glob patterns for files CodeCanary should skip entirely.
+#
+# ignore:
+#   - "vendor/**"
+#   - "**/*.generated.go"
+#   - "*.min.js"
+`
+
+	return writeFileWithConfirm(policyPath, []byte(content))
+}
+
 func writeConfig(provider, reviewModel, triageModel, configPath string) error {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		return fmt.Errorf("creating config directory: %w", err)
