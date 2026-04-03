@@ -175,8 +175,12 @@ func RunGitHub(canary bool) error {
 		return fmt.Errorf("creating workflow directory: %w", err)
 	}
 
-	if _, err := writeFileWithConfirm(workflowPath, []byte(workflow)); err != nil {
+	wroteWorkflow, err := writeFileWithConfirm(workflowPath, []byte(workflow))
+	if err != nil {
 		return err
+	}
+	if !wroteWorkflow {
+		return fmt.Errorf("setup cancelled — workflow file is required")
 	}
 
 	// 12. Generate config.
