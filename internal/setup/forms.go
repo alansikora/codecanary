@@ -272,10 +272,6 @@ func writeConfig(provider, reviewModel, triageModel, configPath string) (bool, e
 		return false, nil
 	}
 
-	fmt.Fprintf(os.Stderr, "Updating %s:\n", configPath)
-	for _, d := range diffs {
-		fmt.Fprintln(os.Stderr, d)
-	}
 	for _, u := range updates {
 		tag := "!!str"
 		if u.key == "version" {
@@ -296,6 +292,10 @@ func writeConfig(provider, reviewModel, triageModel, configPath string) (bool, e
 
 	if err := os.WriteFile(configPath, buf.Bytes(), 0644); err != nil {
 		return false, fmt.Errorf("writing %s: %w", configPath, err)
+	}
+	fmt.Fprintf(os.Stderr, "Updated %s:\n", configPath)
+	for _, d := range diffs {
+		fmt.Fprintln(os.Stderr, d)
 	}
 	return true, nil
 }
