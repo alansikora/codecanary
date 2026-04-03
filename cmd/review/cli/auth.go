@@ -146,8 +146,14 @@ var authRefreshCmd = &cobra.Command{
 
 		fmt.Fprintf(os.Stderr, "Refreshing %s credentials\n\n", target.label)
 
-		// Load provider from config.
-		configPath, err := review.FindConfig()
+		// Load the config for the selected target.
+		var configPath string
+		var err error
+		if target.isRemote {
+			configPath, err = review.FindRepoConfig()
+		} else {
+			configPath, err = review.LocalConfigPath()
+		}
 		if err != nil {
 			return fmt.Errorf("could not find config: %w", err)
 		}
@@ -250,9 +256,13 @@ func promptAndStoreNewKey(provider string, target refreshTarget, repo string) er
 	return nil
 }
 
-// hasLocalInstall checks if a .codecanary/config.yml exists (local or GitHub — it's always there).
+// hasLocalInstall checks if ~/.codecanary/config.yml exists.
 func hasLocalInstall() bool {
-	_, err := review.FindConfig()
+	localPath, err := review.LocalConfigPath()
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(localPath)
 	return err == nil
 }
 

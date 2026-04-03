@@ -59,11 +59,16 @@ func SaveLocalState(branch string, state *LocalState) error {
 	return nil
 }
 
-// stateFilePath returns the path to .codecanary/.state/<sanitized-branch>.json.
+// stateFilePath returns the path to ~/.codecanary/state/<sanitized-branch>.json.
 // Branch name slashes are replaced with dashes for filesystem safety.
 func stateFilePath(branch string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		// Best-effort fallback to repo-level path.
+		home = "."
+	}
 	safe := strings.ReplaceAll(branch, "/", "-")
-	return filepath.Join(".codecanary", ".state", safe+".json")
+	return filepath.Join(home, ".codecanary", "state", safe+".json")
 }
 
 // mergeFindings appends new findings to existing ones, deduplicating by

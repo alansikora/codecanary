@@ -522,7 +522,7 @@ func loadReviewConfig(configPath string) (*ReviewConfig, error) {
 			return cfg, nil
 		}
 		// No config found anywhere.
-		return nil, fmt.Errorf("no config file found — create .codecanary/config.yml (see https://github.com/alansikora/codecanary)")
+		return nil, fmt.Errorf("no config file found — run `codecanary setup` (see https://github.com/alansikora/codecanary)")
 	}
 
 	var pathErr *os.PathError

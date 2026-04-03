@@ -4,8 +4,5 @@ codecanary
 /setup
 dist/
 
-# CodeCanary
-.codecanary/.state/
-
 # Dependencies
 worker/node_modules/

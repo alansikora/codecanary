@@ -148,15 +148,55 @@ type ReviewPolicy struct {
 	Ignore  []string `yaml:"ignore"`
 }
 
-// loadReviewPolicy looks for review.yml in the same directory as configPath.
-// Returns nil (no error) if the file does not exist.
-func loadReviewPolicy(configPath string) (*ReviewPolicy, error) {
-	dir := filepath.Dir(configPath)
-	policyPath := filepath.Join(dir, "review.yml")
-	data, err := os.ReadFile(policyPath)
+// LocalConfigPath returns the path to the user-level local config at
+// ~/.codecanary/config.yml. This is separate from the repo-level config
+// (.codecanary/config.yml) which is used by GitHub Actions.
+func LocalConfigPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("could not determine home directory: %w", err)
+	}
+	return filepath.Join(home, ".codecanary", "config.yml"), nil
+}
+
+// findReviewPolicy looks for review.yml in the repo. It first checks
+// the directory of the given config path (covers the case where config
+// is in .codecanary/), then walks up from cwd looking for
+// .codecanary/review.yml (covers the case where config is in ~/.codecanary/).
+// Returns nil (no error) if no review.yml is found.
+func findReviewPolicy(configPath string) (*ReviewPolicy, error) {
+	// Try adjacent to the config file first.
+	adjacent := filepath.Join(filepath.Dir(configPath), "review.yml")
+	if policy, err := loadReviewPolicyFile(adjacent); policy != nil || err != nil {
+		return policy, err
+	}
+
+	// Walk up from cwd to find .codecanary/review.yml in the repo.
+	dir, err := os.Getwd()
+	if err != nil {
+		return nil, nil
+	}
+	for {
+		policyPath := filepath.Join(dir, ".codecanary", "review.yml")
+		if policyPath != adjacent { // avoid re-checking
+			if policy, err := loadReviewPolicyFile(policyPath); policy != nil || err != nil {
+				return policy, err
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return nil, nil
+}
+
+func loadReviewPolicyFile(path string) (*ReviewPolicy, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil // optional file
+			return nil, nil
 		}
 		return nil, fmt.Errorf("reading review policy: %w", err)
 	}
@@ -168,8 +208,8 @@ func loadReviewPolicy(configPath string) (*ReviewPolicy, error) {
 }
 
 // LoadConfig reads and parses a review config YAML file from the given path.
-// It also looks for an optional review.yml in the same directory; if present,
-// its rules, context, and ignore fields override those in config.yml.
+// It also discovers the project's review.yml by walking up from cwd; if
+// present, its rules, context, and ignore fields override config.yml.
 func LoadConfig(path string) (*ReviewConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -181,8 +221,8 @@ func LoadConfig(path string) (*ReviewConfig, error) {
 		return nil, fmt.Errorf("parsing config file: %w", err)
 	}
 
-	// Merge optional review.yml (rules, context, ignore).
-	policy, err := loadReviewPolicy(path)
+	// Merge optional review.yml (rules, context, ignore) from repo.
+	policy, err := findReviewPolicy(path)
 	if err != nil {
 		return nil, err
 	}
@@ -199,23 +239,20 @@ func LoadConfig(path string) (*ReviewConfig, error) {
 	return &cfg, nil
 }
 
-// FindConfig looks for review config starting from the current directory and
-// walking up the directory tree. It checks .codecanary/config.yml first, then
-// falls back to the legacy .codecanary.yml with a deprecation warning.
-func FindConfig() (string, error) {
+// FindRepoConfig walks up from the current directory looking for the
+// repo-level config at .codecanary/config.yml (or legacy .codecanary.yml).
+func FindRepoConfig() (string, error) {
 	dir, err := os.Getwd()
 	if err != nil {
 		return "", fmt.Errorf("getting working directory: %w", err)
 	}
 
 	for {
-		// Prefer new location: .codecanary/config.yml
 		newPath := filepath.Join(dir, ".codecanary", "config.yml")
 		if _, err := os.Stat(newPath); err == nil {
 			return newPath, nil
 		}
 
-		// Legacy fallback: .codecanary.yml
 		legacyPath := filepath.Join(dir, ".codecanary.yml")
 		if _, err := os.Stat(legacyPath); err == nil {
 			Stderrf(ansiYellow, "Warning: .codecanary.yml is deprecated — move to .codecanary/config.yml\n")
@@ -230,4 +267,20 @@ func FindConfig() (string, error) {
 	}
 
 	return "", fmt.Errorf("no .codecanary/config.yml found")
+}
+
+// FindConfig looks for the review config. When running locally (not in
+// GitHub Actions), it prefers ~/.codecanary/config.yml. Falls back to
+// the repo-level .codecanary/config.yml.
+func FindConfig() (string, error) {
+	// In GitHub Actions, always use the repo config.
+	if os.Getenv("GITHUB_ACTIONS") == "" {
+		if localPath, err := LocalConfigPath(); err == nil {
+			if _, err := os.Stat(localPath); err == nil {
+				return localPath, nil
+			}
+		}
+	}
+
+	return FindRepoConfig()
 }
