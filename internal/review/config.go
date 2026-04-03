@@ -269,18 +269,22 @@ func FindRepoConfig() (string, error) {
 	return "", fmt.Errorf("no .codecanary/config.yml found")
 }
 
-// FindConfig looks for the review config. When running locally (not in
-// GitHub Actions), it prefers ~/.codecanary/config.yml. Falls back to
-// the repo-level .codecanary/config.yml.
+// FindConfig returns the config path for the current environment.
+// In GitHub Actions it returns the repo-level .codecanary/config.yml.
+// Otherwise it returns ~/.codecanary/config.yml (local). Each environment
+// must have its own config — there is no fallback to avoid silently using
+// the wrong provider/credentials.
 func FindConfig() (string, error) {
-	// In GitHub Actions, always use the repo config.
-	if os.Getenv("GITHUB_ACTIONS") == "" {
-		if localPath, err := LocalConfigPath(); err == nil {
-			if _, err := os.Stat(localPath); err == nil {
-				return localPath, nil
-			}
-		}
+	if os.Getenv("GITHUB_ACTIONS") != "" {
+		return FindRepoConfig()
 	}
 
-	return FindRepoConfig()
+	localPath, err := LocalConfigPath()
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(localPath); err != nil {
+		return "", fmt.Errorf("no local config found at %s — run `codecanary setup local`", localPath)
+	}
+	return localPath, nil
 }
