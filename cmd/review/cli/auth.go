@@ -241,7 +241,6 @@ func promptAndStoreNewKey(provider string, target refreshTarget, repo string) er
 	}
 
 	// Always store locally (matches setup flows — keeps local keychain in sync).
-	fmt.Fprintf(os.Stderr, "Storing credential locally...\n")
 	if err := credentials.Store(apiKey); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not store credential locally: %v\n", err)
 	} else {
