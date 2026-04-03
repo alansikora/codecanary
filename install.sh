@@ -94,6 +94,13 @@ mkdir -p "${INSTALL_DIR}"
 cp "${TMPDIR}/codecanary" "${INSTALL_DIR}/codecanary"
 chmod +x "${INSTALL_DIR}/codecanary"
 
+# macOS: ad-hoc re-sign so Gatekeeper/AppleSystemPolicy allows execution.
+# Binaries cross-compiled on Linux carry a linker-signed signature that macOS
+# rejects ("load code signature error 2"). Local ad-hoc signing fixes this.
+if [ "$(uname -s)" = "Darwin" ] && command -v codesign >/dev/null 2>&1; then
+  codesign --force --sign - "${INSTALL_DIR}/codecanary" 2>/dev/null || true
+fi
+
 echo ""
 echo "codecanary ${VERSION} installed to ${INSTALL_DIR}/codecanary"
 
