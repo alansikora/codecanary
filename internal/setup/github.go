@@ -175,18 +175,20 @@ func RunGitHub(canary bool) error {
 		return fmt.Errorf("creating workflow directory: %w", err)
 	}
 
-	if err := writeFileWithConfirm(workflowPath, []byte(workflow)); err != nil {
+	if _, err := writeFileWithConfirm(workflowPath, []byte(workflow)); err != nil {
 		return err
 	}
 
 	// 12. Generate config.
 	configPath := filepath.Join(".codecanary", "config.yml")
-	if err := writeConfig(provider, reviewModel, triageModel, configPath); err != nil {
+	wroteConfig, err := writeConfig(provider, reviewModel, triageModel, configPath)
+	if err != nil {
 		return err
 	}
 
 	// 13. Generate placeholder review policy.
-	if err := writeReviewPolicy(configPath); err != nil {
+	wrotePolicy, err := writeReviewPolicy(configPath)
+	if err != nil {
 		return err
 	}
 
@@ -197,13 +199,13 @@ func RunGitHub(canary bool) error {
 	filesToAdd = append(filesToAdd, workflowPath)
 	bullets = append(bullets, "- Add CodeCanary automated PR review workflow")
 
-	if _, err := os.Stat(configPath); err == nil {
+	if wroteConfig {
 		filesToAdd = append(filesToAdd, configPath)
 		bullets = append(bullets, "- Add `.codecanary/config.yml` review config")
 	}
 
-	policyPath := filepath.Join(".codecanary", "review.yml")
-	if _, err := os.Stat(policyPath); err == nil {
+	if wrotePolicy {
+		policyPath := filepath.Join(".codecanary", "review.yml")
 		filesToAdd = append(filesToAdd, policyPath)
 		bullets = append(bullets, "- Add `.codecanary/review.yml` review policy placeholder")
 	}

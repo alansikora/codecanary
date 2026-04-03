@@ -118,7 +118,8 @@ func SelectTriageModel(provider string) (string, error) {
 }
 
 // writeFileWithConfirm writes data to path, prompting to overwrite if it already exists.
-func writeFileWithConfirm(path string, data []byte) error {
+// Returns true if the file was written, false if the user declined to overwrite.
+func writeFileWithConfirm(path string, data []byte) (bool, error) {
 	action := "Created"
 	if _, err := os.Stat(path); err == nil {
 		var overwrite bool
@@ -129,23 +130,26 @@ func writeFileWithConfirm(path string, data []byte) error {
 					Value(&overwrite),
 			),
 		).Run(); err != nil {
-			return err
+			return false, err
 		}
 		if !overwrite {
 			fmt.Fprintf(os.Stderr, "Keeping existing %s\n", path)
-			return nil
+			return false, nil
 		}
 		action = "Updated"
 	}
 	if err := os.WriteFile(path, data, 0644); err != nil {
-		return fmt.Errorf("writing %s: %w", path, err)
+		return false, fmt.Errorf("writing %s: %w", path, err)
 	}
 	fmt.Fprintf(os.Stderr, "%s %s\n", action, path)
-	return nil
+	return true, nil
 }
 
-func writeReviewPolicy(configPath string) error {
+func writeReviewPolicy(configPath string) (bool, error) {
 	dir := filepath.Dir(configPath)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return false, fmt.Errorf("creating config directory: %w", err)
+	}
 	policyPath := filepath.Join(dir, "review.yml")
 
 	content := `# Review rules — custom checks CodeCanary enforces on every PR.
@@ -179,19 +183,19 @@ func writeReviewPolicy(configPath string) error {
 	return writeFileWithConfirm(policyPath, []byte(content))
 }
 
-func writeConfig(provider, reviewModel, triageModel, configPath string) error {
+func writeConfig(provider, reviewModel, triageModel, configPath string) (bool, error) {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
-		return fmt.Errorf("creating config directory: %w", err)
+		return false, fmt.Errorf("creating config directory: %w", err)
 	}
 
 	if provider == "" {
-		return fmt.Errorf("provider is required")
+		return false, fmt.Errorf("provider is required")
 	}
 	if reviewModel == "" {
-		return fmt.Errorf("review_model is required")
+		return false, fmt.Errorf("review_model is required")
 	}
 	if triageModel == "" {
-		return fmt.Errorf("triage_model is required")
+		return false, fmt.Errorf("triage_model is required")
 	}
 
 	config := fmt.Sprintf("version: 1\n\nprovider: %s\n", provider)

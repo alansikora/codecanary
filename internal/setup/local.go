@@ -60,12 +60,12 @@ func RunLocal() error {
 
 	// 4. Generate or write config.
 	configPath := filepath.Join(".codecanary", "config.yml")
-	if err := writeConfig(provider, reviewModel, triageModel, configPath); err != nil {
+	if _, err := writeConfig(provider, reviewModel, triageModel, configPath); err != nil {
 		return err
 	}
 
 	// 5. Generate placeholder review policy.
-	if err := writeReviewPolicy(configPath); err != nil {
+	if _, err := writeReviewPolicy(configPath); err != nil {
 		return err
 	}
 
@@ -73,4 +73,3 @@ func RunLocal() error {
 	fmt.Fprintf(os.Stderr, "Customize review rules and context in .codecanary/review.yml\n")
 	return nil
 }
-
