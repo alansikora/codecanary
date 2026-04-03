@@ -161,8 +161,8 @@ func writeCache(latest string) error {
 	return os.WriteFile(filepath.Join(dir, cacheFile), data, 0o644)
 }
 
-// CheckCached returns the latest version from a 24h cache.
-// If the cache is stale, it refreshes asynchronously (result available next run).
+// CheckCached returns the latest version using a 24h cache.
+// On cache miss, a synchronous check with a short timeout (3s) is performed.
 func CheckCached(currentVersion string) (latest string, hasUpdate bool) {
 	if currentVersion == "dev" || currentVersion == "" {
 		return "", false
@@ -173,21 +173,16 @@ func CheckCached(currentVersion string) (latest string, hasUpdate bool) {
 		return cache.LatestVersion, IsNewer(currentVersion, cache.LatestVersion)
 	}
 
-	// Cache stale or missing — refresh in the background so we never block.
-	// The result will be available on the next invocation.
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), checkTimeout)
-		defer cancel()
-		if rel, err := fetchRelease(ctx, "latest"); err == nil {
-			_ = writeCache(rel.TagName)
-		}
-	}()
+	// Cache stale or missing — synchronous check with short timeout.
+	ctx, cancel := context.WithTimeout(context.Background(), checkTimeout)
+	defer cancel()
 
-	// If we had a stale cache, still report its value.
-	if cache != nil {
-		return cache.LatestVersion, IsNewer(currentVersion, cache.LatestVersion)
+	rel, err := fetchRelease(ctx, "latest")
+	if err != nil {
+		return "", false
 	}
-	return "", false
+	_ = writeCache(rel.TagName)
+	return rel.TagName, IsNewer(currentVersion, rel.TagName)
 }
 
 // Upgrade downloads and installs the specified release (or latest).
@@ -197,12 +192,12 @@ func Upgrade(currentVersion, tag string, w io.Writer) error {
 		tag = "latest"
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), upgradeTimeout)
-	defer cancel()
-
 	_, _ = fmt.Fprintf(w, "Checking for updates...\n")
 
-	rel, err := fetchRelease(ctx, tag)
+	apiCtx, apiCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer apiCancel()
+
+	rel, err := fetchRelease(apiCtx, tag)
 	if err != nil {
 		return fmt.Errorf("fetching release: %w", err)
 	}
@@ -241,13 +236,20 @@ func Upgrade(currentVersion, tag string, w io.Writer) error {
 
 	_, _ = fmt.Fprintf(w, "Downloading codecanary %s for %s/%s...\n", rel.TagName, osName, arch)
 
-	// Download archive and checksums.
-	archiveData, err := downloadAsset(ctx, asset.BrowserDownloadURL)
+	// Each download gets its own timeout so a slow archive download
+	// cannot starve the checksums fetch.
+	dlCtx, dlCancel := context.WithTimeout(context.Background(), upgradeTimeout)
+	defer dlCancel()
+
+	archiveData, err := downloadAsset(dlCtx, asset.BrowserDownloadURL)
 	if err != nil {
 		return fmt.Errorf("downloading archive: %w", err)
 	}
 
-	checksumsData, err := downloadAsset(ctx, checksumsAsset.BrowserDownloadURL)
+	csCtx, csCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer csCancel()
+
+	checksumsData, err := downloadAsset(csCtx, checksumsAsset.BrowserDownloadURL)
 	if err != nil {
 		return fmt.Errorf("downloading checksums: %w", err)
 	}

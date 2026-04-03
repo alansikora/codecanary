@@ -25,7 +25,7 @@ var rootCmd = &cobra.Command{
 		if os.Getenv("CI") != "" {
 			return
 		}
-		if cmd.CommandPath() == "codecanary upgrade" {
+		if cmd.Name() == "upgrade" {
 			return
 		}
 
