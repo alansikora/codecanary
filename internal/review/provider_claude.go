@@ -26,7 +26,7 @@ func init() {
 		New:      newClaudeCLIProvider,
 		Validate: validateClaude,
 		// No pricing entries — the Claude CLI reports cost directly.
-		SuggestedReviewModel: "claude-sonnet-4-6",
+		SuggestedReviewModel: "sonnet",
 		SuggestedTriageModel: "haiku",
 	}
 }

@@ -168,25 +168,25 @@ func triageModelOptions(provider string) []huh.Option[string] {
 	switch provider {
 	case "anthropic":
 		return []huh.Option[string]{
-			huh.NewOption("claude-haiku-4-5-20251001 (recommended)", "claude-haiku-4-5-20251001"),
+			huh.NewOption("claude-haiku-4-5-20251001", "claude-haiku-4-5-20251001"),
 			huh.NewOption("claude-sonnet-4-6", "claude-sonnet-4-6"),
 			huh.NewOption("claude-opus-4-6", "claude-opus-4-6"),
 		}
 	case "openai":
 		return []huh.Option[string]{
-			huh.NewOption("gpt-5.4-mini (recommended)", "gpt-5.4-mini"),
+			huh.NewOption("gpt-5.4-mini", "gpt-5.4-mini"),
 			huh.NewOption("gpt-5.4", "gpt-5.4"),
 		}
 	case "openrouter":
 		return []huh.Option[string]{
-			huh.NewOption("anthropic/claude-haiku-4-5-20251001 (recommended)", "anthropic/claude-haiku-4-5-20251001"),
+			huh.NewOption("anthropic/claude-haiku-4-5-20251001", "anthropic/claude-haiku-4-5-20251001"),
 			huh.NewOption("anthropic/claude-sonnet-4-6", "anthropic/claude-sonnet-4-6"),
 			huh.NewOption("openai/gpt-5.4-mini", "openai/gpt-5.4-mini"),
 			huh.NewOption("openai/gpt-5.4", "openai/gpt-5.4"),
 		}
 	case "claude":
 		return []huh.Option[string]{
-			huh.NewOption("haiku (recommended)", "haiku"),
+			huh.NewOption("haiku", "haiku"),
 			huh.NewOption("sonnet", "sonnet"),
 			huh.NewOption("opus", "opus"),
 		}
@@ -199,25 +199,25 @@ func modelOptions(provider string) []huh.Option[string] {
 	switch provider {
 	case "anthropic":
 		return []huh.Option[string]{
-			huh.NewOption("claude-sonnet-4-6 (recommended)", "claude-sonnet-4-6"),
+			huh.NewOption("claude-sonnet-4-6", "claude-sonnet-4-6"),
 			huh.NewOption("claude-opus-4-6", "claude-opus-4-6"),
 			huh.NewOption("claude-haiku-4-5-20251001", "claude-haiku-4-5-20251001"),
 		}
 	case "openai":
 		return []huh.Option[string]{
-			huh.NewOption("gpt-5.4 (recommended)", "gpt-5.4"),
+			huh.NewOption("gpt-5.4", "gpt-5.4"),
 			huh.NewOption("gpt-5.4-mini", "gpt-5.4-mini"),
 		}
 	case "openrouter":
 		return []huh.Option[string]{
-			huh.NewOption("anthropic/claude-sonnet-4-6 (recommended)", "anthropic/claude-sonnet-4-6"),
+			huh.NewOption("anthropic/claude-sonnet-4-6", "anthropic/claude-sonnet-4-6"),
 			huh.NewOption("anthropic/claude-opus-4-6", "anthropic/claude-opus-4-6"),
 			huh.NewOption("openai/gpt-5.4", "openai/gpt-5.4"),
 		}
 	case "claude":
 		return []huh.Option[string]{
-			huh.NewOption("claude-sonnet-4-6 (recommended)", "claude-sonnet-4-6"),
-			huh.NewOption("claude-opus-4-6", "claude-opus-4-6"),
+			huh.NewOption("sonnet", "sonnet"),
+			huh.NewOption("opus", "opus"),
 			huh.NewOption("haiku", "haiku"),
 		}
 	default:

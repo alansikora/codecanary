@@ -84,7 +84,7 @@ func RunGitHub(canary bool) error {
 	}
 
 	// 7. Provider-specific auth and secret setup.
-	secretName := ProviderSecretName(provider)
+	secretName := ProviderSecretName()
 	var apiKey string
 
 	if provider == "claude" {

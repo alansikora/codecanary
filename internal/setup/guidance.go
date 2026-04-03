@@ -34,8 +34,8 @@ func GitHubPermissionsGuidance() string {
   id-token: write        — OIDC token for secure authentication`
 }
 
-// ProviderSecretName returns the GitHub secret name for a provider.
+// ProviderSecretName returns the GitHub secret name for the provider API key.
 // All providers use a single generic secret name for simplicity.
-func ProviderSecretName(provider string) string {
+func ProviderSecretName() string {
 	return "CODECANARY_PROVIDER_SECRET"
 }
