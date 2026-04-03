@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/alansikora/codecanary/internal/selfupdate"
 	"github.com/spf13/cobra"
@@ -11,11 +12,7 @@ import (
 var Version = "dev"
 
 func DisplayVersion() string {
-	v := Version
-	if len(v) > 1 && v[0] == 'v' && (v[1] < '0' || v[1] > '9') {
-		v = v[1:]
-	}
-	return v
+	return strings.TrimPrefix(Version, "v")
 }
 
 var rootCmd = &cobra.Command{
