@@ -154,8 +154,8 @@ func formatBreakingComment(result breakingResult) string {
 	b.WriteString("### Affected Areas\n\n")
 
 	for _, cat := range result.Categories {
-		b.WriteString(fmt.Sprintf("- **%s** (`%s`)\n", cat.Name, strings.Join(cat.Files, "`, `")))
-		b.WriteString(fmt.Sprintf("  %s\n\n", cat.Impact))
+		fmt.Fprintf(&b, "- **%s** (`%s`)\n", cat.Name, strings.Join(cat.Files, "`, `"))
+		fmt.Fprintf(&b, "  %s\n\n", cat.Impact)
 	}
 
 	b.WriteString("### Checklist\n")

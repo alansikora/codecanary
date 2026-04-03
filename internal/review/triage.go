@@ -106,9 +106,10 @@ func ClassifyThreads(threads []ReviewThread, fullDiff, botLogin string) []Triage
 		}
 
 		var fileDiff string
-		if class == TriageCodeChanged || class == TriageCodeChangedReply {
+		switch class {
+		case TriageCodeChanged, TriageCodeChangedReply:
 			fileDiff = ExtractFileDiff(fullDiff, t.Path)
-		} else if class == TriageCrossFileChange {
+		case TriageCrossFileChange:
 			fileDiff = fullDiff
 		}
 

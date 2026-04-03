@@ -155,11 +155,11 @@ func (p *anthropicProvider) Run(ctx context.Context, prompt string, opts RunOpts
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("Anthropic API request timed out after %s", timeout)
+			return nil, fmt.Errorf("Anthropic API request timed out after %s", timeout) //nolint:staticcheck // proper noun
 		}
-		return nil, fmt.Errorf("Anthropic API request failed: %w", err)
+		return nil, fmt.Errorf("Anthropic API request failed: %w", err) //nolint:staticcheck // proper noun
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	durationMS := int(time.Since(start).Milliseconds())
 
 	body, err := io.ReadAll(resp.Body)
@@ -168,7 +168,7 @@ func (p *anthropicProvider) Run(ctx context.Context, prompt string, opts RunOpts
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Anthropic API returned status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("Anthropic API returned status %d: %s", resp.StatusCode, string(body)) //nolint:staticcheck // proper noun
 	}
 
 	var msgResp anthropicResponse
@@ -177,7 +177,7 @@ func (p *anthropicProvider) Run(ctx context.Context, prompt string, opts RunOpts
 	}
 
 	if msgResp.Error != nil {
-		return nil, fmt.Errorf("Anthropic API error: %s", msgResp.Error.Message)
+		return nil, fmt.Errorf("Anthropic API error: %s", msgResp.Error.Message) //nolint:staticcheck // proper noun
 	}
 
 	// Extract text from content blocks.
@@ -188,7 +188,7 @@ func (p *anthropicProvider) Run(ctx context.Context, prompt string, opts RunOpts
 		}
 	}
 	if len(textParts) == 0 {
-		return nil, fmt.Errorf("Anthropic API returned no text content")
+		return nil, fmt.Errorf("Anthropic API returned no text content") //nolint:staticcheck // proper noun
 	}
 
 	usage := CallUsage{

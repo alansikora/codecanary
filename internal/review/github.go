@@ -149,7 +149,7 @@ func parseDiffLines(diff string) diffLineMap {
 				if comma := strings.IndexAny(rest, ", "); comma >= 0 {
 					rest = rest[:comma]
 				}
-				fmt.Sscanf(rest, "%d", &lineNum)
+				_, _ = fmt.Sscanf(rest, "%d", &lineNum)
 			}
 			continue
 		}
@@ -651,7 +651,7 @@ func GetIncrementalDiff(baseSHA string) (string, error) {
 		return "", fmt.Errorf("invalid SHA format: %q", baseSHA)
 	}
 	// Ensure the base SHA is available locally (shallow clones may not have it).
-	exec.Command("git", "fetch", "--depth=1", "origin", baseSHA).Run()
+	_ = exec.Command("git", "fetch", "--depth=1", "origin", baseSHA).Run()
 	out, err := exec.Command("git", "diff", baseSHA+"..HEAD").Output()
 	if err != nil {
 		return "", fmt.Errorf("git diff: %w", err)
@@ -717,7 +717,7 @@ func ghAPIPOST(apiPath string, payloadJSON []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("creating temp dir: %w", err)
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	tmpFile, err := os.CreateTemp(dir, "payload.json")
 	if err != nil {
@@ -725,10 +725,10 @@ func ghAPIPOST(apiPath string, payloadJSON []byte) ([]byte, error) {
 	}
 
 	if _, err := tmpFile.Write(payloadJSON); err != nil {
-		tmpFile.Close()
+		_ = tmpFile.Close()
 		return nil, fmt.Errorf("writing payload to temp file: %w", err)
 	}
-	tmpFile.Close()
+	_ = tmpFile.Close()
 
 	cmd := exec.Command("gh", "api", apiPath, "--method", "POST", "--input", tmpFile.Name())
 	var stdout, stderr bytes.Buffer

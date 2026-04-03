@@ -116,9 +116,10 @@ func extractJSONArray(output string) (string, bool) {
 		if inString {
 			continue
 		}
-		if ch == '[' {
+		switch ch {
+		case '[':
 			depth++
-		} else if ch == ']' {
+		case ']':
 			depth--
 			if depth == 0 {
 				return output[start : i+1], true

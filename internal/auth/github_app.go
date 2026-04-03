@@ -17,7 +17,7 @@ func InstallCodeCanaryApp(repo string, reader *bufio.Reader) error {
 	}
 
 	fmt.Printf("Press Enter after installing the app...")
-	reader.ReadString('\n')
+	_, _ = reader.ReadString('\n')
 	fmt.Println()
 	return nil
 }

@@ -41,7 +41,7 @@ func InstallGitHubApp(repo string, reader *bufio.Reader) error {
 	}
 
 	fmt.Printf("Press Enter after installing the app...")
-	reader.ReadString('\n')
+	_, _ = reader.ReadString('\n')
 	fmt.Println()
 	return nil
 }
@@ -83,7 +83,7 @@ func OAuthToken() (string, error) {
 		}
 		if errParam := r.URL.Query().Get("error"); errParam != "" {
 			errCh <- fmt.Errorf("oauth error: %s — %s", errParam, r.URL.Query().Get("error_description"))
-			fmt.Fprintf(w, "<html><body><h2>Authentication failed</h2><p>%s</p><p>You can close this tab.</p></body></html>", r.URL.Query().Get("error_description"))
+			_, _ = fmt.Fprintf(w, "<html><body><h2>Authentication failed</h2><p>%s</p><p>You can close this tab.</p></body></html>", r.URL.Query().Get("error_description"))
 			return
 		}
 		code := r.URL.Query().Get("code")
@@ -93,12 +93,12 @@ func OAuthToken() (string, error) {
 			return
 		}
 		codeCh <- code
-		fmt.Fprintf(w, "<html><body><h2>Authenticated!</h2><p>You can close this tab and return to the terminal.</p></body></html>")
+		_, _ = fmt.Fprintf(w, "<html><body><h2>Authenticated!</h2><p>You can close this tab and return to the terminal.</p></body></html>")
 	})
 
 	server := &http.Server{Handler: mux}
-	go server.Serve(listener)
-	defer server.Shutdown(context.Background())
+	go func() { _ = server.Serve(listener) }()
+	defer func() { _ = server.Shutdown(context.Background()) }()
 
 	// 4. Build authorization URL and open browser.
 	params := url.Values{
@@ -174,7 +174,7 @@ func exchangeCode(code, verifier, redirectURI, state string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("token request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var raw map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
