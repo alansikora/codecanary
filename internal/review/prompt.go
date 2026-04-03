@@ -7,6 +7,14 @@ import (
 	"strings"
 )
 
+// escapePromptTag neutralises any XML-like tag matching tagName in content,
+// preventing adversarial repos from injecting fake prompt sections.
+func escapePromptTag(content, tagName string) string {
+	content = strings.ReplaceAll(content, "</"+tagName, "&lt;/"+tagName)
+	content = strings.ReplaceAll(content, "<"+tagName, "&lt;"+tagName)
+	return content
+}
+
 // BuildPrompt constructs the review prompt from PR data and review config.
 // startIndex is the number of existing findings across prior reviews so that
 // fix_ref numbering continues from where the last review left off.

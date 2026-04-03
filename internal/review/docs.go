@@ -6,6 +6,20 @@ import (
 	"strings"
 )
 
+// skipDirs are directories to ignore when scanning for project docs.
+var skipDirs = map[string]bool{
+	"node_modules": true, "vendor": true, ".git": true,
+	"dist": true, "build": true, ".next": true, ".nuxt": true,
+	"target": true, "__pycache__": true, ".venv": true, "venv": true,
+	".claude": true, ".codecanary": true,
+}
+
+// maxDocBytes caps the size of a single CLAUDE.md file included in the prompt.
+const maxDocBytes = 4096
+
+// maxTotalDocBytes caps the total size of all CLAUDE.md files combined.
+const maxTotalDocBytes = 12288
+
 // ReadProjectDocs reads CLAUDE.md files from known locations in the working directory.
 // It returns a map of path → content, respecting per-file and total size limits.
 func ReadProjectDocs() map[string]string {

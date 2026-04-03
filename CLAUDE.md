@@ -38,7 +38,6 @@ internal/
     github.go            # GitHub API calls (fetch threads, post reviews)
     local.go             # Local diff & git operations
     state.go             # Local state persistence
-    generate.go          # Config generation from repo analysis
     docs.go              # Project doc discovery
   credentials/     # Credential storage (keychain with file fallback)
     keyring.go     # Store/Retrieve/Delete — keychain first, ~/.codecanary/credentials.json fallback

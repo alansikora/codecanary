@@ -93,25 +93,3 @@ func collectLocalCredentials(provider string) error {
 	return nil
 }
 
-func writeConfig(reviewMC, triageMC review.ModelConfig, configPath string) error {
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
-		return fmt.Errorf("creating config directory: %w", err)
-	}
-
-	if reviewMC.Provider == "" || reviewMC.Model == "" {
-		return fmt.Errorf("review provider and model are required")
-	}
-	if triageMC.Provider == "" || triageMC.Model == "" {
-		return fmt.Errorf("triage provider and model are required")
-	}
-
-	config := "version: 1\nreview:\n"
-	config += fmt.Sprintf("  provider: %s\n", reviewMC.Provider)
-	config += fmt.Sprintf("  model: %s\n", reviewMC.Model)
-	config += "triage:\n"
-	config += fmt.Sprintf("  provider: %s\n", triageMC.Provider)
-	config += fmt.Sprintf("  model: %s\n", triageMC.Model)
-	config += "\n" + review.StarterRulesSection
-
-	return writeFileWithConfirm(configPath, []byte(config))
-}

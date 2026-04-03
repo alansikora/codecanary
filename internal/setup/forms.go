@@ -3,6 +3,7 @@ package setup
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/alansikora/codecanary/internal/review"
@@ -176,6 +177,29 @@ func writeFileWithConfirm(path string, data []byte) error {
 	}
 	fmt.Fprintf(os.Stderr, "%s %s\n", action, path)
 	return nil
+}
+
+// writeConfig generates and writes the .codecanary/config.yml file.
+func writeConfig(reviewMC, triageMC review.ModelConfig, configPath string) error {
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		return fmt.Errorf("creating config directory: %w", err)
+	}
+
+	if reviewMC.Provider == "" || reviewMC.Model == "" {
+		return fmt.Errorf("review provider and model are required")
+	}
+	if triageMC.Provider == "" || triageMC.Model == "" {
+		return fmt.Errorf("triage provider and model are required")
+	}
+
+	config := "version: 1\nreview:\n"
+	config += fmt.Sprintf("  provider: %s\n", reviewMC.Provider)
+	config += fmt.Sprintf("  model: %s\n", reviewMC.Model)
+	config += "triage:\n"
+	config += fmt.Sprintf("  provider: %s\n", triageMC.Provider)
+	config += fmt.Sprintf("  model: %s\n", triageMC.Model)
+
+	return writeFileWithConfirm(configPath, []byte(config))
 }
 
 func triageModelOptions(provider string) []huh.Option[string] {
