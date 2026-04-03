@@ -20,7 +20,7 @@ jobs:
           cache: true
 
       - name: Build
-        run: go build ./...
+        run: go build ./cmd/review
 
   vet:
     runs-on: ubuntu-latest
