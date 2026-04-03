@@ -30,6 +30,7 @@ func CheckCodeCanaryAppInstalled(repo string) bool {
 	}
 
 	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimRight(line, "\r")
 		parts := strings.SplitN(line, "\t", 2)
 		if len(parts) != 2 {
 			continue
@@ -66,7 +67,7 @@ func CheckCodeCanaryAppInstalled(repo string) bool {
 		}
 
 		for _, name := range strings.Split(strings.TrimSpace(string(repoOut)), "\n") {
-			if name == repo {
+			if strings.TrimRight(name, "\r") == repo {
 				return true
 			}
 		}
