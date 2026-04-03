@@ -254,6 +254,7 @@ func RunGitHub(canary bool) error {
 	fmt.Fprintf(os.Stderr, "  %s\n", strings.TrimSpace(string(prOut)))
 	fmt.Fprintf(os.Stderr, "\nDone! Merge the PR to enable automated reviews.\n")
 	fmt.Fprintf(os.Stderr, "Customize review rules and context in .codecanary/review.yml\n")
+	fmt.Fprintf(os.Stderr, "To also review locally, run: codecanary setup local\n")
 
 	return nil
 }

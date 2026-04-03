@@ -152,10 +152,11 @@ var authRefreshCmd = &cobra.Command{
 		if target.isRemote {
 			configPath, err = review.FindRepoConfig()
 		} else {
-			configPath, err = review.LocalConfigPath()
+			// FindConfig() checks existence and returns a helpful error.
+			configPath, err = review.FindConfig()
 		}
 		if err != nil {
-			return fmt.Errorf("could not find config: %w", err)
+			return err
 		}
 		cfg, err := review.LoadConfig(configPath)
 		if err != nil {
@@ -237,6 +238,9 @@ func promptAndStoreNewKey(provider string, target refreshTarget, repo string) er
 	// Local and remote installs may use different providers, so only
 	// store the credential in the target the user selected.
 	if target.isRemote {
+		if repo == "" {
+			return fmt.Errorf("cannot set GitHub secret: repository is unknown")
+		}
 		// All providers share the same secret name (CODECANARY_PROVIDER_SECRET).
 		secretName := setup.ProviderSecretName()
 		fmt.Fprintf(os.Stderr, "Setting %s secret on %s...\n", secretName, repo)
@@ -246,10 +250,9 @@ func promptAndStoreNewKey(provider string, target refreshTarget, repo string) er
 		fmt.Fprintf(os.Stderr, "GitHub secret updated.\n")
 	} else {
 		if err := credentials.Store(apiKey); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not store credential locally: %v\n", err)
-		} else {
-			fmt.Fprintf(os.Stderr, "Local credential updated.\n")
+			return fmt.Errorf("storing credential: %w", err)
 		}
+		fmt.Fprintf(os.Stderr, "Local credential updated.\n")
 	}
 
 	fmt.Fprintf(os.Stderr, "\nCredential refreshed successfully.\n")

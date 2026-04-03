@@ -4,5 +4,8 @@ codecanary
 /setup
 dist/
 
+# CodeCanary state (fallback path if ~/.codecanary is unavailable)
+.codecanary/state/
+
 # Dependencies
 worker/node_modules/
