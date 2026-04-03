@@ -12,9 +12,8 @@ var canonicalWorkflow string
 
 // Sentinel values in the canonical workflow that get replaced per-user.
 const (
-	sentinelActionRef   = "alansikora/codecanary@main"
-	sentinelSecretRef   = "secrets.CODECANARY_PROVIDER_SECRET"
-	sentinelVersionLine = "\n          codecanary_version: canary"
+	sentinelActionRef = "alansikora/codecanary@canary"
+	sentinelSecretRef = "secrets.CODECANARY_PROVIDER_SECRET"
 )
 
 var validSecretName = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
@@ -34,27 +33,17 @@ func GenerateWorkflow(secretName, actionRef string) (string, error) {
 	result := canonicalWorkflow
 
 	// Validate that all sentinel values exist in the embedded template.
-	for _, sentinel := range []string{sentinelActionRef, sentinelSecretRef, sentinelVersionLine} {
+	for _, sentinel := range []string{sentinelActionRef, sentinelSecretRef} {
 		if !strings.Contains(result, sentinel) {
 			return "", fmt.Errorf("workflow template is missing expected sentinel %q — the embedded codecanary.yml may have been modified incorrectly", sentinel)
 		}
 	}
 
 	// 1. Replace action ref.
-	// For canary, actionRef="canary" maps to @main (already the canonical value).
-	targetRef := actionRef
-	if actionRef == "canary" {
-		targetRef = "main"
-	}
-	result = strings.Replace(result, sentinelActionRef, "alansikora/codecanary@"+targetRef, 1)
+	result = strings.Replace(result, sentinelActionRef, "alansikora/codecanary@"+actionRef, 1)
 
 	// 2. Replace secret name.
 	result = strings.Replace(result, sentinelSecretRef, "secrets."+secretName, 1)
-
-	// 3. For non-canary (stable), remove the version line entirely.
-	if actionRef != "canary" {
-		result = strings.Replace(result, sentinelVersionLine, "", 1)
-	}
 
 	return result, nil
 }

@@ -63,11 +63,8 @@ func TestGenerateWorkflow_Stable(t *testing.T) {
 	if !strings.Contains(got, "alansikora/codecanary@v1") {
 		t.Error("expected action ref @v1")
 	}
-	if strings.Contains(got, "alansikora/codecanary@main") {
-		t.Error("should not contain @main for stable")
-	}
-	if strings.Contains(got, "codecanary_version") {
-		t.Error("should not contain codecanary_version line for stable")
+	if strings.Contains(got, "alansikora/codecanary@canary") {
+		t.Error("should not contain @canary for stable")
 	}
 }
 
