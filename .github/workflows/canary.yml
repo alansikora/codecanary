@@ -36,14 +36,23 @@ jobs:
       - name: Publish canary
         run: |
           COMMIT_SHA="$(git rev-parse HEAD)"
+
+          # Create a derived commit where action.yml defaults to the canary CLI,
+          # so `uses: alansikora/codecanary@canary` installs canary automatically.
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          sed -i "s/default: 'latest'/default: 'canary'/" action.yml
+          git add action.yml
+          git commit -m "canary: default to canary CLI version"
+
           git tag -f canary
           git push -f origin canary
 
           gh release delete canary --yes 2>/dev/null || true
           gh release create canary dist/*.tar.gz dist/checksums.txt \
-            --title "Canary ($(git rev-parse --short HEAD))" \
-            --notes "Latest build from \`main\` — commit $(git rev-parse --short HEAD). Not a stable release." \
+            --title "Canary ($(git rev-parse --short $COMMIT_SHA))" \
+            --notes "Latest build from \`main\` — commit $(git rev-parse --short $COMMIT_SHA). Not a stable release." \
             --prerelease \
-            --target "$COMMIT_SHA"
+            --target "$(git rev-parse HEAD)"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
