@@ -223,34 +223,9 @@ var authRefreshCmd = &cobra.Command{
 // promptAndStoreNewKey collects a new API key (or runs OAuth), validates it,
 // and stores it in the appropriate location (local keychain or GitHub secret).
 func promptAndStoreNewKey(provider string, target refreshTarget, repo string) error {
-	var apiKey string
-
-	if oauthCfg := review.GetOAuthConfig(provider); oauthCfg != nil {
-		token, err := auth.OAuthToken(oauthCfg.ClientID, oauthCfg.AuthorizeURL, oauthCfg.TokenURL, oauthCfg.Scope)
-		if err != nil {
-			return fmt.Errorf("OAuth authentication failed: %w", err)
-		}
-
-		fmt.Fprintf(os.Stderr, "Validating OAuth token...")
-		if err := setup.ValidateAPIKey(provider, token); err != nil {
-			fmt.Fprintf(os.Stderr, " failed\n")
-			return fmt.Errorf("OAuth token validation failed: %w", err)
-		}
-		fmt.Fprintf(os.Stderr, " valid!\n")
-		apiKey = token
-	} else {
-		key, err := setup.InputAPIKey(provider)
-		if err != nil {
-			return err
-		}
-
-		fmt.Fprintf(os.Stderr, "Validating new API key...")
-		if err := setup.ValidateAPIKey(provider, key); err != nil {
-			fmt.Fprintf(os.Stderr, " failed\n")
-			return fmt.Errorf("API key validation failed: %w", err)
-		}
-		fmt.Fprintf(os.Stderr, " valid!\n")
-		apiKey = key
+	apiKey, err := setup.CollectCredential(provider)
+	if err != nil {
+		return err
 	}
 
 	// For local targets, always store. For remote targets, ask first.

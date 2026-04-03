@@ -25,18 +25,10 @@ func RunLocal() error {
 		}
 		fmt.Fprintf(os.Stderr, "\n%s\n\n", ProviderGuidance("claude"))
 	} else {
-		// Collect and validate API key.
-		apiKey, err := InputAPIKey(provider)
+		apiKey, err := CollectCredential(provider)
 		if err != nil {
 			return err
 		}
-
-		fmt.Fprintf(os.Stderr, "Validating API key...")
-		if err := ValidateAPIKey(provider, apiKey); err != nil {
-			fmt.Fprintf(os.Stderr, " failed\n")
-			return fmt.Errorf("API key validation failed: %w", err)
-		}
-		fmt.Fprintf(os.Stderr, " valid!\n")
 
 		// Store credential (system keychain, or ~/.codecanary/credentials.json fallback).
 		if err := credentials.Store(apiKey); err != nil {

@@ -140,29 +140,9 @@ func RunGitHub(canary bool) error {
 	}
 
 	if needNewSecret {
-		var apiKey string
-		if oauthCfg := review.GetOAuthConfig(provider); oauthCfg != nil {
-			// OAuth flow.
-			token, err := auth.OAuthToken(oauthCfg.ClientID, oauthCfg.AuthorizeURL, oauthCfg.TokenURL, oauthCfg.Scope)
-			if err != nil {
-				return fmt.Errorf("OAuth authentication failed: %w", err)
-			}
-			apiKey = token
-		} else {
-			// Collect API key.
-			key, err := InputAPIKey(provider)
-			if err != nil {
-				return err
-			}
-
-			fmt.Fprintf(os.Stderr, "Validating API key...")
-			if err := ValidateAPIKey(provider, key); err != nil {
-				fmt.Fprintf(os.Stderr, " failed\n")
-				return fmt.Errorf("API key validation failed: %w", err)
-			}
-			fmt.Fprintf(os.Stderr, " valid!\n")
-
-			apiKey = key
+		apiKey, err := CollectCredential(provider)
+		if err != nil {
+			return err
 		}
 
 		// Set GitHub secret.
