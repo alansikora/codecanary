@@ -48,13 +48,12 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - uses: alansikora/codecanary@main
+      - uses: alansikora/codecanary@v1
         if: env.skip != 'true'
         with:
           provider_secret: ${{ secrets.CODECANARY_PROVIDER_SECRET }}
           config_path: .codecanary/config.yml
           reply_only: ${{ github.event_name == 'pull_request_review_comment' }}
-          codecanary_version: canary
 
       - name: Usage
         if: always() && env.skip != 'true' && env.CODECANARY_USAGE != ''
