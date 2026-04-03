@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"bufio"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -17,37 +16,9 @@ import (
 	"time"
 )
 
-const (
-	clientID     = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-	authorizeURL = "https://claude.ai/oauth/authorize"
-	tokenURL     = "https://platform.claude.com/v1/oauth/token"
-	scope        = "user:inference"
-	githubAppURL = "https://github.com/apps/claude/installations/new"
-)
-
-// SetupResult holds the result of the full auth setup flow.
-type SetupResult struct {
-	Token string
-}
-
-// InstallGitHubApp opens the browser to install the Claude GitHub App on a repo.
-func InstallGitHubApp(repo string, reader *bufio.Reader) error {
-	installURL := githubAppURL
-	fmt.Printf("Opening browser to install the Claude GitHub App...\n")
-	fmt.Printf("  → Select the repository: %s\n\n", repo)
-
-	if err := openBrowser(installURL); err != nil {
-		fmt.Printf("Open this URL in your browser:\n%s\n\n", installURL)
-	}
-
-	fmt.Printf("Press Enter after installing the app...")
-	_, _ = reader.ReadString('\n')
-	fmt.Println()
-	return nil
-}
-
 // OAuthToken runs the OAuth PKCE flow and returns the access token.
-func OAuthToken() (string, error) {
+// The caller provides all OAuth parameters so this function is provider-agnostic.
+func OAuthToken(clientID, authorizeURL, tokenURL, scope string) (string, error) {
 	// 1. Generate PKCE code verifier and challenge.
 	verifier, err := generateCodeVerifier()
 	if err != nil {
@@ -113,8 +84,8 @@ func OAuthToken() (string, error) {
 	}
 	authURL := authorizeURL + "?" + params.Encode()
 
-	fmt.Printf("Opening browser to authenticate with Claude...\n")
-	if err := openBrowser(authURL); err != nil {
+	fmt.Printf("Opening browser to authenticate...\n")
+	if err := OpenBrowser(authURL); err != nil {
 		fmt.Printf("Open this URL in your browser:\n%s\n\n", authURL)
 	}
 	fmt.Printf("Waiting for authentication...\n")
@@ -130,7 +101,7 @@ func OAuthToken() (string, error) {
 	}
 
 	// 6. Exchange code for token.
-	token, err := exchangeCode(code, verifier, redirectURI, state)
+	token, err := exchangeCode(code, verifier, redirectURI, state, clientID, tokenURL)
 	if err != nil {
 		return "", fmt.Errorf("exchanging code for token: %w", err)
 	}
@@ -151,7 +122,7 @@ func generateCodeChallenge(verifier string) string {
 	return base64.RawURLEncoding.EncodeToString(h[:])
 }
 
-func exchangeCode(code, verifier, redirectURI, state string) (string, error) {
+func exchangeCode(code, verifier, redirectURI, state, clientID, tokenURL string) (string, error) {
 	body := map[string]any{
 		"grant_type":    "authorization_code",
 		"client_id":     clientID,
@@ -197,13 +168,12 @@ func exchangeCode(code, verifier, redirectURI, state string) (string, error) {
 
 // GitHubSecretExists checks whether a secret with the given name exists on a GitHub repo.
 func GitHubSecretExists(repo, name string) bool {
-	out, err := exec.Command("gh", "secret", "list", "--repo", repo).Output()
+	out, err := exec.Command("gh", "secret", "list", "--repo", repo, "--json", "name", "--jq", ".[].name").Output()
 	if err != nil {
 		return false
 	}
-	for _, line := range strings.Split(string(out), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) > 0 && fields[0] == name {
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == name {
 			return true
 		}
 	}
@@ -220,7 +190,7 @@ func SetGitHubSecret(repo, name, value string) error {
 	return nil
 }
 
-func openBrowser(url string) error {
+func OpenBrowser(url string) error {
 	switch runtime.GOOS {
 	case "darwin":
 		return exec.Command("open", url).Start()
