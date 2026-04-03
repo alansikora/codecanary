@@ -152,17 +152,19 @@ func TestLoadConfig_BothModels(t *testing.T) {
 func TestLoadConfig_WithReviewPolicy(t *testing.T) {
 	dir := t.TempDir()
 	configDir := filepath.Join(dir, ".codecanary")
-	os.MkdirAll(configDir, 0755)
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("creating config dir: %v", err)
+	}
 
-	// Write config.yml
 	configYAML := `version: 1
 provider: anthropic
 review_model: claude-sonnet-4-6
 triage_model: claude-haiku-4-5-20251001
 `
-	os.WriteFile(filepath.Join(configDir, "config.yml"), []byte(configYAML), 0644)
+	if err := os.WriteFile(filepath.Join(configDir, "config.yml"), []byte(configYAML), 0644); err != nil {
+		t.Fatalf("writing config.yml: %v", err)
+	}
 
-	// Write review.yml
 	reviewYAML := `rules:
   - id: test-rule
     description: "Test rule"
@@ -172,7 +174,9 @@ context: |
 ignore:
   - "dist/**"
 `
-	os.WriteFile(filepath.Join(configDir, "review.yml"), []byte(reviewYAML), 0644)
+	if err := os.WriteFile(filepath.Join(configDir, "review.yml"), []byte(reviewYAML), 0644); err != nil {
+		t.Fatalf("writing review.yml: %v", err)
+	}
 
 	cfg, err := LoadConfig(filepath.Join(configDir, "config.yml"))
 	if err != nil {
@@ -192,14 +196,18 @@ ignore:
 func TestLoadConfig_WithoutReviewPolicy(t *testing.T) {
 	dir := t.TempDir()
 	configDir := filepath.Join(dir, ".codecanary")
-	os.MkdirAll(configDir, 0755)
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("creating config dir: %v", err)
+	}
 
 	configYAML := `version: 1
 provider: anthropic
 review_model: claude-sonnet-4-6
 triage_model: claude-haiku-4-5-20251001
 `
-	os.WriteFile(filepath.Join(configDir, "config.yml"), []byte(configYAML), 0644)
+	if err := os.WriteFile(filepath.Join(configDir, "config.yml"), []byte(configYAML), 0644); err != nil {
+		t.Fatalf("writing config.yml: %v", err)
+	}
 
 	cfg, err := LoadConfig(filepath.Join(configDir, "config.yml"))
 	if err != nil {
@@ -213,9 +221,10 @@ triage_model: claude-haiku-4-5-20251001
 func TestLoadConfig_ReviewPolicyOverridesConfig(t *testing.T) {
 	dir := t.TempDir()
 	configDir := filepath.Join(dir, ".codecanary")
-	os.MkdirAll(configDir, 0755)
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("creating config dir: %v", err)
+	}
 
-	// config.yml with rules
 	configYAML := `version: 1
 provider: anthropic
 review_model: claude-sonnet-4-6
@@ -226,16 +235,19 @@ rules:
     description: "From config"
     severity: bug
 `
-	os.WriteFile(filepath.Join(configDir, "config.yml"), []byte(configYAML), 0644)
+	if err := os.WriteFile(filepath.Join(configDir, "config.yml"), []byte(configYAML), 0644); err != nil {
+		t.Fatalf("writing config.yml: %v", err)
+	}
 
-	// review.yml overrides
 	reviewYAML := `context: "from review"
 rules:
   - id: review-rule
     description: "From review"
     severity: warning
 `
-	os.WriteFile(filepath.Join(configDir, "review.yml"), []byte(reviewYAML), 0644)
+	if err := os.WriteFile(filepath.Join(configDir, "review.yml"), []byte(reviewYAML), 0644); err != nil {
+		t.Fatalf("writing review.yml: %v", err)
+	}
 
 	cfg, err := LoadConfig(filepath.Join(configDir, "config.yml"))
 	if err != nil {
