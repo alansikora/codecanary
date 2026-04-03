@@ -240,11 +240,14 @@ func promptAndStoreNewKey(provider string, target refreshTarget, repo string) er
 		fmt.Fprintf(os.Stderr, "GitHub secret updated.\n")
 	}
 
-	// Always store locally (matches setup flows — keeps local keychain in sync).
-	if err := credentials.Store(apiKey); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not store credential locally: %v\n", err)
-	} else {
-		fmt.Fprintf(os.Stderr, "Local credential updated.\n")
+	// Store locally when the user targeted local, or when both installs
+	// exist (keeps the local keychain in sync with the remote secret).
+	if !target.isRemote || hasLocalInstall() {
+		if err := credentials.Store(apiKey); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not store credential locally: %v\n", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "Local credential updated.\n")
+		}
 	}
 
 	fmt.Fprintf(os.Stderr, "\nCredential refreshed successfully.\n")
