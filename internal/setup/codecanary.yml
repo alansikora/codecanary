@@ -49,7 +49,10 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Pin config to base branch
-        if: env.skip != 'true' && github.event.pull_request.base.sha != ''
+        if: >-
+          env.skip != 'true' &&
+          github.event.pull_request.base.sha != '' &&
+          github.event.pull_request.head.repo.full_name != github.repository
         run: |
           BASE="${{ github.event.pull_request.base.sha }}"
           git fetch --depth=1 origin "$BASE"
