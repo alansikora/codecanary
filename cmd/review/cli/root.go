@@ -40,7 +40,5 @@ var rootCmd = &cobra.Command{
 
 func Execute() error {
 	rootCmd.Version = DisplayVersion()
-	err := rootCmd.Execute()
-	selfupdate.Wait()
-	return err
+	return rootCmd.Execute()
 }

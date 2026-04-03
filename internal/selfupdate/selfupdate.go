@@ -16,7 +16,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -162,13 +161,11 @@ func writeCache(latest string) error {
 	return os.WriteFile(filepath.Join(dir, cacheFile), data, 0o644)
 }
 
-// pending tracks background cache refresh goroutines.
-var pending sync.WaitGroup
-
 // CheckCached returns the latest version using a 24h cache.
-// On cache hit, returns immediately. On cache miss, starts a background
-// refresh (result available next run) and returns the stale value if any.
-// Call Wait() before process exit to let the refresh complete.
+// On cache hit, returns immediately. On cache miss, starts a best-effort
+// background refresh (result available next run) and returns the stale
+// value if any. The goroutine is fire-and-forget — it self-terminates
+// via checkTimeout and the cache write is best-effort.
 func CheckCached(currentVersion string) (latest string, hasUpdate bool) {
 	if currentVersion == "dev" || currentVersion == "" {
 		return "", false
@@ -179,10 +176,8 @@ func CheckCached(currentVersion string) (latest string, hasUpdate bool) {
 		return cache.LatestVersion, IsNewer(currentVersion, cache.LatestVersion)
 	}
 
-	// Cache stale or missing — refresh in background so we never block.
-	pending.Add(1)
+	// Cache stale or missing — best-effort background refresh.
 	go func() {
-		defer pending.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), checkTimeout)
 		defer cancel()
 		if rel, err := fetchRelease(ctx, "latest"); err == nil {
@@ -195,12 +190,6 @@ func CheckCached(currentVersion string) (latest string, hasUpdate bool) {
 		return cache.LatestVersion, IsNewer(currentVersion, cache.LatestVersion)
 	}
 	return "", false
-}
-
-// Wait blocks until any pending background cache refresh completes.
-// Call this before process exit.
-func Wait() {
-	pending.Wait()
 }
 
 // Upgrade downloads and installs the specified release (or latest).
