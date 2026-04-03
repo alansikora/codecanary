@@ -139,7 +139,37 @@ func (c *ReviewConfig) Validate() error {
 	return nil
 }
 
+// ReviewPolicy holds review-behavior fields that can live in a separate
+// review.yml file alongside config.yml. When review.yml exists, its
+// values override the corresponding fields in config.yml.
+type ReviewPolicy struct {
+	Rules   []Rule   `yaml:"rules"`
+	Context string   `yaml:"context"`
+	Ignore  []string `yaml:"ignore"`
+}
+
+// loadReviewPolicy looks for review.yml in the same directory as configPath.
+// Returns nil (no error) if the file does not exist.
+func loadReviewPolicy(configPath string) (*ReviewPolicy, error) {
+	dir := filepath.Dir(configPath)
+	policyPath := filepath.Join(dir, "review.yml")
+	data, err := os.ReadFile(policyPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil // optional file
+		}
+		return nil, fmt.Errorf("reading review policy: %w", err)
+	}
+	var policy ReviewPolicy
+	if err := yaml.Unmarshal(data, &policy); err != nil {
+		return nil, fmt.Errorf("parsing review.yml: %w", err)
+	}
+	return &policy, nil
+}
+
 // LoadConfig reads and parses a review config YAML file from the given path.
+// It also looks for an optional review.yml in the same directory; if present,
+// its rules, context, and ignore fields override those in config.yml.
 func LoadConfig(path string) (*ReviewConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -149,6 +179,17 @@ func LoadConfig(path string) (*ReviewConfig, error) {
 	var cfg ReviewConfig
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parsing config file: %w", err)
+	}
+
+	// Merge optional review.yml (rules, context, ignore).
+	policy, err := loadReviewPolicy(path)
+	if err != nil {
+		return nil, err
+	}
+	if policy != nil {
+		cfg.Rules = policy.Rules
+		cfg.Context = policy.Context
+		cfg.Ignore = policy.Ignore
 	}
 
 	if err := cfg.Validate(); err != nil {

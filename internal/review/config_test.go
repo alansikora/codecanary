@@ -1,6 +1,9 @@
 package review
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -143,5 +146,105 @@ func TestLoadConfig_BothModels(t *testing.T) {
 	}
 	if mc.Model != "claude-sonnet-4-6" {
 		t.Errorf("ModelConfig.Model = %q, want %q", mc.Model, "claude-sonnet-4-6")
+	}
+}
+
+func TestLoadConfig_WithReviewPolicy(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, ".codecanary")
+	os.MkdirAll(configDir, 0755)
+
+	// Write config.yml
+	configYAML := `version: 1
+provider: anthropic
+review_model: claude-sonnet-4-6
+triage_model: claude-haiku-4-5-20251001
+`
+	os.WriteFile(filepath.Join(configDir, "config.yml"), []byte(configYAML), 0644)
+
+	// Write review.yml
+	reviewYAML := `rules:
+  - id: test-rule
+    description: "Test rule"
+    severity: warning
+context: |
+  Test project context.
+ignore:
+  - "dist/**"
+`
+	os.WriteFile(filepath.Join(configDir, "review.yml"), []byte(reviewYAML), 0644)
+
+	cfg, err := LoadConfig(filepath.Join(configDir, "config.yml"))
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if len(cfg.Rules) != 1 || cfg.Rules[0].ID != "test-rule" {
+		t.Errorf("expected 1 rule with id 'test-rule', got %v", cfg.Rules)
+	}
+	if !strings.Contains(cfg.Context, "Test project") {
+		t.Errorf("expected context from review.yml, got %q", cfg.Context)
+	}
+	if len(cfg.Ignore) != 1 || cfg.Ignore[0] != "dist/**" {
+		t.Errorf("expected ignore from review.yml, got %v", cfg.Ignore)
+	}
+}
+
+func TestLoadConfig_WithoutReviewPolicy(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, ".codecanary")
+	os.MkdirAll(configDir, 0755)
+
+	configYAML := `version: 1
+provider: anthropic
+review_model: claude-sonnet-4-6
+triage_model: claude-haiku-4-5-20251001
+`
+	os.WriteFile(filepath.Join(configDir, "config.yml"), []byte(configYAML), 0644)
+
+	cfg, err := LoadConfig(filepath.Join(configDir, "config.yml"))
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if len(cfg.Rules) != 0 {
+		t.Errorf("expected no rules, got %v", cfg.Rules)
+	}
+}
+
+func TestLoadConfig_ReviewPolicyOverridesConfig(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, ".codecanary")
+	os.MkdirAll(configDir, 0755)
+
+	// config.yml with rules
+	configYAML := `version: 1
+provider: anthropic
+review_model: claude-sonnet-4-6
+triage_model: claude-haiku-4-5-20251001
+context: "from config"
+rules:
+  - id: config-rule
+    description: "From config"
+    severity: bug
+`
+	os.WriteFile(filepath.Join(configDir, "config.yml"), []byte(configYAML), 0644)
+
+	// review.yml overrides
+	reviewYAML := `context: "from review"
+rules:
+  - id: review-rule
+    description: "From review"
+    severity: warning
+`
+	os.WriteFile(filepath.Join(configDir, "review.yml"), []byte(reviewYAML), 0644)
+
+	cfg, err := LoadConfig(filepath.Join(configDir, "config.yml"))
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if len(cfg.Rules) != 1 || cfg.Rules[0].ID != "review-rule" {
+		t.Errorf("expected review.yml rules to override, got %v", cfg.Rules)
+	}
+	if cfg.Context != "from review" {
+		t.Errorf("expected context from review.yml, got %q", cfg.Context)
 	}
 }

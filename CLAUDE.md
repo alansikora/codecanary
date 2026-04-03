@@ -112,7 +112,7 @@ There is a **single `Run()` function** — not separate paths for GitHub vs. loc
 
 ### Other architecture notes
 
-- **Config** is `.codecanary/config.yml` (directory structure). Legacy `.codecanary.yml` at repo root is still supported with a deprecation warning.
+- **Config** is split across two files in `.codecanary/`: `config.yml` (provider, models, budgets, timeouts) and `review.yml` (rules, context, ignore patterns). `review.yml` is optional — if present, its fields override rules/context/ignore in `config.yml`. Legacy `.codecanary.yml` at repo root is still supported with a deprecation warning.
 - **Incremental reviews**: on re-push, triage existing threads (Go-driven classifier in `triage.go`), evaluate changed threads via provider (triage model), then review only new code
 - **Dual marker detection**: reads both `codecanary:review` and legacy `clanopy:review` HTML markers for backward compatibility
 - **Anti-hallucination**: explicit file allowlist, line validation against diff, max finding distance threshold
