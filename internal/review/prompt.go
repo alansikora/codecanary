@@ -19,6 +19,30 @@ func escapePromptTag(content, tagName string) string {
 	return content
 }
 
+// escapeAllTags replaces every "<" and ">" in content with their HTML entities,
+// fully neutralising any XML-like tag injection. Both characters are escaped so
+// that LLM parsers that resolve "&lt;" back to "<" still cannot match a closing
+// ">" to form a complete tag. Use this for untrusted user content (PR title,
+// body, thread replies) where no structural tags should survive.
+func escapeAllTags(content string) string {
+	content = strings.ReplaceAll(content, "<", "&lt;")
+	content = strings.ReplaceAll(content, ">", "&gt;")
+	return content
+}
+
+// writeFencedBlock writes content inside a dynamic-length code fence with the
+// given language specifier, preventing content containing backtick runs from
+// breaking out.
+func writeFencedBlock(b *strings.Builder, lang, content string) {
+	fence := codeFence(content)
+	fmt.Fprintf(b, "%s%s\n", fence, lang)
+	b.WriteString(content)
+	if !strings.HasSuffix(content, "\n") {
+		b.WriteString("\n")
+	}
+	fmt.Fprintf(b, "%s\n", fence)
+}
+
 // BuildPrompt constructs the review prompt from PR data and review config.
 // startIndex is the number of existing findings across prior reviews so that
 // fix_ref numbering continues from where the last review left off.
@@ -35,10 +59,10 @@ func BuildPrompt(pr *PRData, cfg *ReviewConfig, startIndex int, projectDocs map[
 	} else {
 		fmt.Fprintf(&b, "## Branch Review: %s\n", pr.HeadBranch)
 	}
-	fmt.Fprintf(&b, "**Title:** %s\n", pr.Title)
+	fmt.Fprintf(&b, "<pr-title>%s</pr-title>\n", escapeAllTags(pr.Title))
 	fmt.Fprintf(&b, "**Author:** %s\n", pr.Author)
 	if pr.Body != "" {
-		fmt.Fprintf(&b, "**Description:**\n%s\n", pr.Body)
+		fmt.Fprintf(&b, "<pr-body>\n%s\n</pr-body>\n", escapeAllTags(pr.Body))
 	}
 	b.WriteString("\n")
 
@@ -85,9 +109,9 @@ func BuildPrompt(pr *PRData, cfg *ReviewConfig, startIndex int, projectDocs map[
 	writeFileContents(&b, pr.FileContents, pr.Files)
 
 	// Diff.
-	b.WriteString("## Diff\n```diff\n")
-	b.WriteString(pr.Diff)
-	b.WriteString("\n```\n\n")
+	b.WriteString("## Diff\n")
+	writeFencedBlock(&b, "diff", pr.Diff)
+	b.WriteString("\n")
 
 	// Output format instructions.
 	b.WriteString("## Output Format\n")
@@ -153,9 +177,9 @@ func BuildReevaluatePrompt(threads []ReviewThread, incrementalDiff string) strin
 		}
 	}
 
-	b.WriteString("\n## Changes Since Last Review\n```diff\n")
-	b.WriteString(incrementalDiff)
-	b.WriteString("\n```\n\n")
+	b.WriteString("\n## Changes Since Last Review\n")
+	writeFencedBlock(&b, "diff", incrementalDiff)
+	b.WriteString("\n")
 
 	b.WriteString("## Task\n")
 	b.WriteString("Determine which of the previous findings should be resolved.\n\n")
@@ -261,9 +285,9 @@ func BuildIncrementalPrompt(diff string, cfg *ReviewConfig, knownIssues []Review
 	writeFileContents(&b, fileContents, files)
 
 	// Incremental diff.
-	b.WriteString("## Incremental Diff\n```diff\n")
-	b.WriteString(diff)
-	b.WriteString("\n```\n\n")
+	b.WriteString("## Incremental Diff\n")
+	writeFencedBlock(&b, "diff", diff)
+	b.WriteString("\n")
 
 	// Output format instructions.
 	b.WriteString("## Output Format\n")
@@ -325,12 +349,17 @@ func writeFileContents(b *strings.Builder, fileContents map[string]string, files
 		if !ok {
 			continue
 		}
-		fmt.Fprintf(b, "### `%s`\n", path)
-		b.WriteString("```\n")
+		safePath := strings.ReplaceAll(path, "`", "'")
+		fmt.Fprintf(b, "### `%s`\n", safePath)
+		var numbered strings.Builder
 		lines := strings.Split(content, "\n")
-		for i, line := range lines {
-			fmt.Fprintf(b, "%d: %s\n", i+1, line)
+		if len(lines) > 0 && lines[len(lines)-1] == "" {
+			lines = lines[:len(lines)-1]
 		}
-		b.WriteString("```\n\n")
+		for i, line := range lines {
+			fmt.Fprintf(&numbered, "%d: %s\n", i+1, line)
+		}
+		writeFencedBlock(b, "", numbered.String())
+		b.WriteString("\n")
 	}
 }
