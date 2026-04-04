@@ -42,7 +42,7 @@ var breakingManifest = []breakingSurface{
 	{"internal/setup/workflow.go", "Workflow Template", "Users may need to re-run setup or manually update their workflow file"},
 	{"action.yml", "GitHub Action", "Action inputs, steps, or behavior changed — users may need to update their workflow"},
 	{"install.sh", "Install Script", "Install behavior changed — users re-installing will get different behavior"},
-	{"worker/src/index.ts", "Worker API", "Token exchange endpoint changed; action may behave differently"},
+	{"workers/oidc/src/index.ts", "Worker API", "Token exchange endpoint changed; action may behave differently"},
 	{"internal/review/formatter.go", "Comment Format", "PR comment markers or format changed; existing threads may not be detected"},
 	{"internal/auth/oauth.go", "OAuth / Auth", "OAuth endpoints, client ID, or auth flow changed"},
 	{".goreleaser.yml", "Release Artifacts", "Binary naming, archive format, or supported platforms changed"},
