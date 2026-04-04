@@ -289,7 +289,7 @@ func promptAndStoreNewKey(provider string, target refreshTarget, repo string) er
 	return nil
 }
 
-// hasLocalInstall checks if ~/.codecanary/config.yml exists.
+// hasLocalInstall checks if the per-repo local config exists.
 func hasLocalInstall() bool {
 	localPath, err := review.LocalConfigPath()
 	if err != nil {

@@ -3,6 +3,7 @@ package review
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -148,15 +149,49 @@ type ReviewPolicy struct {
 	Ignore  []string `yaml:"ignore"`
 }
 
-// LocalConfigPath returns the path to the user-level local config at
-// ~/.codecanary/config.yml. This is separate from the repo-level config
-// (.codecanary/config.yml) which is used by GitHub Actions.
+// repoSlug returns "owner/repo" derived from the git remote origin URL
+// of the current working directory. Supports HTTPS, SSH, and SCP-style URLs.
+func repoSlug() (string, error) {
+	out, err := exec.Command("git", "remote", "get-url", "origin").Output()
+	if err != nil {
+		return "", fmt.Errorf("could not detect git remote: %w (are you in a git repo with an origin remote?)", err)
+	}
+	url := strings.TrimSpace(string(out))
+
+	// SCP-style: git@github.com:owner/repo.git
+	if i := strings.Index(url, ":"); i >= 0 && !strings.Contains(url[:i], "/") {
+		url = url[i+1:]
+	} else {
+		// HTTPS/SSH: strip scheme + host, keep path
+		if j := strings.Index(url, "://"); j >= 0 {
+			url = url[j+3:]
+		}
+		if k := strings.Index(url, "/"); k >= 0 {
+			url = url[k+1:]
+		}
+	}
+	url = strings.TrimSuffix(url, ".git")
+
+	parts := strings.SplitN(url, "/", 3)
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		return "", fmt.Errorf("could not parse owner/repo from remote origin")
+	}
+	return parts[0] + "/" + parts[1], nil
+}
+
+// LocalConfigPath returns the path to the per-repo local config at
+// ~/.codecanary/repos/<owner>/<repo>/config.yml. Each repo gets its
+// own config so different repos can use different providers/models.
 func LocalConfigPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("could not determine home directory: %w", err)
 	}
-	return filepath.Join(home, ".codecanary", "config.yml"), nil
+	slug, err := repoSlug()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".codecanary", "repos", slug, "config.yml"), nil
 }
 
 // findReviewPolicy looks for review.yml in the repo. It first checks
@@ -271,9 +306,8 @@ func FindRepoConfig() (string, error) {
 
 // FindConfig returns the config path for the current environment.
 // In GitHub Actions it returns the repo-level .codecanary/config.yml.
-// Otherwise it returns ~/.codecanary/config.yml (local). Each environment
-// must have its own config — there is no fallback to avoid silently using
-// the wrong provider/credentials.
+// Otherwise it returns the per-repo local config at
+// ~/.codecanary/repos/<owner>/<repo>/config.yml.
 func FindConfig() (string, error) {
 	if os.Getenv("GITHUB_ACTIONS") != "" {
 		return FindRepoConfig()
