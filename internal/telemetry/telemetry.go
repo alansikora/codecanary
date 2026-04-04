@@ -1,7 +1,7 @@
 // Package telemetry collects anonymous, non-PII usage data for CodeCanary.
 //
 // What is collected (every field is documented on the event structs):
-//   - A deterministic UUID derived from a SHA-256 hash of the repo name
+//   - A deterministic UUID derived from a keyed HMAC-SHA256 of the repo name
 //   - Event type, binary version, OS, architecture
 //   - LLM provider name and platform (github/local)
 //   - Aggregate counts: findings, tokens, cost, duration
@@ -17,6 +17,7 @@ package telemetry
 
 import (
 	"bytes"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -47,16 +48,22 @@ const firstRunMarker = ".telemetry_seen"
 // configDirFn returns the path to ~/.codecanary/. Tests can override this.
 var configDirFn = configDir
 
+// hmacKey is a fixed namespace key used to derive repo IDs via HMAC-SHA256.
+// This prevents rainbow-table reversal of the hash back to the repo name.
+var hmacKey = []byte("codecanary-telemetry-v1")
+
 // repoID derives a deterministic, anonymous ID from a repository name
-// (e.g. "owner/repo"). The ID is a SHA-256 hash formatted as a UUID-like
-// string, so the same repo always produces the same ID regardless of
-// which machine or CI runner is used.
+// (e.g. "owner/repo"). The ID is an HMAC-SHA256 hash formatted as a
+// UUID-like string, so the same repo always produces the same ID
+// regardless of which machine or CI runner is used.
 // Returns "" if repo is empty.
 func repoID(repo string) string {
 	if repo == "" {
 		return ""
 	}
-	h := sha256.Sum256([]byte(repo))
+	mac := hmac.New(sha256.New, hmacKey)
+	mac.Write([]byte(repo))
+	h := mac.Sum(nil)
 	// Format first 16 bytes as UUID (version 5-style, SHA-based).
 	b := h[:16]
 	b[6] = (b[6] & 0x0f) | 0x50 // version 5
@@ -89,25 +96,27 @@ func configDir() (string, error) {
 	return filepath.Join(home, ".codecanary"), nil
 }
 
-var firstRun bool
+var (
+	firstRunOnce sync.Once
+	firstRun     bool
+)
 
 // ---------- First-run detection ----------
 
-// checkFirstRun returns true if this is the first telemetry send on
-// this machine. It creates a marker file (~/.codecanary/.telemetry_seen)
-// on first call and returns false on subsequent runs.
-func checkFirstRun() bool {
+// initFirstRun checks the marker file exactly once per process.
+// Called lazily from fireAndForget via sync.Once.
+func initFirstRun() {
 	dir, err := configDirFn()
 	if err != nil {
-		return false
+		return
 	}
 	path := filepath.Join(dir, firstRunMarker)
 	if _, err := os.Stat(path); err == nil {
-		return false
+		return
 	}
 	_ = os.MkdirAll(dir, 0o755)
 	_ = os.WriteFile(path, []byte("1\n"), 0o600)
-	return true
+	firstRun = true
 }
 
 // ---------- Opt-out ----------
@@ -180,20 +189,11 @@ type SetupEvent struct {
 
 // ---------- Public API ----------
 
-// resolveID returns a repo-based installation ID.
-// If repo is empty, it falls back to auto-detection via gh.
-// Returns "" if the repo cannot be determined.
-func resolveID(repo string) string {
-	if repo == "" {
-		repo = detectRepoFn()
-	}
-	return repoID(repo)
-}
-
 // fireAndForget sends a telemetry payload in a background goroutine,
-// checks the first-run marker, and tracks the in-flight send.
+// lazily checks the first-run marker (once per process), and tracks
+// the in-flight send.
 func fireAndForget(payload any) {
-	firstRun = checkFirstRun()
+	firstRunOnce.Do(initFirstRun)
 	pending.Add(1)
 	go func() {
 		defer pending.Done()
@@ -202,12 +202,13 @@ func fireAndForget(payload any) {
 }
 
 // SendReview fires a review_completed event in a background goroutine.
+// Repo must be set on the event; if empty the event is silently dropped.
 // Never blocks. Silently swallows all errors.
 func SendReview(e ReviewEvent) {
 	if !Enabled() {
 		return
 	}
-	e.InstallationID = resolveID(e.Repo)
+	e.InstallationID = repoID(e.Repo)
 	if e.InstallationID == "" {
 		return
 	}
@@ -219,11 +220,13 @@ func SendReview(e ReviewEvent) {
 }
 
 // SendSetup fires a setup_completed event in a background goroutine.
+// The repo is auto-detected via gh; if detection fails the event is
+// silently dropped.
 func SendSetup(version, provider, platform string) {
 	if !Enabled() {
 		return
 	}
-	id := resolveID("")
+	id := repoID(detectRepoFn())
 	if id == "" {
 		return
 	}

@@ -1,5 +1,9 @@
 package telemetry
 
+// Tests in this file override package-level function variables
+// (configDirFn, detectRepoFn) via defer-restore. They must NOT use
+// t.Parallel() — concurrent writes to these globals would race.
+
 import (
 	"encoding/json"
 	"io"
@@ -7,9 +11,15 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
+
+func resetFirstRun() {
+	firstRunOnce = sync.Once{}
+	firstRun = false
+}
 
 func TestRepoID_Deterministic(t *testing.T) {
 	a := repoID("owner/repo")
@@ -45,52 +55,26 @@ func TestRepoID_Empty(t *testing.T) {
 	}
 }
 
-func TestResolveID_ExplicitRepo(t *testing.T) {
-	detectRepoFn = func() string { return "should/not-be-called" }
-	defer func() { detectRepoFn = detectRepo }()
-
-	id := resolveID("owner/repo")
-	expected := repoID("owner/repo")
-	if id != expected {
-		t.Fatalf("resolveID with explicit repo = %q, want %q", id, expected)
-	}
-}
-
-func TestResolveID_FallbackDetection(t *testing.T) {
-	detectRepoFn = func() string { return "detected/repo" }
-	defer func() { detectRepoFn = detectRepo }()
-
-	id := resolveID("")
-	expected := repoID("detected/repo")
-	if id != expected {
-		t.Fatalf("resolveID fallback = %q, want %q", id, expected)
-	}
-}
-
-func TestResolveID_DetectionFails(t *testing.T) {
-	detectRepoFn = func() string { return "" }
-	defer func() { detectRepoFn = detectRepo }()
-
-	if id := resolveID(""); id != "" {
-		t.Fatalf("expected empty string when detection fails, got %q", id)
-	}
-}
-
-func TestCheckFirstRun(t *testing.T) {
+func TestInitFirstRun(t *testing.T) {
+	resetFirstRun()
 	dir := t.TempDir()
 	configDirFn = func() (string, error) { return dir, nil }
 	defer func() { configDirFn = configDir }()
 
-	if !checkFirstRun() {
-		t.Fatal("expected first run to return true")
+	firstRunOnce.Do(initFirstRun)
+	if !firstRun {
+		t.Fatal("expected firstRun to be true on fresh directory")
 	}
 	// Marker file should exist.
 	if _, err := os.Stat(filepath.Join(dir, firstRunMarker)); err != nil {
 		t.Fatalf("marker file should exist: %v", err)
 	}
-	// Second call should return false.
-	if checkFirstRun() {
-		t.Fatal("expected second call to return false")
+
+	// Reset and call again — marker exists, so firstRun should stay false.
+	resetFirstRun()
+	firstRunOnce.Do(initFirstRun)
+	if firstRun {
+		t.Fatal("expected firstRun to be false when marker already exists")
 	}
 }
 
@@ -117,6 +101,7 @@ func TestEnabled_CODECANARY_NO_TELEMETRY(t *testing.T) {
 }
 
 func TestSendReview_Payload(t *testing.T) {
+	resetFirstRun()
 	dir := t.TempDir()
 	configDirFn = func() (string, error) { return dir, nil }
 	defer func() { configDirFn = configDir }()
@@ -214,9 +199,6 @@ func TestSendReview_EmptyRepo(t *testing.T) {
 	t.Setenv("DO_NOT_TRACK", "")
 	t.Setenv("CODECANARY_NO_TELEMETRY", "")
 
-	detectRepoFn = func() string { return "" }
-	defer func() { detectRepoFn = detectRepo }()
-
 	called := make(chan struct{}, 1)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called <- struct{}{}
@@ -239,6 +221,7 @@ func TestSendReview_EmptyRepo(t *testing.T) {
 }
 
 func TestSendSetup_Payload(t *testing.T) {
+	resetFirstRun()
 	dir := t.TempDir()
 	configDirFn = func() (string, error) { return dir, nil }
 	defer func() { configDirFn = configDir }()
