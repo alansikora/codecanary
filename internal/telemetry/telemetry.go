@@ -1,7 +1,8 @@
 // Package telemetry collects anonymous, non-PII usage data for CodeCanary.
 //
 // What is collected (every field is documented on the event structs):
-//   - A deterministic UUID derived from a keyed HMAC-SHA256 of the repo name
+//   - An obfuscated repository identifier (one-way hash — the raw repo
+//     name is never transmitted)
 //   - Event type, binary version, OS, architecture
 //   - LLM provider name and platform (github/local)
 //   - Aggregate counts: findings, tokens, cost, duration
@@ -17,7 +18,6 @@ package telemetry
 
 import (
 	"bytes"
-	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -48,22 +48,16 @@ const firstRunMarker = ".telemetry_seen"
 // configDirFn returns the path to ~/.codecanary/. Tests can override this.
 var configDirFn = configDir
 
-// hmacKey is a fixed namespace key used to derive repo IDs via HMAC-SHA256.
-// This prevents rainbow-table reversal of the hash back to the repo name.
-var hmacKey = []byte("codecanary-telemetry-v1")
-
-// repoID derives a deterministic, anonymous ID from a repository name
-// (e.g. "owner/repo"). The ID is an HMAC-SHA256 hash formatted as a
-// UUID-like string, so the same repo always produces the same ID
-// regardless of which machine or CI runner is used.
+// repoID derives a deterministic, obfuscated identifier from a repository
+// name (e.g. "owner/repo") using a one-way SHA-256 hash. The raw repo name
+// is never transmitted. The same repo produces the same ID across machines
+// and CI runners, allowing aggregate usage counts without collecting PII.
 // Returns "" if repo is empty.
 func repoID(repo string) string {
 	if repo == "" {
 		return ""
 	}
-	mac := hmac.New(sha256.New, hmacKey)
-	mac.Write([]byte(repo))
-	h := mac.Sum(nil)
+	h := sha256.Sum256([]byte(repo))
 	// Format first 16 bytes as UUID (version 5-style, SHA-based).
 	b := h[:16]
 	b[6] = (b[6] & 0x0f) | 0x50 // version 5
