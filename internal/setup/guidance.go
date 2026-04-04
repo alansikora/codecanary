@@ -33,3 +33,6 @@ func GitHubPermissionsGuidance() string {
   pull-requests: write   — post review comments on PRs
   id-token: write        — OIDC token for secure authentication`
 }
+
+// telemetryOptOutMessage is the message shown on first run to inform about telemetry.
+const telemetryOptOutMessage = "\nAnonymous telemetry is on. Opt out: CODECANARY_NO_TELEMETRY=1\n"
