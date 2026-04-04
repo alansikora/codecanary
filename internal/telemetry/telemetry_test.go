@@ -1,9 +1,5 @@
 package telemetry
 
-// Tests in this file override package-level function variables
-// (configDirFn, detectRepoFn) via defer-restore. They must NOT use
-// t.Parallel() — concurrent writes to these globals would race.
-
 import (
 	"encoding/json"
 	"io"

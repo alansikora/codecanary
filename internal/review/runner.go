@@ -218,6 +218,9 @@ func Run(opts RunOptions) error {
 	var detectRepoErr error
 	if opts.Repo == "" {
 		opts.Repo, detectRepoErr = DetectRepo()
+		if opts.Repo == "" && pr != nil && detectRepoErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not detect repo for telemetry: %v\n", detectRepoErr)
+		}
 	}
 
 	// 2. Fetch PR data if not pre-fetched (GitHub mode).
