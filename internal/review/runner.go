@@ -370,6 +370,11 @@ func Run(opts RunOptions) error {
 			// and run them through the same validation pipeline.
 			if salvaged, sErr := ParseFindingsSalvage(claudeOut.Text); sErr == nil && len(salvaged) > 0 {
 				findings = validateFindings(salvaged, pr.Files, pr.Diff)
+				if isIncremental {
+					for i := range findings {
+						findings[i].Status = "new"
+					}
+				}
 				Stderrf(ansiYellow, "Salvaged %d finding(s) from truncated response\n", len(findings))
 			} else {
 				Stderrf(ansiYellow, "Could not parse truncated response — proceeding with no findings\n")
