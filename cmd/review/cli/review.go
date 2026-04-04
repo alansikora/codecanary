@@ -36,6 +36,7 @@ var reviewCmd = &cobra.Command{
 				Post:       post,
 				DryRun:     dryRun,
 				ReplyOnly:  replyOnly,
+				Version:    Version,
 				Platform: &review.GithubPlatform{
 					Repo:         repo,
 					PRNumber:     prNumber,
@@ -57,6 +58,7 @@ var reviewCmd = &cobra.Command{
 				Post:       post,
 				DryRun:     dryRun,
 				ReplyOnly:  replyOnly,
+				Version:    Version,
 				Platform: &review.GithubPlatform{
 					Repo:         repo,
 					PRNumber:     prNumber,
@@ -90,6 +92,7 @@ var reviewCmd = &cobra.Command{
 			Post:       post,
 			DryRun:     dryRun,
 			ReplyOnly:  replyOnly,
+			Version:    Version,
 			Platform: &review.LocalPlatform{
 				Branch:       pr.HeadBranch,
 				OutputFormat: output,
