@@ -49,6 +49,17 @@ func init() {
 			// Haiku 3: 4k output
 			{"claude-haiku-3", 4_096},
 		},
+		ContextWindow: []ContextWindowEntry{
+			// All Claude models have a 200K context window.
+			{"claude-opus-4-6", 200_000},
+			{"claude-opus-4-5", 200_000},
+			{"claude-opus-4-1", 200_000},
+			{"claude-opus-4-", 200_000},
+			{"claude-sonnet-4", 200_000},
+			{"claude-haiku-4-5", 200_000},
+			{"claude-haiku-3-5", 200_000},
+			{"claude-haiku-3", 200_000},
+		},
 		SuggestedReviewModel: "claude-sonnet-4-6",
 		SuggestedTriageModel: "claude-haiku-4-5-20251001",
 	}

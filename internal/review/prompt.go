@@ -3,7 +3,9 @@ package review
 import (
 	"fmt"
 	"maps"
+	"os"
 	"slices"
+	"sort"
 	"strings"
 )
 
@@ -333,4 +335,81 @@ func writeFileContents(b *strings.Builder, fileContents map[string]string, files
 		}
 		b.WriteString("```\n\n")
 	}
+}
+
+// estimateTokens returns a rough token count using the chars/4 heuristic.
+func estimateTokens(s string) int {
+	return len(s) / 4
+}
+
+// fitToContextWindow checks whether a prompt fits within the given token budget.
+// If it does not, it progressively trims file contents (dropping the largest
+// files first) and then truncates the diff until the prompt fits.
+//
+// buildFn rebuilds the prompt from the (possibly trimmed) file contents and diff.
+// files is the ordered list of file paths (determines inclusion order).
+//
+// Returns the (possibly trimmed) prompt and true if any trimming occurred.
+func fitToContextWindow(
+	buildFn func(fileContents map[string]string, diff string) string,
+	fileContents map[string]string,
+	files []string,
+	diff string,
+	tokenBudget int,
+) (string, bool) {
+	prompt := buildFn(fileContents, diff)
+	if estimateTokens(prompt) <= tokenBudget {
+		return prompt, false
+	}
+
+	// Phase 1: Drop file contents starting from the largest.
+	// Sort files by content size descending so we shed the most tokens first.
+	type fileSize struct {
+		path string
+		size int
+	}
+	var sorted []fileSize
+	for _, f := range files {
+		if content, ok := fileContents[f]; ok {
+			sorted = append(sorted, fileSize{f, len(content)})
+		}
+	}
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].size > sorted[j].size
+	})
+
+	trimmedContents := make(map[string]string, len(fileContents))
+	for k, v := range fileContents {
+		trimmedContents[k] = v
+	}
+
+	for _, fs := range sorted {
+		delete(trimmedContents, fs.path)
+		fmt.Fprintf(os.Stderr, "Warning: dropped file %q from prompt to fit context window\n", fs.path)
+		prompt = buildFn(trimmedContents, diff)
+		if estimateTokens(prompt) <= tokenBudget {
+			return prompt, true
+		}
+	}
+
+	// Phase 2: Truncate diff. Keep removing the last 25% until it fits.
+	trimmedDiff := diff
+	for estimateTokens(prompt) > tokenBudget && len(trimmedDiff) > 0 {
+		cutpoint := len(trimmedDiff) * 3 / 4
+		if cutpoint == len(trimmedDiff) {
+			cutpoint = 0
+		}
+		trimmedDiff = trimmedDiff[:cutpoint]
+		if trimmedDiff != "" {
+			// Try to cut at a newline boundary to avoid splitting a diff hunk.
+			if nl := strings.LastIndex(trimmedDiff, "\n"); nl > 0 {
+				trimmedDiff = trimmedDiff[:nl]
+			}
+			trimmedDiff += "\n... [diff truncated to fit context window]"
+		}
+		fmt.Fprintf(os.Stderr, "Warning: truncated diff to fit context window\n")
+		prompt = buildFn(trimmedContents, trimmedDiff)
+	}
+
+	return prompt, true
 }

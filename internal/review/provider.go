@@ -41,6 +41,13 @@ type MaxTokensEntry struct {
 	MaxOutputTokens int
 }
 
+// ContextWindowEntry maps a model name substring to its total context window
+// size in tokens (input + output). Used for prompt fitting.
+type ContextWindowEntry struct {
+	Substring     string
+	ContextWindow int
+}
+
 // AppRequirement describes an external app (e.g. a GitHub App) that must be
 // installed for a provider to work. Used by the setup wizard to prompt the user.
 type AppRequirement struct {
@@ -64,6 +71,7 @@ type ProviderFactory struct {
 	Validate             func(mc *ModelConfig) error
 	Pricing              []PricingEntry
 	MaxOutputTokens      []MaxTokensEntry
+	ContextWindow        []ContextWindowEntry
 	SuggestedReviewModel string
 	SuggestedTriageModel string
 	AppRequirement       *AppRequirement
@@ -73,6 +81,10 @@ type ProviderFactory struct {
 // defaultMaxOutputTokens is used when a model is not in any provider's
 // MaxOutputTokens table. Conservative enough to work with most models.
 const defaultMaxOutputTokens = 16384
+
+// defaultContextWindow is used when a model is not in any provider's
+// ContextWindow table. 128K is a safe lower bound for modern models.
+const defaultContextWindow = 128_000
 
 // lookupMaxOutputTokens returns the maximum output token limit for a model.
 // Searches each provider's MaxOutputTokens entries by substring match.
@@ -100,6 +112,34 @@ func lookupMaxOutputTokens(model string) int {
 		}
 	}
 	return defaultMaxOutputTokens
+}
+
+// lookupContextWindow returns the total context window size (input + output)
+// for a model. Searches each provider's ContextWindow entries by substring match.
+// Returns defaultContextWindow and warns once if the model is unknown.
+func lookupContextWindow(model string) int {
+	lower := strings.ToLower(model)
+	for _, name := range providerNames() {
+		pf := providers[name]
+		for _, entry := range pf.ContextWindow {
+			if strings.Contains(lower, entry.Substring) {
+				return entry.ContextWindow
+			}
+		}
+	}
+	if model != "" {
+		warnedMu.Lock()
+		key := "context_window:" + model
+		alreadyWarned := warnedModels[key]
+		if !alreadyWarned {
+			warnedModels[key] = true
+		}
+		warnedMu.Unlock()
+		if !alreadyWarned {
+			fmt.Fprintf(os.Stderr, "Warning: unknown model %q — using default context window (%d tokens)\n", model, defaultContextWindow)
+		}
+	}
+	return defaultContextWindow
 }
 
 // providers maps provider names to their factories.

@@ -52,6 +52,25 @@ func init() {
 			{"o1-mini", 65_536},
 			{"o1", 100_000},
 		},
+		ContextWindow: []ContextWindowEntry{
+			// GPT-5.4 family: 1M context
+			{"gpt-5.4-nano", 1_000_000},
+			{"gpt-5.4-mini", 1_000_000},
+			{"gpt-5.4", 1_000_000},
+			// GPT-4.1 family: 1M context
+			{"gpt-4.1-nano", 1_047_576},
+			{"gpt-4.1-mini", 1_047_576},
+			{"gpt-4.1", 1_047_576},
+			// GPT-4o family: 128K context
+			{"gpt-4o-mini", 128_000},
+			{"gpt-4o", 128_000},
+			// o-series reasoning: 200K context
+			{"o4-mini", 200_000},
+			{"o3-mini", 200_000},
+			{"o3", 200_000},
+			{"o1-mini", 128_000},
+			{"o1", 200_000},
+		},
 		SuggestedReviewModel: "gpt-5.4",
 		SuggestedTriageModel: "gpt-5.4-mini",
 	}

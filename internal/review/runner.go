@@ -289,6 +289,16 @@ func Run(opts RunOptions) error {
 		}
 		Stderrf(ansiBold, "Reviewing %s...\n", label)
 		prompt = BuildPrompt(pr, cfg, startIndex, rctx.ProjectDocs)
+
+		// Fit prompt to the review model's context window.
+		prompt = fitPromptForModel(prompt, pr.FileContents, pr.Files, pr.Diff, cfg,
+			func(fc map[string]string, d string) string {
+				prCopy := *pr
+				prCopy.FileContents = fc
+				prCopy.Diff = d
+				return BuildPrompt(&prCopy, cfg, startIndex, rctx.ProjectDocs)
+			},
+		)
 	}
 
 	// 5. Dry run — print prompt and return.
@@ -552,6 +562,11 @@ func runTriage(
 		}
 		Stderrf(ansiBold, "Falling back to full review (%d known issue%s excluded)...\n", len(unresolved), fbPlural)
 		prompt = BuildIncrementalPrompt(pr.Diff, cfg, unresolved, opts.PRNumber, startIndex, pr.FileContents, pr.Files, resolvedCtx, projectDocs)
+		prompt = fitPromptForModel(prompt, pr.FileContents, pr.Files, pr.Diff, cfg,
+			func(fc map[string]string, d string) string {
+				return BuildIncrementalPrompt(d, cfg, unresolved, opts.PRNumber, startIndex, fc, pr.Files, resolvedCtx, projectDocs)
+			},
+		)
 	} else if strings.TrimSpace(incrementalDiff) == "" {
 		// No new changes — return previous findings as still-open.
 		Stderrf(ansiGreen, "No new changes since last review\n")
@@ -570,9 +585,38 @@ func runTriage(
 		}
 		Stderrf(ansiBold, "Reviewing incremental changes (%d known issue%s excluded)...\n", len(unresolved), plural)
 		prompt = BuildIncrementalPrompt(incrementalDiff, cfg, unresolved, opts.PRNumber, startIndex, incContents, incFiles, resolvedCtx, projectDocs)
+		prompt = fitPromptForModel(prompt, incContents, incFiles, incrementalDiff, cfg,
+			func(fc map[string]string, d string) string {
+				return BuildIncrementalPrompt(d, cfg, unresolved, opts.PRNumber, startIndex, fc, incFiles, resolvedCtx, projectDocs)
+			},
+		)
 	}
 
 	return prompt, fixed, stillOpenFindings
+}
+
+// fitPromptForModel runs fitToContextWindow using the review model's context
+// budget (context window minus max output tokens). Returns the original prompt
+// unchanged if it already fits.
+func fitPromptForModel(
+	prompt string,
+	fileContents map[string]string,
+	files []string,
+	diff string,
+	cfg *ReviewConfig,
+	buildFn func(fileContents map[string]string, diff string) string,
+) string {
+	contextWindow := lookupContextWindow(cfg.ReviewModel)
+	maxOutput := lookupMaxOutputTokens(cfg.ReviewModel)
+	inputBudget := contextWindow - maxOutput
+	if inputBudget <= 0 {
+		return prompt
+	}
+	fitted, trimmed := fitToContextWindow(buildFn, fileContents, files, diff, inputBudget)
+	if trimmed {
+		Stderrf(ansiYellow, "Warning: prompt was trimmed to fit context window (%d token budget)\n", inputBudget)
+	}
+	return fitted
 }
 
 // loadReviewConfig loads the review config from the given path, or
