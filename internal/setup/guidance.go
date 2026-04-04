@@ -37,3 +37,6 @@ func GitHubPermissionsGuidance() string {
 func ProviderSecretName() string {
 	return credentials.EnvVar
 }
+
+// TelemetryOptOutMessage is the message shown on first run to inform about telemetry.
+const TelemetryOptOutMessage = "\nAnonymous telemetry is on. Opt out: CODECANARY_NO_TELEMETRY=1\n"
