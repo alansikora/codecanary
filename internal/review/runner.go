@@ -447,7 +447,7 @@ func runTriage(
 	}
 
 	botLogin := platform.ExcludedAuthor(reviewThreads)
-	triaged := ClassifyThreads(reviewThreads, reevalDiff, botLogin, pr.Files)
+	triaged := ClassifyThreads(reviewThreads, reevalDiff, botLogin, pr.Files, pr.FileContents)
 
 	var fixed []fixedThread
 

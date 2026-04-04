@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -23,11 +25,12 @@ const (
 
 // TriagedThread pairs a ReviewThread with its classification and context.
 type TriagedThread struct {
-	Thread   ReviewThread
-	Index    int                  // original index in the unresolved slice
-	Class    ThreadClassification
-	FileDiff string               // diff hunks for this file only (context for Claude)
-	BotLogin string               // login of the review bot, for filtering replies
+	Thread      ReviewThread
+	Index       int                  // original index in the unresolved slice
+	Class       ThreadClassification
+	FileDiff    string               // diff hunks for this file only (context for Claude)
+	FileSnippet string               // windowed file content around finding + diff hunks
+	BotLogin    string               // login of the review bot, for filtering replies
 }
 
 // ThreadResolution is the result of a per-thread Claude evaluation.
@@ -71,10 +74,167 @@ func ExtractFileDiff(fullDiff, filePath string) string {
 	return strings.Join(result, "\n")
 }
 
+// lineRange represents an inclusive range of 1-based line numbers.
+type lineRange struct{ start, end int }
+
+// parseHunkNewRanges extracts the new-file line ranges from unified diff hunk headers.
+// Each @@ -X,Y +N,M @@ header yields a range [N, N+M-1].
+func parseHunkNewRanges(diffText string) []lineRange {
+	var ranges []lineRange
+	for _, line := range strings.Split(diffText, "\n") {
+		if !strings.HasPrefix(line, "@@ ") {
+			continue
+		}
+		// Find +N or +N,M in the hunk header.
+		idx := strings.Index(line, "+")
+		if idx < 0 {
+			continue
+		}
+		rest := line[idx+1:]
+		// Trim everything after the space/comma/@@ that ends the range spec.
+		if sp := strings.IndexAny(rest, " @"); sp >= 0 {
+			rest = rest[:sp]
+		}
+		parts := strings.SplitN(rest, ",", 2)
+		start, err := strconv.Atoi(parts[0])
+		if err != nil {
+			continue
+		}
+		count := 1
+		if len(parts) == 2 {
+			if c, err := strconv.Atoi(parts[1]); err == nil && c > 0 {
+				count = c
+			}
+		}
+		ranges = append(ranges, lineRange{start: start, end: start + count - 1})
+	}
+	return ranges
+}
+
+// mergeRanges merges overlapping or adjacent line ranges, sorted by start.
+func mergeRanges(ranges []lineRange) []lineRange {
+	if len(ranges) == 0 {
+		return nil
+	}
+	sort.Slice(ranges, func(i, j int) bool { return ranges[i].start < ranges[j].start })
+	merged := []lineRange{ranges[0]}
+	for _, r := range ranges[1:] {
+		last := &merged[len(merged)-1]
+		if r.start <= last.end+1 {
+			if r.end > last.end {
+				last.end = r.end
+			}
+		} else {
+			merged = append(merged, r)
+		}
+	}
+	return merged
+}
+
+// ExtractFileSnippet extracts a windowed snippet from file content centered around
+// the finding line and expanded to cover diff hunk ranges. Returns an empty string
+// if content is empty. findingLine is 1-based. diffText is the file-scoped diff
+// (used to parse hunk ranges; may be empty for cross-file cases). maxLines caps the
+// total snippet length.
+func ExtractFileSnippet(content string, findingLine int, diffText string, maxLines int) string {
+	if content == "" {
+		return ""
+	}
+	lines := strings.Split(content, "\n")
+	totalLines := len(lines)
+
+	// Build interesting ranges: finding line ± 50, each hunk range ± 30.
+	const findingPad = 50
+	const hunkPad = 30
+
+	var ranges []lineRange
+	if findingLine > 0 {
+		ranges = append(ranges, lineRange{
+			start: max(1, findingLine-findingPad),
+			end:   min(totalLines, findingLine+findingPad),
+		})
+	}
+	for _, hr := range parseHunkNewRanges(diffText) {
+		ranges = append(ranges, lineRange{
+			start: max(1, hr.start-hunkPad),
+			end:   min(totalLines, hr.end+hunkPad),
+		})
+	}
+	if len(ranges) == 0 {
+		// Fallback: center on line 1 if nothing else.
+		ranges = append(ranges, lineRange{start: 1, end: min(totalLines, maxLines)})
+	}
+
+	merged := mergeRanges(ranges)
+
+	// If total exceeds maxLines, prioritize the range containing the finding line,
+	// then include other ranges in order until the budget is exhausted.
+	total := 0
+	for _, r := range merged {
+		total += r.end - r.start + 1
+	}
+	if total > maxLines {
+		// Find which merged range contains the finding line.
+		findingIdx := 0
+		for i, r := range merged {
+			if findingLine >= r.start && findingLine <= r.end {
+				findingIdx = i
+				break
+			}
+		}
+		// Start with the finding range, then add others.
+		budget := maxLines
+		kept := make([]bool, len(merged))
+		kept[findingIdx] = true
+		size := merged[findingIdx].end - merged[findingIdx].start + 1
+		if size > budget {
+			// Truncate even the finding range around the finding line.
+			half := budget / 2
+			merged[findingIdx] = lineRange{
+				start: max(1, findingLine-half),
+				end:   min(totalLines, findingLine+half),
+			}
+			size = merged[findingIdx].end - merged[findingIdx].start + 1
+		}
+		budget -= size
+		for i, r := range merged {
+			if kept[i] {
+				continue
+			}
+			rSize := r.end - r.start + 1
+			if rSize <= budget {
+				kept[i] = true
+				budget -= rSize
+			}
+		}
+		var trimmed []lineRange
+		for i, r := range merged {
+			if kept[i] {
+				trimmed = append(trimmed, r)
+			}
+		}
+		merged = trimmed
+	}
+
+	// Format with line numbers, inserting omission markers between gaps.
+	var b strings.Builder
+	for i, r := range merged {
+		if i > 0 {
+			gap := r.start - merged[i-1].end - 1
+			fmt.Fprintf(&b, "... (%d lines omitted) ...\n", gap)
+		}
+		for ln := r.start; ln <= r.end && ln <= totalLines; ln++ {
+			fmt.Fprintf(&b, "%d: %s\n", ln, lines[ln-1])
+		}
+	}
+	return b.String()
+}
+
 // ClassifyThreads triages unresolved threads using GitHub's outdated flag and reply presence.
 // prFiles is the current set of files in the PR; threads on files no longer in the PR
 // are classified as TriageFileRemovedFromPR and auto-resolved without an LLM call.
-func ClassifyThreads(threads []ReviewThread, fullDiff, botLogin string, prFiles []string) []TriagedThread {
+// fileContents provides current file contents for building context snippets in triage prompts.
+func ClassifyThreads(threads []ReviewThread, fullDiff, botLogin string, prFiles []string, fileContents map[string]string) []TriagedThread {
 	prFileSet := make(map[string]bool, len(prFiles))
 	for _, f := range prFiles {
 		prFileSet[f] = true
@@ -133,12 +293,25 @@ func ClassifyThreads(threads []ReviewThread, fullDiff, botLogin string, prFiles 
 			fileDiff = fullDiff
 		}
 
+		// Build a windowed file snippet for code-change evaluations.
+		var fileSnippet string
+		if content, ok := fileContents[t.Path]; ok {
+			switch class {
+			case TriageCodeChanged, TriageCodeChangedReply:
+				fileSnippet = ExtractFileSnippet(content, t.Line, fileDiff, 300)
+			case TriageCrossFileChange:
+				// Show finding's file context even though the diff is in other files.
+				fileSnippet = ExtractFileSnippet(content, t.Line, "", 200)
+			}
+		}
+
 		result[i] = TriagedThread{
-			Thread:   t,
-			Index:    i,
-			Class:    class,
-			FileDiff: fileDiff,
-			BotLogin: botLogin,
+			Thread:      t,
+			Index:       i,
+			Class:       class,
+			FileDiff:    fileDiff,
+			FileSnippet: fileSnippet,
+			BotLogin:    botLogin,
 		}
 	}
 
@@ -243,6 +416,8 @@ func buildCodeChangePrompt(t TriagedThread, cfg *ReviewConfig) string {
 	b.WriteString(t.FileDiff)
 	b.WriteString("\n```\n\n")
 
+	writeFileSnippet(&b, t.FileSnippet)
+
 	if ctx := evalContext(cfg, "code_change"); ctx != "" {
 		fmt.Fprintf(&b, "## Additional Context\n%s\n\n", ctx)
 	}
@@ -251,6 +426,7 @@ func buildCodeChangePrompt(t TriagedThread, cfg *ReviewConfig) string {
 	b.WriteString("Does the code change address the issue you raised?\n")
 	b.WriteString("- Answer YES if the change fixes the root cause, removes the problematic code, or meaningfully changes the code so the finding no longer applies.\n")
 	b.WriteString("- A change to nearby or adjacent code counts IF it effectively resolves the concern (e.g. fixing the logic, adding the missing check, refactoring the problematic pattern).\n")
+	b.WriteString("- A structural change also counts — for example, if code was moved before a guard condition, control flow was reordered, or the code was refactored so the finding no longer applies. If file context is provided, use it to verify the final code structure.\n")
 	b.WriteString("- Answer NO if the finding's concern is still present in the changed code.\n\n")
 	writeCodeChangeResolutionFormat(&b)
 
@@ -292,6 +468,8 @@ func buildCodeChangeReplyPrompt(t TriagedThread, cfg *ReviewConfig) string {
 	b.WriteString(t.FileDiff)
 	b.WriteString("\n```\n\n")
 
+	writeFileSnippet(&b, t.FileSnippet)
+
 	if ctx := evalContext(cfg, "code_change"); ctx != "" {
 		fmt.Fprintf(&b, "## Additional Context (Code Changes)\n%s\n\n", ctx)
 	}
@@ -302,7 +480,7 @@ func buildCodeChangeReplyPrompt(t TriagedThread, cfg *ReviewConfig) string {
 	b.WriteString("## Task\n")
 	b.WriteString("Is the finding resolved? It may be resolved by the code change, the reply, or both.\n")
 	b.WriteString("Evaluate both the code change and the reply.\n\n")
-	b.WriteString("- **Fixed by code change**: The new diff addresses the issue you raised — the root cause is fixed, removed, or the code is changed in a way that makes the finding no longer applicable.\n")
+	b.WriteString("- **Fixed by code change**: The new diff addresses the issue you raised — the root cause is fixed, removed, or the code is changed in a way that makes the finding no longer applicable. A structural change also counts (e.g. code moved before a guard condition, control flow reordered). If file context is provided, use it to verify the final code structure.\n")
 	b.WriteString("- **Dismissed**: Reply explicitly asks the reviewer to dismiss, ignore, or skip the finding (e.g. \"dismiss this\", \"you can safely dismiss\", \"please ignore\", \"skip this one\"). The author is exercising their authority to close the thread without further justification.\n")
 	b.WriteString("- **Acknowledged**: Reply indicates the finding is intentional, accepted, or tracked elsewhere (e.g. \"intentional\", \"will fix in a future PR\", \"tracked in issue #N\").\n")
 	b.WriteString("- **Rebutted**: Reply provides concrete technical reasoning showing the finding is not applicable. Vague disagreement (\"I don't think so\") does NOT qualify — the reply must cite specific technical details, framework behavior, or project constraints.\n")
@@ -323,6 +501,8 @@ func buildCrossFilePrompt(t TriagedThread, cfg *ReviewConfig) string {
 	b.WriteString(t.FileDiff)
 	b.WriteString("\n```\n\n")
 
+	writeFileSnippet(&b, t.FileSnippet)
+
 	if ctx := evalContext(cfg, "code_change"); ctx != "" {
 		fmt.Fprintf(&b, "## Additional Context\n%s\n\n", ctx)
 	}
@@ -330,10 +510,22 @@ func buildCrossFilePrompt(t TriagedThread, cfg *ReviewConfig) string {
 	b.WriteString("## Task\n")
 	b.WriteString("Does any change in this diff address the issue you raised, even though the changes are in different files?\n")
 	b.WriteString("- Answer YES if a change in another file effectively resolves the concern (e.g. fixing the caller instead of the callee, adding validation in a different layer, removing the code path that triggers the issue).\n")
+	b.WriteString("- A structural change also counts — for example, if code was moved, control flow was reordered, or the code was refactored so the finding no longer applies. If file context is provided, use it to verify the final code structure.\n")
 	b.WriteString("- Answer NO if none of the changes are related to the finding.\n\n")
 	writeCodeChangeResolutionFormat(&b)
 
 	return b.String()
+}
+
+// writeFileSnippet adds the current file content section to the prompt when available.
+func writeFileSnippet(b *strings.Builder, snippet string) {
+	if snippet == "" {
+		return
+	}
+	b.WriteString("## Current File Content (around finding)\n")
+	b.WriteString("This shows the file as it exists NOW (after the changes). Use it to understand the final code structure and control flow.\n\n```\n")
+	b.WriteString(snippet)
+	b.WriteString("```\n\n")
 }
 
 // writeFinding writes the finding section to the prompt.
