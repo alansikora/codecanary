@@ -414,8 +414,9 @@ func fitToContextWindow(
 		coreLen := len(trimmedDiff)
 		if coreLen >= prevCoreLen {
 			// Core diff reached a fixed point (e.g. newline snap-back
-			// lands at the same position). Clear and stop.
-			trimmedDiff = ""
+			// lands at the same position). Keep the current content,
+			// append the marker, and stop.
+			trimmedDiff += "\n... [diff truncated to fit context window]"
 			fmt.Fprintf(os.Stderr, "Warning: truncated diff to fit context window\n")
 			prompt = buildFn(trimmedContents, trimmedDiff)
 			break
