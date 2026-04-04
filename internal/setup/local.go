@@ -71,7 +71,7 @@ func RunLocal(version string) error {
 	telemetry.SendSetup(version, provider, "local")
 
 	if telemetry.IsFirstRun() {
-		fmt.Fprint(os.Stderr, TelemetryOptOutMessage)
+		fmt.Fprint(os.Stderr, telemetryOptOutMessage)
 	}
 	fmt.Fprintf(os.Stderr, "\nSetup complete! Run `codecanary review` to review your current changes.\n")
 	fmt.Fprintf(os.Stderr, "Customize review rules and context in .codecanary/review.yml\n")

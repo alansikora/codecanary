@@ -260,7 +260,7 @@ func RunGitHub(canary bool, version string) error {
 	telemetry.SendSetup(version, provider, "github")
 
 	if telemetry.IsFirstRun() {
-		fmt.Fprint(os.Stderr, TelemetryOptOutMessage)
+		fmt.Fprint(os.Stderr, telemetryOptOutMessage)
 	}
 	fmt.Fprintf(os.Stderr, "  %s\n", strings.TrimSpace(string(prOut)))
 	fmt.Fprintf(os.Stderr, "\nDone! Merge the PR to enable automated reviews.\n")
