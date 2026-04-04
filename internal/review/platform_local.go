@@ -20,8 +20,11 @@ func (l *LocalPlatform) LoadPreviousFindings() ([]ReviewThread, string, int) {
 		return nil, "", 0
 	}
 	ancestor, err := isAncestor(state.SHA)
-	if err != nil || !ancestor {
-		// SHA is unreachable (rebase/force-push) or gone — start fresh.
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not check ancestry of %s: %v — starting fresh\n", shortSHA(state.SHA), err)
+		return nil, "", 0
+	}
+	if !ancestor {
 		return nil, "", 0
 	}
 
