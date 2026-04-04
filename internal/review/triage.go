@@ -84,6 +84,8 @@ func ClassifyThreads(threads []ReviewThread, fullDiff, botLogin string, prFiles 
 
 	for i, t := range threads {
 		// File no longer in the PR — auto-resolve without LLM.
+		// When prFiles is empty (e.g. upstream fetch returned no file list),
+		// we skip this check to avoid incorrectly resolving all threads.
 		if len(prFileSet) > 0 && !prFileSet[t.Path] {
 			result[i] = TriagedThread{
 				Thread: t,
@@ -504,15 +506,19 @@ func LogTriage(triaged []TriagedThread) {
 	}
 
 	skipped := 0
+	autoResolved := 0
 	needsEval := 0
 	for _, t := range triaged {
-		if t.Class == TriageSkip {
+		switch t.Class {
+		case TriageSkip:
 			skipped++
-		} else {
+		case TriageFileRemovedFromPR:
+			autoResolved++
+		default:
 			needsEval++
 		}
 	}
-	fmt.Fprintf(os.Stderr, "\nTriage result: %d skipped, %d need evaluation\n", skipped, needsEval)
+	fmt.Fprintf(os.Stderr, "\nTriage result: %d skipped, %d auto-resolved, %d need evaluation\n", skipped, autoResolved, needsEval)
 }
 
 // LogResolutions prints structured evaluation results to stderr.
