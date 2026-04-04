@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
+	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -16,8 +19,22 @@ const checkInstallURL = "https://oidc.codecanary.sh/check-install"
 // installed with access to the given repository (owner/name format).
 // Returns false on any error so the caller can fall back to the install flow.
 func CheckCodeCanaryAppInstalled(repo string) bool {
+	tokenOut, err := exec.Command("gh", "auth", "token").Output()
+	if err != nil {
+		return false
+	}
+	token := strings.TrimSpace(string(tokenOut))
+
+	params := url.Values{}
+	params.Set("repo", repo)
+	req, err := http.NewRequest("GET", checkInstallURL+"?"+params.Encode(), nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(checkInstallURL + "?repo=" + repo)
+	resp, err := client.Do(req)
 	if err != nil {
 		return false
 	}

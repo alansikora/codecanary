@@ -10,19 +10,33 @@ const GITHUB_API = "https://api.github.com";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Authorization, Content-Type",
+    };
+
     if (request.method === "OPTIONS") {
-      return new Response(null, { status: 204 });
+      return new Response(null, { status: 204, headers: corsHeaders });
     }
+
+    const withCors = (resp: Response): Response => {
+      const patched = new Response(resp.body, resp);
+      for (const [k, v] of Object.entries(corsHeaders)) {
+        patched.headers.set(k, v);
+      }
+      return patched;
+    };
 
     const url = new URL(request.url);
 
     // GET /check-install?repo=owner/name — lightweight installation check.
     if (request.method === "GET" && url.pathname === "/check-install") {
-      return handleCheckInstall(url, env);
+      return withCors(await handleCheckInstall(request, url, env));
     }
 
     if (request.method !== "POST" || url.pathname !== "/token") {
-      return Response.json({ error: "Not found" }, { status: 404 });
+      return withCors(Response.json({ error: "Not found" }, { status: 404 }));
     }
 
     try {
@@ -97,7 +111,24 @@ export default {
   },
 };
 
-async function handleCheckInstall(url: URL, env: Env): Promise<Response> {
+async function handleCheckInstall(request: Request, url: URL, env: Env): Promise<Response> {
+  // Require a valid GitHub token to prevent anonymous enumeration / rate-limit abuse.
+  const authHeader = request.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    return Response.json({ error: "Missing Authorization header" }, { status: 401 });
+  }
+  const ghToken = authHeader.slice(7);
+  const userResp = await fetch(`${GITHUB_API}/user`, {
+    headers: {
+      Authorization: `Bearer ${ghToken}`,
+      Accept: "application/vnd.github+json",
+      "User-Agent": "codecanary-token-proxy",
+    },
+  });
+  if (!userResp.ok) {
+    return Response.json({ error: "Invalid GitHub token" }, { status: 401 });
+  }
+
   const repo = url.searchParams.get("repo");
   if (!repo || repo.split("/").length !== 2) {
     return Response.json(
