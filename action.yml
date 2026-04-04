@@ -100,7 +100,7 @@ runs:
         if [ -n "$PR_NUMBER" ]; then
           COMMITS=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.commits')
           if [ -n "$COMMITS" ] && [ "$COMMITS" -gt 0 ] 2>/dev/null; then
-            git fetch --deepen="$COMMITS" origin 2>/dev/null
+            git fetch -q --deepen="$COMMITS" origin
           fi
         fi
 
