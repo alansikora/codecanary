@@ -11,8 +11,9 @@ func init() {
 	providers["openrouter"] = ProviderFactory{
 		New:      newOpenRouterProvider,
 		Validate: validateOpenRouter,
-		// No pricing entries — OpenRouter proxies other providers' models,
-		// which are matched by substring from those providers' pricing tables.
+		// No pricing or MaxOutputTokens entries — OpenRouter proxies other
+		// providers' models, which are matched by substring from those
+		// providers' tables.
 		SuggestedReviewModel: "anthropic/claude-sonnet-4-6",
 		SuggestedTriageModel: "anthropic/claude-haiku-4-5-20251001",
 	}

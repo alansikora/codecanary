@@ -44,7 +44,8 @@ func init() {
 			// GPT-4o family: 16k output
 			{"gpt-4o-mini", 16_384},
 			{"gpt-4o", 16_384},
-			// o-series reasoning
+			// o-series reasoning — more-specific names must precede less-specific
+			// (o1-mini before o1, o3-mini before o3).
 			{"o4-mini", 100_000},
 			{"o3-mini", 100_000},
 			{"o3", 100_000},

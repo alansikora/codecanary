@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 )
@@ -118,9 +117,6 @@ func doChat(ctx context.Context, apiBase, apiKey, model, prompt string, timeout 
 	}
 
 	truncated := chatResp.Choices[0].FinishReason == "length"
-	if truncated {
-		fmt.Fprintf(os.Stderr, "Warning: response truncated (hit %d token output limit) — review may be incomplete\n", maxTokens)
-	}
 
 	return &chatResp, durationMS, truncated, nil
 }

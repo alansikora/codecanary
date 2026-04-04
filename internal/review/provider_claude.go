@@ -99,6 +99,8 @@ func (p *claudeCLIProvider) Run(ctx context.Context, prompt string, opts RunOpts
 		return nil, fmt.Errorf("claude returned error: %s", resp.Result)
 	}
 
+	// Note: the Claude CLI JSON output does not expose stop_reason, so we
+	// cannot detect truncation here. The CLI manages its own output limits.
 	result := &claudeResult{
 		Text: resp.Result,
 		Usage: CallUsage{

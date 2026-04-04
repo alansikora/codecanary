@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -199,9 +198,6 @@ func (p *anthropicProvider) Run(ctx context.Context, prompt string, opts RunOpts
 	}
 
 	truncated := msgResp.StopReason == "max_tokens"
-	if truncated {
-		fmt.Fprintf(os.Stderr, "Warning: response truncated (hit %d token output limit) — review may be incomplete\n", maxTokens)
-	}
 
 	// Extract text from content blocks.
 	var textParts []string
