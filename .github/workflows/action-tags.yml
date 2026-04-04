@@ -4,8 +4,6 @@ on:
   push:
     branches: [main]
     paths: [action.yml]
-  release:
-    types: [published]
 
 permissions:
   contents: write

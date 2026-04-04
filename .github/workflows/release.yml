@@ -27,3 +27,9 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
+
+      - name: Update v1 action tag
+        run: |
+          git tag -f v1
+          git push origin v1 --force
