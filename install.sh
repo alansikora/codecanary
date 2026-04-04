@@ -42,11 +42,9 @@ ARCH="$(detect_arch)"
 
 if [ -z "$TAG" ]; then
   echo "Fetching latest release..."
-  TAG="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases" \
+  TAG="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
     | grep '"tag_name"' \
-    | cut -d'"' -f4 \
-    | grep '^v[0-9]*\.[0-9]*\.[0-9]*' \
-    | head -n1)"
+    | cut -d'"' -f4)"
   if [ -z "$TAG" ]; then
     echo "Error: could not determine latest release" >&2; exit 1
   fi
