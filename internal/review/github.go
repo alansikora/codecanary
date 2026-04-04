@@ -14,6 +14,15 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 )
 
+// parseRepoSlug splits a "owner/name" repository slug into its two parts.
+func parseRepoSlug(repo string) (owner, name string, err error) {
+	parts := strings.SplitN(repo, "/", 2)
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("invalid repo format %q, expected owner/name", repo)
+	}
+	return parts[0], parts[1], nil
+}
+
 // MaxFindingDistance is the maximum number of lines a finding may be from the
 // nearest diff line before it is dropped (runner.go) or demoted from inline
 // to body (PostReview). A single constant ensures both checks stay in sync.
@@ -241,26 +250,26 @@ func PostReview(repo string, prNumber int, result *ReviewResult, diff string, co
 		return fmt.Errorf("marshaling review payload: %w", err)
 	}
 
-	parts := strings.SplitN(repo, "/", 2)
-	if len(parts) != 2 {
-		return fmt.Errorf("invalid repo format %q, expected owner/name", repo)
+	owner, name, err := parseRepoSlug(repo)
+	if err != nil {
+		return err
 	}
 
 	// No fallback — if this fails, the apiError carries stderr and response
 	// body so the caller surfaces full diagnostics for debugging.
-	apiPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", parts[0], parts[1], prNumber)
+	apiPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, name, prNumber)
 	_, err = ghAPIPOST(apiPath, payloadJSON)
 	return err
 }
 
 // FetchReviewFromPR extracts cached review data from a PR review's hidden HTML tag.
 func FetchReviewFromPR(repo string, prNumber int) (*ReviewResult, error) {
-	parts := strings.SplitN(repo, "/", 2)
-	if len(parts) != 2 {
-		return nil, fmt.Errorf("invalid repo format %q, expected owner/name", repo)
+	owner, name, err := parseRepoSlug(repo)
+	if err != nil {
+		return nil, err
 	}
 
-	apiPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", parts[0], parts[1], prNumber)
+	apiPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, name, prNumber)
 	out, err := exec.Command("gh", "api", apiPath).Output()
 	if err != nil {
 		return nil, fmt.Errorf("fetching PR reviews: %w", err)
@@ -303,12 +312,12 @@ func FetchReviewFromPR(repo string, prNumber int) (*ReviewResult, error) {
 // Unlike FetchReviewFromPR (which returns the latest review), this searches every
 // review so that fix_ref links from older review rounds still resolve correctly.
 func FetchFindingFromPR(repo string, prNumber int, fixRef string) (*Finding, error) {
-	parts := strings.SplitN(repo, "/", 2)
-	if len(parts) != 2 {
-		return nil, fmt.Errorf("invalid repo format %q, expected owner/name", repo)
+	owner, name, err := parseRepoSlug(repo)
+	if err != nil {
+		return nil, err
 	}
 
-	apiPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", parts[0], parts[1], prNumber)
+	apiPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, name, prNumber)
 	out, err := exec.Command("gh", "api", apiPath).Output()
 	if err != nil {
 		return nil, fmt.Errorf("fetching PR reviews: %w", err)
@@ -425,11 +434,10 @@ type graphQLThreadsResponse struct {
 
 // FetchReviewThreads gets all review threads from a PR via GraphQL.
 func FetchReviewThreads(repo string, prNumber int) ([]ReviewThread, error) {
-	parts := strings.SplitN(repo, "/", 2)
-	if len(parts) != 2 {
-		return nil, fmt.Errorf("invalid repo format %q, expected owner/name", repo)
+	owner, name, err := parseRepoSlug(repo)
+	if err != nil {
+		return nil, err
 	}
-	owner, name := parts[0], parts[1]
 
 	query := `query($owner:String!,$name:String!,$pr:Int!){
   repository(owner:$owner,name:$name){
@@ -533,12 +541,12 @@ type ghReview struct {
 
 // FetchPreviousReviewSHA gets the SHA from the last review's hidden data.
 func FetchPreviousReviewSHA(repo string, prNumber int) string {
-	parts := strings.SplitN(repo, "/", 2)
-	if len(parts) != 2 {
+	owner, name, err := parseRepoSlug(repo)
+	if err != nil {
 		return ""
 	}
 
-	apiPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", parts[0], parts[1], prNumber)
+	apiPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, name, prNumber)
 	out, err := exec.Command("gh", "api", apiPath).Output()
 	if err != nil {
 		return ""
@@ -675,9 +683,9 @@ func PostAllClearReview(repo string, prNumber int, minimizeFailed bool) error {
 }
 
 func postSimpleReview(repo string, prNumber int, body string) error {
-	parts := strings.SplitN(repo, "/", 2)
-	if len(parts) != 2 {
-		return fmt.Errorf("invalid repo format %q, expected owner/name", repo)
+	owner, repoName, err := parseRepoSlug(repo)
+	if err != nil {
+		return err
 	}
 
 	payload := reviewPayload{
@@ -691,7 +699,7 @@ func postSimpleReview(repo string, prNumber int, body string) error {
 		return fmt.Errorf("marshaling payload: %w", err)
 	}
 
-	_, err = ghAPIPOST(fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", parts[0], parts[1], prNumber), payloadJSON)
+	_, err = ghAPIPOST(fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, repoName, prNumber), payloadJSON)
 	return err
 }
 
@@ -742,12 +750,12 @@ func ghAPIPOST(apiPath string, payloadJSON []byte) ([]byte, error) {
 
 // FindReviewNodeIDs returns the node_ids of all reviews on a PR.
 func FindReviewNodeIDs(repo string, prNumber int) ([]string, error) {
-	parts := strings.SplitN(repo, "/", 2)
-	if len(parts) != 2 {
-		return nil, fmt.Errorf("invalid repo format %q, expected owner/name", repo)
+	owner, name, err := parseRepoSlug(repo)
+	if err != nil {
+		return nil, err
 	}
 
-	apiPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", parts[0], parts[1], prNumber)
+	apiPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, name, prNumber)
 	out, err := exec.Command("gh", "api", apiPath).Output()
 	if err != nil {
 		return nil, fmt.Errorf("fetching PR reviews: %w", err)
@@ -955,12 +963,12 @@ type ReviewInfo struct {
 
 // FindReviews returns reviews with their parsed finding IDs.
 func FindReviews(repo string, prNumber int) ([]ReviewInfo, error) {
-	parts := strings.SplitN(repo, "/", 2)
-	if len(parts) != 2 {
-		return nil, fmt.Errorf("invalid repo format %q, expected owner/name", repo)
+	owner, name, err := parseRepoSlug(repo)
+	if err != nil {
+		return nil, err
 	}
 
-	apiPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", parts[0], parts[1], prNumber)
+	apiPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, name, prNumber)
 	out, err := exec.Command("gh", "api", apiPath).Output()
 	if err != nil {
 		return nil, fmt.Errorf("fetching PR reviews: %w", err)
