@@ -136,9 +136,11 @@ async function handleCheckInstall(request: Request, url: URL, env: Env): Promise
     },
   });
   if (repoResp.status === 401) {
+    await repoResp.text();
     return Response.json({ error: "Invalid GitHub token" }, { status: 401 });
   }
   if (!repoResp.ok) {
+    await repoResp.text();
     return Response.json({ error: "Repository not accessible" }, { status: 403 });
   }
 
