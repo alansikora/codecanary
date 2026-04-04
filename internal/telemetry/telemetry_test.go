@@ -12,66 +12,65 @@ import (
 	"time"
 )
 
-func resetInstallID() {
-	installOnce = sync.Once{}
-	installID = ""
+func resetFirstRun() {
+	firstRunOnce = sync.Once{}
+	firstRun.Store(false)
 }
 
-func TestNewUUIDv4_Format(t *testing.T) {
-	id, err := newUUIDv4()
-	if err != nil {
-		t.Fatal(err)
+func TestRepoID_Deterministic(t *testing.T) {
+	a := repoID("owner/repo")
+	b := repoID("owner/repo")
+	if a != b {
+		t.Fatalf("same input should produce same ID: %s vs %s", a, b)
 	}
-	if len(id) != 36 {
-		t.Fatalf("expected length 36, got %d: %s", len(id), id)
+	if len(a) != 36 {
+		t.Fatalf("expected UUID length 36, got %d: %s", len(a), a)
 	}
-	// Version nibble (position 14) must be '4'.
-	if id[14] != '4' {
-		t.Fatalf("expected version nibble '4', got '%c'", id[14])
+	// Version nibble (position 14) must be '5'.
+	if a[14] != '5' {
+		t.Fatalf("expected version nibble '5', got '%c'", a[14])
 	}
 	// Variant nibble (position 19) must be 8, 9, a, or b.
-	v := id[19]
+	v := a[19]
 	if v != '8' && v != '9' && v != 'a' && v != 'b' {
 		t.Fatalf("expected variant nibble in [89ab], got '%c'", v)
 	}
 }
 
-func TestNewUUIDv4_Unique(t *testing.T) {
-	a, _ := newUUIDv4()
-	b, _ := newUUIDv4()
+func TestRepoID_DifferentRepos(t *testing.T) {
+	a := repoID("owner/repo-a")
+	b := repoID("owner/repo-b")
 	if a == b {
-		t.Fatal("two UUIDs should not be equal")
+		t.Fatal("different repos should produce different IDs")
 	}
 }
 
-func TestGetOrCreateID_Persists(t *testing.T) {
-	resetInstallID()
+func TestRepoID_Empty(t *testing.T) {
+	if id := repoID(""); id != "" {
+		t.Fatalf("expected empty string for empty repo, got %q", id)
+	}
+}
+
+func TestInitFirstRun(t *testing.T) {
+	resetFirstRun()
 	dir := t.TempDir()
 	configDirFn = func() (string, error) { return dir, nil }
 	defer func() { configDirFn = configDir }()
 
-	id1 := getOrCreateID()
-	if id1 == "" {
-		t.Fatal("expected non-empty ID")
+	firstRunOnce.Do(initFirstRun)
+	if !firstRun.Load() {
+		t.Fatal("expected firstRun to be true on fresh directory")
 	}
-	if len(id1) != 36 {
-		t.Fatalf("expected UUID length 36, got %d", len(id1))
-	}
-
-	// Verify it was written to disk.
-	data, err := os.ReadFile(filepath.Join(dir, idFileName))
-	if err != nil {
-		t.Fatalf("reading ID file: %v", err)
-	}
-	if got := string(data); got != id1+"\n" {
-		t.Fatalf("file content mismatch: %q vs %q", got, id1+"\n")
+	// Marker file should exist.
+	if _, err := os.Stat(filepath.Join(dir, firstRunMarker)); err != nil {
+		t.Fatalf("marker file should exist: %v", err)
 	}
 
-	// Reset in-memory cache, re-read from file.
-	resetInstallID()
-	id2 := getOrCreateID()
-	if id2 != id1 {
-		t.Fatalf("ID changed across restarts: %s vs %s", id1, id2)
+	// Reset and call again — marker exists, so firstRun should stay false.
+	resetFirstRun()
+	firstRunOnce.Do(initFirstRun)
+	if firstRun.Load() {
+		t.Fatal("expected firstRun to be false when marker already exists")
 	}
 }
 
@@ -98,7 +97,7 @@ func TestEnabled_CODECANARY_NO_TELEMETRY(t *testing.T) {
 }
 
 func TestSendReview_Payload(t *testing.T) {
-	resetInstallID()
+	resetFirstRun()
 	dir := t.TempDir()
 	configDirFn = func() (string, error) { return dir, nil }
 	defer func() { configDirFn = configDir }()
@@ -119,6 +118,7 @@ func TestSendReview_Payload(t *testing.T) {
 	defer func() { Endpoint = origEndpoint }()
 
 	SendReview(ReviewEvent{
+		Repo:        "owner/repo",
 		Version:     "1.2.3",
 		Provider:    "anthropic",
 		Platform:    "local",
@@ -135,8 +135,9 @@ func TestSendReview_Payload(t *testing.T) {
 		if ev.Event != "review_completed" {
 			t.Errorf("event = %q, want review_completed", ev.Event)
 		}
-		if ev.InstallationID == "" {
-			t.Error("expected non-empty installation_id")
+		expectedID := repoID("owner/repo")
+		if ev.InstallationID != expectedID {
+			t.Errorf("installation_id = %q, want %q", ev.InstallationID, expectedID)
 		}
 		if ev.Version != "1.2.3" {
 			t.Errorf("version = %q, want 1.2.3", ev.Version)
@@ -152,6 +153,14 @@ func TestSendReview_Payload(t *testing.T) {
 		}
 		if ev.Timestamp == "" {
 			t.Error("expected timestamp")
+		}
+		// Repo must NOT appear in the JSON payload.
+		var raw map[string]any
+		if err := json.Unmarshal(body, &raw); err != nil {
+			t.Fatalf("unmarshal raw: %v", err)
+		}
+		if _, ok := raw["repo"]; ok {
+			t.Error("repo field must not be serialized in the payload")
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for telemetry POST")
@@ -172,7 +181,7 @@ func TestSendReview_OptedOut(t *testing.T) {
 	Endpoint = ts.URL
 	defer func() { Endpoint = origEndpoint }()
 
-	SendReview(ReviewEvent{Version: "1.0.0"})
+	SendReview(ReviewEvent{Repo: "owner/repo", Version: "1.0.0"})
 
 	select {
 	case <-called:
@@ -182,11 +191,39 @@ func TestSendReview_OptedOut(t *testing.T) {
 	}
 }
 
+func TestSendReview_EmptyRepo(t *testing.T) {
+	t.Setenv("DO_NOT_TRACK", "")
+	t.Setenv("CODECANARY_NO_TELEMETRY", "")
+
+	called := make(chan struct{}, 1)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called <- struct{}{}
+		w.WriteHeader(200)
+	}))
+	defer ts.Close()
+
+	origEndpoint := Endpoint
+	Endpoint = ts.URL
+	defer func() { Endpoint = origEndpoint }()
+
+	SendReview(ReviewEvent{Version: "1.0.0"})
+
+	select {
+	case <-called:
+		t.Error("telemetry was sent despite empty repo")
+	case <-time.After(200 * time.Millisecond):
+		// Good — no request was made.
+	}
+}
+
 func TestSendSetup_Payload(t *testing.T) {
-	resetInstallID()
+	resetFirstRun()
 	dir := t.TempDir()
 	configDirFn = func() (string, error) { return dir, nil }
 	defer func() { configDirFn = configDir }()
+
+	detectRepoFn = func() string { return "owner/repo" }
+	defer func() { detectRepoFn = detectRepo }()
 
 	t.Setenv("DO_NOT_TRACK", "")
 	t.Setenv("CODECANARY_NO_TELEMETRY", "")
@@ -213,6 +250,10 @@ func TestSendSetup_Payload(t *testing.T) {
 		}
 		if ev.Event != "setup_completed" {
 			t.Errorf("event = %q, want setup_completed", ev.Event)
+		}
+		expectedID := repoID("owner/repo")
+		if ev.InstallationID != expectedID {
+			t.Errorf("installation_id = %q, want %q", ev.InstallationID, expectedID)
 		}
 		if ev.Provider != "openai" {
 			t.Errorf("provider = %q, want openai", ev.Provider)
