@@ -43,6 +43,7 @@ var breakingManifest = []breakingSurface{
 	{"action.yml", "GitHub Action", "Action inputs, steps, or behavior changed — users may need to update their workflow"},
 	{"install.sh", "Install Script", "Install behavior changed — users re-installing will get different behavior"},
 	{"workers/oidc/src/index.ts", "Worker API", "Token exchange endpoint changed; action may behave differently"},
+	{"workers/telemetry/src/index.ts", "Telemetry Worker", "Telemetry endpoint schema changed; older CLI versions may fail to send events"},
 	{"internal/review/formatter.go", "Comment Format", "PR comment markers or format changed; existing threads may not be detected"},
 	{"internal/auth/oauth.go", "OAuth / Auth", "OAuth endpoints, client ID, or auth flow changed"},
 	{".goreleaser.yml", "Release Artifacts", "Binary naming, archive format, or supported platforms changed"},
