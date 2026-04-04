@@ -25,12 +25,13 @@ var authCmd = &cobra.Command{
 
 var authStatusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show stored credential status",
+	Short: "Show local credential status",
+	Long:  "Show whether a credential is stored locally (keychain or file). GitHub Actions secrets are not accessible.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if _, source, err := credentials.Retrieve(); err == nil {
-			fmt.Printf("  %s: stored in %s\n", credentials.EnvVar, source)
+			fmt.Printf("  %s: stored in %s (local)\n", credentials.EnvVar, source)
 		} else {
-			fmt.Printf("  %s: not found\n", credentials.EnvVar)
+			fmt.Printf("  %s: not found locally\n", credentials.EnvVar)
 		}
 		return nil
 	},
@@ -38,10 +39,11 @@ var authStatusCmd = &cobra.Command{
 
 var authDeleteCmd = &cobra.Command{
 	Use:   "delete",
-	Short: "Delete stored credential",
+	Short: "Delete local credential",
+	Long:  "Delete the locally stored credential (keychain or file). This does not affect GitHub Actions secrets.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if _, _, err := credentials.Retrieve(); err != nil {
-			fmt.Println("No stored credential found.")
+			fmt.Println("No local credential found.")
 			return nil
 		}
 
@@ -49,7 +51,8 @@ var authDeleteCmd = &cobra.Command{
 		err := huh.NewForm(
 			huh.NewGroup(
 				huh.NewConfirm().
-					Title(fmt.Sprintf("Delete %s?", credentials.EnvVar)).
+					Title(fmt.Sprintf("Delete local credential (%s)?", credentials.EnvVar)).
+					Description("This only removes the locally stored key. GitHub Actions secrets are not affected.").
 					Value(&confirm),
 			),
 		).Run()
@@ -65,7 +68,7 @@ var authDeleteCmd = &cobra.Command{
 		if err := credentials.Delete(); err != nil {
 			return fmt.Errorf("deleting credential: %w", err)
 		}
-		fmt.Printf("Deleted %s.\n", credentials.EnvVar)
+		fmt.Printf("Deleted local credential (%s).\n", credentials.EnvVar)
 		return nil
 	},
 }
@@ -172,7 +175,35 @@ var authRefreshCmd = &cobra.Command{
 
 		fmt.Fprintf(os.Stderr, "Provider: %s\n", provider)
 
-		// Retrieve current credential.
+		// Remote and local credentials live in different stores and
+		// have different capabilities (GitHub secrets are write-only).
+		if target.isRemote {
+			secretName := setup.ProviderSecretName()
+			if auth.GitHubSecretExists(repo, secretName) {
+				fmt.Fprintf(os.Stderr, "Secret %s exists on %s (value cannot be read)\n\n", secretName, repo)
+				var replace bool
+				if err := huh.NewForm(
+					huh.NewGroup(
+						huh.NewConfirm().
+							Title("Replace the existing GitHub secret?").
+							Affirmative("Yes, enter new key").
+							Negative("No, keep existing").
+							Value(&replace),
+					),
+				).Run(); err != nil {
+					return err
+				}
+				if !replace {
+					fmt.Fprintf(os.Stderr, "Keeping existing secret.\n")
+					return nil
+				}
+			} else {
+				fmt.Fprintf(os.Stderr, "No secret found on %s\n", repo)
+			}
+			return promptAndStoreNewKey(provider, target, repo)
+		}
+
+		// Local target: retrieve and validate the current credential.
 		currentKey, source, err := credentials.Retrieve()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "No stored credential found.\n")
@@ -180,7 +211,6 @@ var authRefreshCmd = &cobra.Command{
 		}
 		fmt.Fprintf(os.Stderr, "Credential found in %s\n", source)
 
-		// Validate current credential.
 		fmt.Fprintf(os.Stderr, "Validating current API key...")
 		if err := setup.ValidateAPIKey(provider, currentKey); err != nil {
 			fmt.Fprintf(os.Stderr, " invalid (%v)\n\n", err)
