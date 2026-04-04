@@ -486,13 +486,13 @@ func runTriage(
 	}
 
 	// Phase 1: Go-driven triage — classify threads.
-	reevalDiff := incrementalDiff
-	if diffErr != nil {
-		reevalDiff = pr.Diff
-	}
-
+	// Always use the full PR diff for triage classification and evaluation.
+	// The incremental diff (changes since last review) can miss fixes that
+	// landed in the same commit as the previous review's base SHA — those
+	// fixes are invisible in the incremental window but visible in the full
+	// PR diff. The incremental diff is still used for Phase 2 (new findings).
 	botLogin := platform.ExcludedAuthor(reviewThreads)
-	triaged := ClassifyThreads(reviewThreads, reevalDiff, botLogin, pr.Files, pr.FileContents)
+	triaged := ClassifyThreads(reviewThreads, pr.Diff, botLogin, pr.Files, pr.FileContents)
 
 	var fixed []fixedThread
 
