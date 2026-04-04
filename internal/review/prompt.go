@@ -35,10 +35,11 @@ func BuildPrompt(pr *PRData, cfg *ReviewConfig, startIndex int, projectDocs map[
 	} else {
 		fmt.Fprintf(&b, "## Branch Review: %s\n", pr.HeadBranch)
 	}
-	fmt.Fprintf(&b, "**Title:** %s\n", pr.Title)
+	fmt.Fprintf(&b, "<pr-title>%s</pr-title>\n", escapePromptTag(pr.Title, "pr-title"))
 	fmt.Fprintf(&b, "**Author:** %s\n", pr.Author)
 	if pr.Body != "" {
-		fmt.Fprintf(&b, "**Description:**\n%s\n", pr.Body)
+		safeBody := escapePromptTag(pr.Body, "pr-body")
+		fmt.Fprintf(&b, "<pr-body>\n%s\n</pr-body>\n", safeBody)
 	}
 	b.WriteString("\n")
 
@@ -85,9 +86,10 @@ func BuildPrompt(pr *PRData, cfg *ReviewConfig, startIndex int, projectDocs map[
 	writeFileContents(&b, pr.FileContents, pr.Files)
 
 	// Diff.
-	b.WriteString("## Diff\n```diff\n")
+	diffFence := codeFence(pr.Diff)
+	fmt.Fprintf(&b, "## Diff\n%sdiff\n", diffFence)
 	b.WriteString(pr.Diff)
-	b.WriteString("\n```\n\n")
+	fmt.Fprintf(&b, "\n%s\n\n", diffFence)
 
 	// Output format instructions.
 	b.WriteString("## Output Format\n")
@@ -153,9 +155,10 @@ func BuildReevaluatePrompt(threads []ReviewThread, incrementalDiff string) strin
 		}
 	}
 
-	b.WriteString("\n## Changes Since Last Review\n```diff\n")
+	reEvalFence := codeFence(incrementalDiff)
+	fmt.Fprintf(&b, "\n## Changes Since Last Review\n%sdiff\n", reEvalFence)
 	b.WriteString(incrementalDiff)
-	b.WriteString("\n```\n\n")
+	fmt.Fprintf(&b, "\n%s\n\n", reEvalFence)
 
 	b.WriteString("## Task\n")
 	b.WriteString("Determine which of the previous findings should be resolved.\n\n")
@@ -261,9 +264,10 @@ func BuildIncrementalPrompt(diff string, cfg *ReviewConfig, knownIssues []Review
 	writeFileContents(&b, fileContents, files)
 
 	// Incremental diff.
-	b.WriteString("## Incremental Diff\n```diff\n")
+	incDiffFence := codeFence(diff)
+	fmt.Fprintf(&b, "## Incremental Diff\n%sdiff\n", incDiffFence)
 	b.WriteString(diff)
-	b.WriteString("\n```\n\n")
+	fmt.Fprintf(&b, "\n%s\n\n", incDiffFence)
 
 	// Output format instructions.
 	b.WriteString("## Output Format\n")
@@ -325,12 +329,13 @@ func writeFileContents(b *strings.Builder, fileContents map[string]string, files
 		if !ok {
 			continue
 		}
+		fence := codeFence(content)
 		fmt.Fprintf(b, "### `%s`\n", path)
-		b.WriteString("```\n")
+		fmt.Fprintf(b, "%s\n", fence)
 		lines := strings.Split(content, "\n")
 		for i, line := range lines {
 			fmt.Fprintf(b, "%d: %s\n", i+1, line)
 		}
-		b.WriteString("```\n\n")
+		fmt.Fprintf(b, "%s\n\n", fence)
 	}
 }
