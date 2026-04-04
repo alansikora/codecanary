@@ -316,6 +316,9 @@ func Run(opts RunOptions) error {
 			return err
 		}
 		trackUsage(tracker, claudeOut, "review")
+		if claudeOut.Truncated {
+			Stderrf(ansiYellow, "Warning: review response was truncated — findings may be incomplete\n")
+		}
 
 		findings, err = processFindings(claudeOut.Text, pr.Files, isIncremental)
 		if err != nil {
