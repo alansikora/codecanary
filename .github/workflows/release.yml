@@ -34,5 +34,5 @@ jobs:
       - name: Update v1 action tag
         if: startsWith(github.ref_name, 'v0.') || startsWith(github.ref_name, 'v1.')
         run: |
-          git tag -f v1
+          git tag -f v1 "${{ github.sha }}"
           git push origin v1 --force
