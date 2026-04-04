@@ -168,8 +168,12 @@ func parseDiffLines(diff string) diffLineMap {
 		if strings.HasPrefix(line, "-") {
 			continue
 		}
-		if strings.HasPrefix(line, "+") || strings.HasPrefix(line, " ") {
+		if strings.HasPrefix(line, "+") {
 			valid[currentFile] = append(valid[currentFile], lineNum)
+			lineNum++
+			continue
+		}
+		if strings.HasPrefix(line, " ") {
 			lineNum++
 			continue
 		}
