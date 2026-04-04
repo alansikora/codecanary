@@ -543,7 +543,7 @@ func loadReviewConfig(configPath string) (*ReviewConfig, error) {
 	if configPath == "" {
 		found, err := FindConfig()
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("loading config: %w", err)
 		}
 		configPath = found
 	}
