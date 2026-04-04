@@ -361,7 +361,7 @@ func Run(opts RunOptions) error {
 	platform.ReportUsage(tracker)
 
 	// 11. Anonymous telemetry (fire-and-forget).
-	if telemetry.Enabled() {
+	if !opts.DryRun {
 		calls := tracker.Calls()
 		var totalIn, totalOut, totalCache int
 		var totalCost float64

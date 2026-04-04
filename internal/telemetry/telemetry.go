@@ -207,10 +207,18 @@ func SendSetup(version, provider, platform string) {
 	}()
 }
 
-// Wait blocks until all in-flight telemetry sends complete (or time out).
-// Call this before process exit.
+// Wait blocks until all in-flight telemetry sends complete, with a hard
+// ceiling of 5 s to guarantee the process exits even if a send hangs.
 func Wait() {
-	pending.Wait()
+	done := make(chan struct{})
+	go func() {
+		pending.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+	}
 }
 
 // ---------- Internal ----------
