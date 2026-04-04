@@ -28,6 +28,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -92,7 +93,7 @@ func configDir() (string, error) {
 
 var (
 	firstRunOnce sync.Once
-	firstRun     bool
+	firstRun     atomic.Bool
 )
 
 // ---------- First-run detection ----------
@@ -110,16 +111,17 @@ func initFirstRun() {
 	}
 	_ = os.MkdirAll(dir, 0o755)
 	_ = os.WriteFile(path, []byte("1\n"), 0o600)
-	firstRun = true
+	firstRun.Store(true)
 }
 
 // ---------- Opt-out ----------
 
 // IsFirstRun reports whether the current process just created the
 // first-run marker (i.e. this is the very first run on this machine).
+// Safe to call concurrently from any goroutine.
 // Must be called after SendSetup or SendReview to get a meaningful result.
 func IsFirstRun() bool {
-	return firstRun
+	return firstRun.Load()
 }
 
 // Enabled returns false when the user has opted out via environment variables.

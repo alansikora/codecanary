@@ -18,7 +18,7 @@ import (
 
 func resetFirstRun() {
 	firstRunOnce = sync.Once{}
-	firstRun = false
+	firstRun.Store(false)
 }
 
 func TestRepoID_Deterministic(t *testing.T) {
@@ -62,7 +62,7 @@ func TestInitFirstRun(t *testing.T) {
 	defer func() { configDirFn = configDir }()
 
 	firstRunOnce.Do(initFirstRun)
-	if !firstRun {
+	if !firstRun.Load() {
 		t.Fatal("expected firstRun to be true on fresh directory")
 	}
 	// Marker file should exist.
@@ -73,7 +73,7 @@ func TestInitFirstRun(t *testing.T) {
 	// Reset and call again — marker exists, so firstRun should stay false.
 	resetFirstRun()
 	firstRunOnce.Do(initFirstRun)
-	if firstRun {
+	if firstRun.Load() {
 		t.Fatal("expected firstRun to be false when marker already exists")
 	}
 }

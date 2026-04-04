@@ -214,23 +214,23 @@ func Run(opts RunOptions) error {
 	platform := opts.Platform
 	pr := opts.PR
 
-	// 1. Fetch PR data if not pre-fetched (GitHub mode).
+	// 1. Resolve repo name — needed for GitHub API calls and telemetry.
+	if opts.Repo == "" {
+		detected, _ := DetectRepo()
+		opts.Repo = detected
+	}
+
+	// 2. Fetch PR data if not pre-fetched (GitHub mode).
 	if pr == nil {
-		repo := opts.Repo
-		if repo == "" {
-			detected, err := DetectRepo()
-			if err != nil {
-				return fmt.Errorf("detecting repo: %w", err)
-			}
-			repo = detected
-			opts.Repo = repo
+		if opts.Repo == "" {
+			return fmt.Errorf("detecting repo: could not determine repository")
 		}
 		// Propagate resolved repo to the platform adapter.
 		if gp, ok := platform.(*GithubPlatform); ok && gp.Repo == "" {
-			gp.Repo = repo
+			gp.Repo = opts.Repo
 		}
 
-		fetched, err := FetchPR(repo, opts.PRNumber)
+		fetched, err := FetchPR(opts.Repo, opts.PRNumber)
 		if err != nil {
 			return fmt.Errorf("fetching PR: %w", err)
 		}
@@ -240,7 +240,7 @@ func Run(opts RunOptions) error {
 		if isSetupPR(pr.Diff, pr.Files) {
 			fmt.Fprintf(os.Stderr, "Setup PR detected — skipping review\n")
 			if opts.Post {
-				if err := PostComment(repo, opts.PRNumber,
+				if err := PostComment(opts.Repo, opts.PRNumber,
 					"## \U0001F425 CodeCanary\n\nSetup PR detected \u2014 skipping automated review. Future PRs will be reviewed automatically. \U0001F389"); err != nil {
 					return fmt.Errorf("posting setup PR comment: %w", err)
 				}
@@ -249,7 +249,7 @@ func Run(opts RunOptions) error {
 		}
 	}
 
-	// 2. Prepare shared review context.
+	// 3. Prepare shared review context.
 	rctx, err := prepareReview(pr, opts.ConfigPath)
 	if err != nil {
 		return err
@@ -261,7 +261,7 @@ func Run(opts RunOptions) error {
 	triageProvider := NewProviderForRole(triageMC, rctx.Env)
 	tracker := rctx.Tracker
 
-	// 3. Load previous findings via the platform adapter.
+	// 4. Load previous findings via the platform adapter.
 	reviewThreads, previousSHA, startIndex := platform.LoadPreviousFindings()
 
 	// Reply-only mode: bail early if there are no threads to evaluate.
@@ -270,7 +270,7 @@ func Run(opts RunOptions) error {
 		return nil
 	}
 
-	// 4. Triage & build prompt.
+	// 5. Triage & build prompt.
 	var prompt string
 	var fixed []fixedThread
 	var stillOpenFindings []Finding
@@ -291,7 +291,7 @@ func Run(opts RunOptions) error {
 		prompt = BuildPrompt(pr, cfg, startIndex, rctx.ProjectDocs)
 	}
 
-	// 5. Dry run — print prompt and return.
+	// 6. Dry run — print prompt and return.
 	if opts.DryRun {
 		if prompt != "" {
 			fmt.Print(prompt)
@@ -299,7 +299,7 @@ func Run(opts RunOptions) error {
 		return nil
 	}
 
-	// 6. Budget check & LLM call.
+	// 7. Budget check & LLM call.
 	var findings []Finding
 	if !opts.ReplyOnly && prompt != "" {
 		if err := CheckBudget(tracker, cfg.MaxBudgetUSD); err != nil {
@@ -326,7 +326,7 @@ func Run(opts RunOptions) error {
 		}
 	}
 
-	// 7. Build result.
+	// 8. Build result.
 	headSHA, err := currentHEAD()
 	if err != nil {
 		return fmt.Errorf("resolving HEAD: %w", err)
@@ -344,7 +344,7 @@ func Run(opts RunOptions) error {
 		return nil
 	}
 
-	// 8. Publish results via the platform adapter.
+	// 9. Publish results via the platform adapter.
 	// In reply-only mode, per-thread ack replies are posted earlier;
 	// skip top-level review comments, minimization, and all-clear posts.
 	if !opts.ReplyOnly {
@@ -353,7 +353,7 @@ func Run(opts RunOptions) error {
 		}
 	}
 
-	// 9. Save state for future incremental reviews.
+	// 10. Save state for future incremental reviews.
 	// Skip in reply-only mode to avoid overwriting previous findings with an empty slice.
 	if !opts.DryRun && !opts.ReplyOnly {
 		if err := platform.SaveState(result, stillOpenFindings, isIncremental); err != nil {
@@ -361,10 +361,10 @@ func Run(opts RunOptions) error {
 		}
 	}
 
-	// 10. Report usage.
+	// 11. Report usage.
 	platform.ReportUsage(tracker)
 
-	// 11. Anonymous telemetry (fire-and-forget).
+	// 12. Anonymous telemetry (fire-and-forget).
 	if !opts.DryRun && telemetry.Enabled() {
 		calls := tracker.Calls()
 		var totalIn, totalOut, totalCache int
