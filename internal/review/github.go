@@ -663,7 +663,7 @@ func GetIncrementalDiff(baseSHA string) (string, error) {
 		return "", fmt.Errorf("invalid SHA format: %q", baseSHA)
 	}
 	// Ensure the base SHA is available locally (shallow clones may not have it).
-	_ = exec.Command("git", "fetch", "--depth=1", "origin", baseSHA).Run()
+	ensureCommitFetched(baseSHA)
 	out, err := exec.Command("git", "diff", baseSHA+"..HEAD").Output()
 	if err != nil {
 		return "", fmt.Errorf("git diff: %w", err)
