@@ -87,10 +87,15 @@ type Rule struct {
 	ExcludePaths []string `yaml:"exclude_paths"`
 }
 
-// validSeverities is the set of allowed severity values for rules.
-var validSeverities = map[string]bool{
-	"critical": true, "bug": true, "warning": true, "suggestion": true, "nitpick": true,
-}
+// validSeverities is the set of allowed severity values for rules,
+// derived from the canonical severityLevels slice in formatter.go.
+var validSeverities = func() map[string]bool {
+	m := make(map[string]bool, len(severityLevels))
+	for _, s := range severityLevels {
+		m[s] = true
+	}
+	return m
+}()
 
 // Validate checks that config field values are within expected ranges.
 func (c *ReviewConfig) Validate() error {
