@@ -76,6 +76,7 @@ type claudeResult struct {
 	Usage       CallUsage
 	ModelUsages []CallUsage // per-model breakdown from modelUsage map
 	DurationMS  int
+	Truncated   bool // true when the response hit the output token limit
 }
 
 // fixedThread holds the index and resolution reason for a fixed thread.

@@ -48,7 +48,7 @@ func (p *openrouterProvider) Run(ctx context.Context, prompt string, opts RunOpt
 		return nil, fmt.Errorf("API key not found: set %s or run `codecanary setup local`", p.keyEnv)
 	}
 
-	chatResp, durationMS, err := doChat(ctx, "https://openrouter.ai/api/v1", apiKey, p.model, prompt, opts.Timeout)
+	chatResp, durationMS, truncated, err := doChat(ctx, "https://openrouter.ai/api/v1", apiKey, p.model, prompt, opts.Timeout)
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +74,8 @@ func (p *openrouterProvider) Run(ctx context.Context, prompt string, opts RunOpt
 	}
 
 	return &claudeResult{
-		Text:  text,
-		Usage: usage,
+		Text:      text,
+		Usage:     usage,
+		Truncated: truncated,
 	}, nil
 }

@@ -52,33 +52,34 @@ type chatUsage struct {
 	} `json:"prompt_tokens_details"`
 }
 
-// doChat sends a chat completions request and returns the raw response.
-// Individual provider adapters call this and then extract usage in their
-// own way (e.g. OpenAI parses prompt_tokens_details for caching).
-func doChat(ctx context.Context, apiBase, apiKey, model, prompt string, timeout time.Duration) (*chatResponse, int, error) {
+// doChat sends a chat completions request and returns the raw response plus
+// a truncated flag. Individual provider adapters call this and then extract
+// usage in their own way (e.g. OpenAI parses prompt_tokens_details for caching).
+func doChat(ctx context.Context, apiBase, apiKey, model, prompt string, timeout time.Duration) (*chatResponse, int, bool, error) {
 	if timeout <= 0 {
 		timeout = 5 * time.Minute
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	maxTokens := lookupMaxOutputTokens(model)
 	reqBody := chatRequest{
 		Model: model,
 		Messages: []chatMessage{
 			{Role: "user", Content: prompt},
 		},
-		MaxTokens: lookupMaxOutputTokens(model),
+		MaxTokens: maxTokens,
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
-		return nil, 0, fmt.Errorf("marshaling request: %w", err)
+		return nil, 0, false, fmt.Errorf("marshaling request: %w", err)
 	}
 
 	url := strings.TrimRight(apiBase, "/") + "/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonBody))
 	if err != nil {
-		return nil, 0, fmt.Errorf("creating request: %w", err)
+		return nil, 0, false, fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
@@ -87,38 +88,39 @@ func doChat(ctx context.Context, apiBase, apiKey, model, prompt string, timeout 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return nil, 0, fmt.Errorf("request timed out after %s", timeout)
+			return nil, 0, false, fmt.Errorf("request timed out after %s", timeout)
 		}
-		return nil, 0, fmt.Errorf("request failed: %w", err)
+		return nil, 0, false, fmt.Errorf("request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	durationMS := int(time.Since(start).Milliseconds())
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, 0, fmt.Errorf("reading response: %w", err)
+		return nil, 0, false, fmt.Errorf("reading response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, 0, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
+		return nil, 0, false, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var chatResp chatResponse
 	if err := json.Unmarshal(body, &chatResp); err != nil {
-		return nil, 0, fmt.Errorf("parsing response: %w", err)
+		return nil, 0, false, fmt.Errorf("parsing response: %w", err)
 	}
 
 	if chatResp.Error != nil {
-		return nil, 0, fmt.Errorf("API error: %s", chatResp.Error.Message)
+		return nil, 0, false, fmt.Errorf("API error: %s", chatResp.Error.Message)
 	}
 
 	if len(chatResp.Choices) == 0 {
-		return nil, 0, fmt.Errorf("API returned no choices")
+		return nil, 0, false, fmt.Errorf("API returned no choices")
 	}
 
-	if chatResp.Choices[0].FinishReason == "length" {
-		fmt.Fprintf(os.Stderr, "Warning: response truncated (hit %d token output limit) — review may be incomplete\n", lookupMaxOutputTokens(model))
+	truncated := chatResp.Choices[0].FinishReason == "length"
+	if truncated {
+		fmt.Fprintf(os.Stderr, "Warning: response truncated (hit %d token output limit) — review may be incomplete\n", maxTokens)
 	}
 
-	return &chatResp, durationMS, nil
+	return &chatResp, durationMS, truncated, nil
 }

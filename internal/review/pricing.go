@@ -22,12 +22,12 @@ var (
 )
 
 // lookupPricing returns the pricing for a model, or nil if unknown.
-// It searches each provider's Pricing entries (order within a provider's
-// slice is preserved; cross-provider order is nondeterministic but safe
-// because model name substrings do not overlap between providers).
+// It searches each provider's Pricing entries in deterministic (sorted)
+// provider order; within a provider the slice order is preserved.
 func lookupPricing(model string) *modelPricing {
 	lower := strings.ToLower(model)
-	for _, pf := range providers {
+	for _, name := range providerNames() {
+		pf := providers[name]
 		for _, entry := range pf.Pricing {
 			if strings.Contains(lower, entry.Substring) {
 				p := entry.Pricing

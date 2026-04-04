@@ -30,6 +30,8 @@ func init() {
 			{"o1-mini", modelPricing{0.55, 2.20, 0.55, 0.55}},
 			{"o1", modelPricing{15, 60, 15, 7.50}},
 		},
+		// Entries matched by substring — more-specific names (e.g. gpt-5.4-mini)
+		// must come before less-specific ones (e.g. gpt-5.4).
 		MaxOutputTokens: []MaxTokensEntry{
 			// GPT-5.4 family: 128k output
 			{"gpt-5.4-nano", 128_000},
@@ -90,7 +92,7 @@ func (p *openaiProvider) Run(ctx context.Context, prompt string, opts RunOpts) (
 		return nil, fmt.Errorf("API key not found: set %s or run `codecanary setup local`", p.keyEnv)
 	}
 
-	chatResp, durationMS, err := doChat(ctx, p.apiBase, apiKey, p.model, prompt, opts.Timeout)
+	chatResp, durationMS, truncated, err := doChat(ctx, p.apiBase, apiKey, p.model, prompt, opts.Timeout)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +119,8 @@ func (p *openaiProvider) Run(ctx context.Context, prompt string, opts RunOpts) (
 	}
 
 	return &claudeResult{
-		Text:  text,
-		Usage: usage,
+		Text:      text,
+		Usage:     usage,
+		Truncated: truncated,
 	}, nil
 }

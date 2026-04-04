@@ -78,7 +78,8 @@ const defaultMaxOutputTokens = 16384
 // Returns defaultMaxOutputTokens if the model is unknown.
 func lookupMaxOutputTokens(model string) int {
 	lower := strings.ToLower(model)
-	for _, pf := range providers {
+	for _, name := range providerNames() {
+		pf := providers[name]
 		for _, entry := range pf.MaxOutputTokens {
 			if strings.Contains(lower, entry.Substring) {
 				return entry.MaxOutputTokens

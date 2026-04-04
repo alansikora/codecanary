@@ -138,9 +138,10 @@ func (p *anthropicProvider) Run(ctx context.Context, prompt string, opts RunOpts
 	defer cancel()
 
 	// Place cache_control on the content block so the prompt is cached.
+	maxTokens := lookupMaxOutputTokens(p.model)
 	reqBody := anthropicRequest{
 		Model:     p.model,
-		MaxTokens: lookupMaxOutputTokens(p.model),
+		MaxTokens: maxTokens,
 		Messages: []anthropicMessage{
 			{
 				Role: "user",
@@ -197,8 +198,9 @@ func (p *anthropicProvider) Run(ctx context.Context, prompt string, opts RunOpts
 		return nil, fmt.Errorf("Anthropic API error: %s", msgResp.Error.Message) //nolint:staticcheck // proper noun
 	}
 
-	if msgResp.StopReason == "max_tokens" {
-		fmt.Fprintf(os.Stderr, "Warning: response truncated (hit %d token output limit) — review may be incomplete\n", lookupMaxOutputTokens(p.model))
+	truncated := msgResp.StopReason == "max_tokens"
+	if truncated {
+		fmt.Fprintf(os.Stderr, "Warning: response truncated (hit %d token output limit) — review may be incomplete\n", maxTokens)
 	}
 
 	// Extract text from content blocks.
@@ -223,8 +225,9 @@ func (p *anthropicProvider) Run(ctx context.Context, prompt string, opts RunOpts
 	usage.CostUSD = estimateCost(usage)
 
 	return &claudeResult{
-		Text:  strings.Join(textParts, ""),
-		Usage: usage,
+		Text:      strings.Join(textParts, ""),
+		Usage:     usage,
+		Truncated: truncated,
 	}, nil
 }
 
