@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -46,6 +47,8 @@ var configDirFn = configDir
 
 const idFileName = "installation_id"
 
+var uuidV4Re = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+
 var (
 	installOnce sync.Once
 	installID   string
@@ -64,7 +67,7 @@ func getOrCreateID() string {
 
 		if data, err := os.ReadFile(path); err == nil {
 			id := strings.TrimSpace(string(data))
-			if len(id) == 36 {
+			if uuidV4Re.MatchString(id) {
 				installID = id
 				return
 			}
@@ -75,7 +78,7 @@ func getOrCreateID() string {
 			return
 		}
 		_ = os.MkdirAll(dir, 0o755)
-		_ = os.WriteFile(path, []byte(id+"\n"), 0o644)
+		_ = os.WriteFile(path, []byte(id+"\n"), 0o600)
 		installID = id
 	})
 	return installID
