@@ -17,8 +17,10 @@ func ensureCommitFetched(sha string) {
 		return
 	}
 	// Try to fetch the specific commit. GitHub allows fetching reachable
-	// SHAs. Ignore errors — the caller will handle a missing object.
-	exec.Command("git", "fetch", "origin", sha, "--depth=1").Run() //nolint:errcheck
+	// SHAs. Log on failure but continue — the caller will handle a missing object.
+	if err := exec.Command("git", "fetch", "--depth=1", "origin", sha).Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not fetch commit %s from origin: %v\n", shortSHA(sha), err)
+	}
 }
 
 // isAncestor checks if the given SHA is an ancestor of HEAD.
