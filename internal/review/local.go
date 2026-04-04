@@ -2,6 +2,7 @@ package review
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -88,6 +89,23 @@ func workingTreeDiff(files []string) (string, error) {
 		return "", fmt.Errorf("git diff HEAD: %w", err)
 	}
 	return string(out), nil
+}
+
+// appendWorkingTreeDiff appends uncommitted changes (scoped to prFiles) to
+// diff, returning the combined result. Used by both platform implementations.
+func appendWorkingTreeDiff(diff string, prFiles []string) (string, error) {
+	wtDiff, err := workingTreeDiff(prFiles)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not compute working-tree diff: %v\n", err)
+		return diff, nil
+	}
+	if wtDiff == "" {
+		return diff, nil
+	}
+	if diff == "" {
+		return wtDiff, nil
+	}
+	return diff + "\n" + wtDiff, nil
 }
 
 // detectDefaultBranch returns "main" or "master" based on what exists locally.

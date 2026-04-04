@@ -78,19 +78,7 @@ func (l *LocalPlatform) GetIncrementalDiff(baseSHA string, prFiles []string) (st
 	}
 
 	// Always include uncommitted changes in local mode.
-	wtDiff, err := workingTreeDiff(prFiles)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not compute working-tree diff: %v\n", err)
-		return diff, nil
-	}
-	if wtDiff == "" {
-		return diff, nil
-	}
-
-	if diff == "" {
-		return wtDiff, nil
-	}
-	return diff + "\n" + wtDiff, nil
+	return appendWorkingTreeDiff(diff, prFiles)
 }
 
 func (l *LocalPlatform) ReportUsage(tracker *UsageTracker) {
