@@ -102,8 +102,13 @@ func parseHunkNewRanges(diffText string) []lineRange {
 		}
 		count := 1
 		if len(parts) == 2 {
-			if c, err := strconv.Atoi(parts[1]); err == nil && c > 0 {
-				count = c
+			if c, err := strconv.Atoi(parts[1]); err == nil {
+				if c == 0 {
+					continue // pure deletion hunk — no new lines
+				}
+				if c > 0 {
+					count = c
+				}
 			}
 		}
 		ranges = append(ranges, lineRange{start: start, end: start + count - 1})
@@ -175,11 +180,14 @@ func ExtractFileSnippet(content string, findingLine int, diffText string, maxLin
 	}
 	if total > maxLines {
 		// Find which merged range contains the finding line.
+		// When findingLine is invalid (<= 0), default to the first range.
 		findingIdx := 0
-		for i, r := range merged {
-			if findingLine >= r.start && findingLine <= r.end {
-				findingIdx = i
-				break
+		if findingLine > 0 {
+			for i, r := range merged {
+				if findingLine >= r.start && findingLine <= r.end {
+					findingIdx = i
+					break
+				}
 			}
 		}
 		// Start with the finding range, then add others.
@@ -187,12 +195,19 @@ func ExtractFileSnippet(content string, findingLine int, diffText string, maxLin
 		kept := make([]bool, len(merged))
 		kept[findingIdx] = true
 		size := merged[findingIdx].end - merged[findingIdx].start + 1
-		if size > budget {
-			// Truncate even the finding range around the finding line.
+		if size > budget && findingLine > 0 {
+			// Truncate the finding range around the finding line.
 			half := budget / 2
 			merged[findingIdx] = lineRange{
 				start: max(1, findingLine-half),
 				end:   min(totalLines, findingLine+half),
+			}
+			size = merged[findingIdx].end - merged[findingIdx].start + 1
+		} else if size > budget {
+			// No valid finding line — just take the first maxLines of the range.
+			merged[findingIdx] = lineRange{
+				start: merged[findingIdx].start,
+				end:   min(totalLines, merged[findingIdx].start+budget-1),
 			}
 			size = merged[findingIdx].end - merged[findingIdx].start + 1
 		}
@@ -523,9 +538,9 @@ func writeFileSnippet(b *strings.Builder, snippet string) {
 		return
 	}
 	b.WriteString("## Current File Content (around finding)\n")
-	b.WriteString("This shows the file as it exists NOW (after the changes). Use it to understand the final code structure and control flow.\n\n```\n")
+	b.WriteString("This shows the file as it exists NOW (after the changes). Use it to understand the final code structure and control flow.\n\n~~~\n")
 	b.WriteString(snippet)
-	b.WriteString("```\n\n")
+	b.WriteString("~~~\n\n")
 }
 
 // writeFinding writes the finding section to the prompt.

@@ -84,6 +84,33 @@ func TestExtractFileSnippet_NoDiff(t *testing.T) {
 	}
 }
 
+func TestExtractFileSnippet_ZeroCountHunk(t *testing.T) {
+	// A hunk with count=0 (pure deletion) should not produce a range.
+	ranges := parseHunkNewRanges("@@ -5,3 +10,0 @@\n-deleted line\n")
+	if len(ranges) != 0 {
+		t.Errorf("expected 0 ranges for zero-count hunk, got %d", len(ranges))
+	}
+}
+
+func TestExtractFileSnippet_FindingLineZero(t *testing.T) {
+	var lines []string
+	for i := 1; i <= 100; i++ {
+		lines = append(lines, fmt.Sprintf("line %d", i))
+	}
+	content := strings.Join(lines, "\n")
+	diff := "@@ -40,10 +40,10 @@\n+changed\n"
+
+	// findingLine=0 should not panic and should anchor to hunk area.
+	snippet := ExtractFileSnippet(content, 0, diff, 50)
+	if snippet == "" {
+		t.Fatal("expected non-empty snippet even with findingLine=0")
+	}
+	// Should contain hunk area, not be anchored to line 0.
+	if !strings.Contains(snippet, "40: line 40") {
+		t.Error("snippet should include hunk area when findingLine is 0")
+	}
+}
+
 func TestExtractFileSnippet_EmptyContent(t *testing.T) {
 	snippet := ExtractFileSnippet("", 10, "@@ -1,5 +1,5 @@\n", 300)
 	if snippet != "" {
