@@ -3,7 +3,9 @@ package review
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -148,15 +150,56 @@ type ReviewPolicy struct {
 	Ignore  []string `yaml:"ignore"`
 }
 
-// LocalConfigPath returns the path to the user-level local config at
-// ~/.codecanary/config.yml. This is separate from the repo-level config
-// (.codecanary/config.yml) which is used by GitHub Actions.
+// safeSlugSegment matches valid owner/repo name characters (GitHub-compatible).
+var safeSlugSegment = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$`)
+
+// repoSlug returns "owner/repo" derived from the git remote origin URL
+// of the current working directory. Supports HTTPS, SSH, and SCP-style URLs.
+func repoSlug() (string, error) {
+	out, err := exec.Command("git", "remote", "get-url", "origin").Output()
+	if err != nil {
+		return "", fmt.Errorf("could not detect git remote: %w (are you in a git repo with an origin remote?)", err)
+	}
+	url := strings.TrimSpace(string(out))
+
+	// SCP-style (no ://): git@github.com:owner/repo.git
+	if !strings.Contains(url, "://") {
+		if i := strings.Index(url, ":"); i >= 0 {
+			url = url[i+1:]
+		}
+	} else {
+		// HTTPS/SSH: strip scheme + host, keep path
+		url = url[strings.Index(url, "://")+3:]
+		if k := strings.Index(url, "/"); k >= 0 {
+			url = url[k+1:]
+		}
+	}
+	url = strings.TrimSuffix(url, ".git")
+
+	parts := strings.SplitN(url, "/", 3)
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		return "", fmt.Errorf("could not parse owner/repo from remote origin")
+	}
+	owner, repo := parts[0], parts[1]
+	if !safeSlugSegment.MatchString(owner) || !safeSlugSegment.MatchString(repo) {
+		return "", fmt.Errorf("unsafe characters in repo slug %q/%q", owner, repo)
+	}
+	return owner + "/" + repo, nil
+}
+
+// LocalConfigPath returns the path to the per-repo local config at
+// ~/.codecanary/repos/<owner>/<repo>/config.yml. Each repo gets its
+// own config so different repos can use different providers/models.
 func LocalConfigPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("could not determine home directory: %w", err)
 	}
-	return filepath.Join(home, ".codecanary", "config.yml"), nil
+	slug, err := repoSlug()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".codecanary", "repos", slug, "config.yml"), nil
 }
 
 // findReviewPolicy looks for review.yml in the repo. It first checks
@@ -271,9 +314,9 @@ func FindRepoConfig() (string, error) {
 
 // FindConfig returns the config path for the current environment.
 // In GitHub Actions it returns the repo-level .codecanary/config.yml.
-// Otherwise it returns ~/.codecanary/config.yml (local). Each environment
-// must have its own config — there is no fallback to avoid silently using
-// the wrong provider/credentials.
+// Otherwise it returns the per-repo local config at
+// ~/.codecanary/repos/<owner>/<repo>/config.yml, falling back to the
+// legacy global ~/.codecanary/config.yml with a deprecation warning.
 func FindConfig() (string, error) {
 	if os.Getenv("GITHUB_ACTIONS") != "" {
 		return FindRepoConfig()
@@ -283,8 +326,19 @@ func FindConfig() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if _, err := os.Stat(localPath); err != nil {
-		return "", fmt.Errorf("no local config found at %s — run `codecanary setup local`", localPath)
+	if _, err := os.Stat(localPath); err == nil {
+		return localPath, nil
 	}
-	return localPath, nil
+
+	// Fall back to legacy global config.
+	// localPath is ~/.codecanary/repos/<owner>/<repo>/config.yml;
+	// walk up from repos/<owner>/<repo>/ to ~/.codecanary/.
+	legacyPath := filepath.Join(filepath.Dir(localPath), "..", "..", "..", "config.yml")
+	if _, err := os.Stat(legacyPath); err == nil {
+		Stderrf(ansiYellow, "Warning: using legacy global config at %s\n", legacyPath)
+		Stderrf(ansiYellow, "  Run `codecanary setup local` to create a per-repo config at %s\n", localPath)
+		return legacyPath, nil
+	}
+
+	return "", fmt.Errorf("no local config found at %s — run `codecanary setup local`", localPath)
 }

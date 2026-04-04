@@ -51,7 +51,7 @@ func RunLocal() error {
 		return err
 	}
 
-	// 4. Generate or write config to ~/.codecanary/config.yml (user-level).
+	// 4. Generate or write config to ~/.codecanary/repos/<owner>/<repo>/config.yml.
 	configPath, err := review.LocalConfigPath()
 	if err != nil {
 		return err
