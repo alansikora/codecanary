@@ -35,6 +35,22 @@ func CheckClaudeCLI() error {
 	return nil
 }
 
+// doValidationRequest executes a validation HTTP request with a shared timeout
+// and checks for connection failure and invalid API key (401).
+// On success the caller must close resp.Body.
+func doValidationRequest(req *http.Request) (*http.Response, error) {
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("connection failed: %w", err)
+	}
+	if resp.StatusCode == 401 {
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("invalid API key (401 Unauthorized)")
+	}
+	return resp, nil
+}
+
 func validateAnthropic(apiKey string) error {
 	body := `{"model":"claude-haiku-4-5-20251001","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}`
 	req, err := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", strings.NewReader(body))
@@ -45,16 +61,12 @@ func validateAnthropic(apiKey string) error {
 	req.Header.Set("x-api-key", apiKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
 
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := doValidationRequest(req)
 	if err != nil {
-		return fmt.Errorf("connection failed: %w", err)
+		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode == 401 {
-		return fmt.Errorf("invalid API key (401 Unauthorized)")
-	}
 	if resp.StatusCode == 403 {
 		return fmt.Errorf("API key does not have permission (403 Forbidden)")
 	}
@@ -74,16 +86,12 @@ func validateOpenAI(apiKey string) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := doValidationRequest(req)
 	if err != nil {
-		return fmt.Errorf("connection failed: %w", err)
+		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode == 401 {
-		return fmt.Errorf("invalid API key (401 Unauthorized)")
-	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 500 {
 		return nil
 	}
@@ -98,16 +106,12 @@ func validateOpenRouter(apiKey string) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := doValidationRequest(req)
 	if err != nil {
-		return fmt.Errorf("connection failed: %w", err)
+		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode == 401 {
-		return fmt.Errorf("invalid API key (401 Unauthorized)")
-	}
 	if resp.StatusCode != 200 {
 		return fmt.Errorf("unexpected status %d from OpenRouter API", resp.StatusCode)
 	}
