@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/alansikora/codecanary/internal/credentials"
+	"github.com/alansikora/codecanary/internal/review"
 )
 
 // RunLocal executes the interactive local setup wizard.
@@ -25,18 +26,10 @@ func RunLocal() error {
 		}
 		fmt.Fprintf(os.Stderr, "\n%s\n\n", ProviderGuidance("claude"))
 	} else {
-		// Collect and validate API key.
-		apiKey, err := InputAPIKey(provider)
+		apiKey, err := CollectCredential(provider)
 		if err != nil {
 			return err
 		}
-
-		fmt.Fprintf(os.Stderr, "Validating API key...")
-		if err := ValidateAPIKey(provider, apiKey); err != nil {
-			fmt.Fprintf(os.Stderr, " failed\n")
-			return fmt.Errorf("API key validation failed: %w", err)
-		}
-		fmt.Fprintf(os.Stderr, " valid!\n")
 
 		// Store credential (system keychain, or ~/.codecanary/credentials.json fallback).
 		if err := credentials.Store(apiKey); err != nil {
@@ -58,14 +51,19 @@ func RunLocal() error {
 		return err
 	}
 
-	// 4. Generate or write config.
-	configPath := filepath.Join(".codecanary", "config.yml")
+	// 4. Generate or write config to ~/.codecanary/config.yml (user-level).
+	configPath, err := review.LocalConfigPath()
+	if err != nil {
+		return err
+	}
 	if _, err := writeConfig(provider, reviewModel, triageModel, configPath); err != nil {
 		return err
 	}
 
-	// 5. Generate placeholder review policy.
-	if _, err := writeReviewPolicy(configPath); err != nil {
+	// 5. Generate placeholder review policy in the repo (.codecanary/review.yml).
+	// writeReviewPolicy derives the directory from its argument.
+	repoConfigPath := filepath.Join(".codecanary", "config.yml")
+	if _, err := writeReviewPolicy(repoConfigPath); err != nil {
 		return err
 	}
 

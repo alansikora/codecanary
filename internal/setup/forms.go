@@ -80,6 +80,39 @@ func InputAPIKey(provider string) (string, error) {
 	return strings.TrimSpace(apiKey), err
 }
 
+// CollectCredential handles provider-specific credential collection:
+// OAuth flow for providers that support it, manual API key input otherwise.
+// The credential is always validated before being returned.
+func CollectCredential(provider string) (string, error) {
+	if oauthCfg := review.GetOAuthConfig(provider); oauthCfg != nil {
+		token, err := auth.OAuthToken(oauthCfg.ClientID, oauthCfg.AuthorizeURL, oauthCfg.TokenURL, oauthCfg.Scope)
+		if err != nil {
+			return "", fmt.Errorf("OAuth authentication failed: %w", err)
+		}
+
+		fmt.Fprintf(os.Stderr, "Validating OAuth token...")
+		if err := ValidateAPIKey(provider, token); err != nil {
+			fmt.Fprintf(os.Stderr, " failed\n")
+			return "", fmt.Errorf("OAuth token validation failed: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, " valid!\n")
+		return token, nil
+	}
+
+	key, err := InputAPIKey(provider)
+	if err != nil {
+		return "", err
+	}
+
+	fmt.Fprintf(os.Stderr, "Validating API key...")
+	if err := ValidateAPIKey(provider, key); err != nil {
+		fmt.Fprintf(os.Stderr, " failed\n")
+		return "", fmt.Errorf("API key validation failed: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, " valid!\n")
+	return key, nil
+}
+
 // SelectModel prompts the user to choose a review model.
 // The provider's suggested review model is pre-selected.
 func SelectModel(provider string) (string, error) {

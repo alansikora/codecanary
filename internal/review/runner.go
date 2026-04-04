@@ -2,7 +2,6 @@ package review
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -499,46 +498,21 @@ func runTriage(
 	return prompt, fixed, stillOpenFindings
 }
 
-// loadReviewConfig loads the review config from the given path (or default).
-// When the specified path does not exist, it falls back to FindConfig which
-// discovers both the new (.codecanary/config.yml) and legacy (.codecanary.yml)
-// locations. Returns an empty config if no config file is found anywhere.
+// loadReviewConfig loads the review config from the given path, or
+// auto-detects via FindConfig() when configPath is empty.
 func loadReviewConfig(configPath string) (*ReviewConfig, error) {
 	if configPath == "" {
-		configPath = ".codecanary/config.yml"
+		found, err := FindConfig()
+		if err != nil {
+			return nil, err
+		}
+		configPath = found
 	}
 	cfg, err := LoadConfig(configPath)
-	if err == nil {
-		return cfg, nil
+	if err != nil {
+		return nil, fmt.Errorf("loading config: %w", err)
 	}
-
-	// If the explicit path doesn't exist, try discovery.
-	if errors.Is(err, os.ErrNotExist) || os.IsNotExist(err) {
-		if found, findErr := FindConfig(); findErr == nil {
-			cfg, err = LoadConfig(found)
-			if err != nil {
-				return nil, fmt.Errorf("loading config: %w", err)
-			}
-			return cfg, nil
-		}
-		// No config found anywhere.
-		return nil, fmt.Errorf("no config file found — create .codecanary/config.yml (see https://github.com/alansikora/codecanary)")
-	}
-
-	var pathErr *os.PathError
-	if errors.As(err, &pathErr) {
-		// Path error (e.g. permission denied on missing dir) — try discovery.
-		if found, findErr := FindConfig(); findErr == nil {
-			cfg, err = LoadConfig(found)
-			if err != nil {
-				return nil, fmt.Errorf("loading config: %w", err)
-			}
-			return cfg, nil
-		}
-		return &ReviewConfig{}, nil
-	}
-
-	return nil, fmt.Errorf("loading config: %w", err)
+	return cfg, nil
 }
 
 // shortSHA returns the first 8 characters of a SHA, or the full string if shorter.

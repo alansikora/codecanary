@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/alansikora/codecanary/internal/auth"
-	"github.com/alansikora/codecanary/internal/credentials"
 	"github.com/alansikora/codecanary/internal/review"
 	"github.com/charmbracelet/huh"
 	"gopkg.in/yaml.v3"
@@ -145,29 +144,9 @@ func RunGitHub(canary bool) error {
 	}
 
 	if needNewSecret {
-		var apiKey string
-		if oauthCfg := review.GetOAuthConfig(provider); oauthCfg != nil {
-			// OAuth flow.
-			token, err := auth.OAuthToken(oauthCfg.ClientID, oauthCfg.AuthorizeURL, oauthCfg.TokenURL, oauthCfg.Scope)
-			if err != nil {
-				return fmt.Errorf("OAuth authentication failed: %w", err)
-			}
-			apiKey = token
-		} else {
-			// Collect API key.
-			key, err := InputAPIKey(provider)
-			if err != nil {
-				return err
-			}
-
-			fmt.Fprintf(os.Stderr, "Validating API key...")
-			if err := ValidateAPIKey(provider, key); err != nil {
-				fmt.Fprintf(os.Stderr, " failed\n")
-				return fmt.Errorf("API key validation failed: %w", err)
-			}
-			fmt.Fprintf(os.Stderr, " valid!\n")
-
-			apiKey = key
+		apiKey, err := CollectCredential(provider)
+		if err != nil {
+			return err
 		}
 
 		// Set GitHub secret.
@@ -176,11 +155,6 @@ func RunGitHub(canary bool) error {
 			return fmt.Errorf("setting secret: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, "  Done!\n\n")
-
-		// Store locally for `codecanary review` usage (after remote secret succeeds).
-		if err := credentials.Store(apiKey); err != nil {
-			fmt.Fprintf(os.Stderr, "Note: could not store credential locally: %v\n", err)
-		}
 	} else {
 		fmt.Fprintf(os.Stderr, "Keeping existing %s secret.\n\n", secretName)
 	}
@@ -285,6 +259,7 @@ func RunGitHub(canary bool) error {
 	fmt.Fprintf(os.Stderr, "  %s\n", strings.TrimSpace(string(prOut)))
 	fmt.Fprintf(os.Stderr, "\nDone! Merge the PR to enable automated reviews.\n")
 	fmt.Fprintf(os.Stderr, "Customize review rules and context in .codecanary/review.yml\n")
+	fmt.Fprintf(os.Stderr, "To also review locally, run: codecanary setup local\n")
 
 	return nil
 }
