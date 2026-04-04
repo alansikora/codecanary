@@ -124,6 +124,8 @@ func FormatMarkdown(result *ReviewResult) string {
 }
 
 // severityLevels defines the canonical ordering of severity levels.
+// NOTE: validSeverities in config.go is derived from this slice,
+// so any entry added here becomes an accepted config value.
 var severityLevels = []string{"critical", "bug", "warning", "suggestion", "nitpick"}
 
 // countSeverities counts findings by severity across one or more lists.
