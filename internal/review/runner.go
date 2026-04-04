@@ -215,14 +215,17 @@ func Run(opts RunOptions) error {
 	pr := opts.PR
 
 	// 1. Resolve repo name — needed for GitHub API calls and telemetry.
+	var detectRepoErr error
 	if opts.Repo == "" {
-		detected, _ := DetectRepo()
-		opts.Repo = detected
+		opts.Repo, detectRepoErr = DetectRepo()
 	}
 
 	// 2. Fetch PR data if not pre-fetched (GitHub mode).
 	if pr == nil {
 		if opts.Repo == "" {
+			if detectRepoErr != nil {
+				return fmt.Errorf("detecting repo: %w", detectRepoErr)
+			}
 			return fmt.Errorf("detecting repo: could not determine repository")
 		}
 		// Propagate resolved repo to the platform adapter.
