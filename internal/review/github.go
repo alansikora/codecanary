@@ -501,7 +501,7 @@ func FetchReviewThreads(repo string, prNumber int) ([]ReviewThread, error) {
 		}
 
 		line := comment.Line
-		if line == 0 && comment.OriginalLine > 0 {
+		if comment.Outdated && line == 0 && comment.OriginalLine > 0 {
 			line = comment.OriginalLine
 		}
 
