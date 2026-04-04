@@ -331,8 +331,7 @@ func writeProjectDocs(b *strings.Builder, docs map[string]string) {
 	b.WriteString("The following project documentation describes conventions and standards for this codebase. Use these to inform your review — flag violations of these conventions when relevant.\n\n")
 	for _, path := range slices.Sorted(maps.Keys(docs)) {
 		safe := escapePromptTag(docs[path], "project-doc")
-		safePath := escapeAllTags(path)
-		fmt.Fprintf(b, "<project-doc path=%q>\n%s\n</project-doc>\n\n", safePath, safe)
+		fmt.Fprintf(b, "<project-doc path=%q>\n%s\n</project-doc>\n\n", path, safe)
 	}
 }
 
