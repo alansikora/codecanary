@@ -30,10 +30,20 @@ export default {
         );
       }
 
-      const str = (key: string) => (body[key] as string) || "";
-      const num = (key: string) => (body[key] as number) || 0;
+      const str = (key: string) =>
+        typeof body[key] === "string" ? (body[key] as string) : "";
+      const num = (key: string) =>
+        typeof body[key] === "number" ? (body[key] as number) : 0;
 
-      const bySeverity = (body.by_severity as Record<string, number>) || {};
+      const rawSeverity = body.by_severity;
+      const bySeverity: Record<string, number> = {};
+      if (rawSeverity && typeof rawSeverity === "object" && !Array.isArray(rawSeverity)) {
+        for (const [k, v] of Object.entries(rawSeverity as Record<string, unknown>)) {
+          bySeverity[k] = typeof v === "number" ? v : 0;
+        }
+      }
+
+      const sev = (key: string) => bySeverity[key] || 0;
 
       env.TELEMETRY.writeDataPoint({
         indexes: [installationId],
@@ -54,12 +64,12 @@ export default {
           num("cache_read_tokens"), // double5
           num("cost_usd"), // double6
           num("duration_ms"), // double7
-          body.is_incremental ? 1 : 0, // double8
-          bySeverity["critical"] || 0, // double9
-          bySeverity["bug"] || 0, // double10
-          bySeverity["warning"] || 0, // double11
-          bySeverity["suggestion"] || 0, // double12
-          bySeverity["nitpick"] || 0, // double13
+          body.is_incremental === true ? 1 : 0, // double8
+          sev("critical"), // double9
+          sev("bug"), // double10
+          sev("warning"), // double11
+          sev("suggestion"), // double12
+          sev("nitpick"), // double13
         ],
       });
 
