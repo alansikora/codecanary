@@ -122,20 +122,14 @@ func prepareReview(pr *PRData, configPath string) (*reviewContext, error) {
 	}, nil
 }
 
-// processFindings parses Claude's output, filters findings to PR files,
-// validates line proximity against the PR diff, removes non-actionable
-// findings, and tags status for incremental reviews.
+// validateFindings filters findings to PR files, validates line proximity
+// against the PR diff, and removes non-actionable findings.
 //
 // prDiff is always the PR diff (base..head from GitHub or merge-base diff
 // locally) — never the incremental diff. This ensures findings are scoped to
 // the PR's own changes regardless of what diff the LLM prompt contained,
 // filtering out rebase noise and hallucinated line numbers.
-func processFindings(claudeText string, prFiles []string, prDiff string, incremental bool) ([]Finding, error) {
-	findings, err := ParseFindings(claudeText)
-	if err != nil {
-		return nil, fmt.Errorf("parsing findings: %w", err)
-	}
-
+func validateFindings(findings []Finding, prFiles []string, prDiff string) []Finding {
 	fileSet := make(map[string]bool, len(prFiles))
 	for _, f := range prFiles {
 		fileSet[f] = true
@@ -172,7 +166,18 @@ func processFindings(claudeText string, prFiles []string, prDiff string, increme
 			fmt.Fprintf(os.Stderr, "Dropped finding outside PR scope: %s (%s:%d)\n", f.ID, f.File, f.Line)
 		}
 	}
-	findings = FilterNonActionable(lineValid)
+	return FilterNonActionable(lineValid)
+}
+
+// processFindings parses Claude's output, validates findings against the PR
+// diff, and tags status for incremental reviews.
+func processFindings(claudeText string, prFiles []string, prDiff string, incremental bool) ([]Finding, error) {
+	findings, err := ParseFindings(claudeText)
+	if err != nil {
+		return nil, fmt.Errorf("parsing findings: %w", err)
+	}
+
+	findings = validateFindings(findings, prFiles, prDiff)
 
 	if incremental {
 		for i := range findings {
@@ -361,10 +366,11 @@ func Run(opts RunOptions) error {
 			if !claudeOut.Truncated {
 				return err
 			}
-			// Truncation broke the JSON — salvage any complete findings.
+			// Truncation broke the JSON — salvage any complete findings
+			// and run them through the same validation pipeline.
 			if salvaged, sErr := ParseFindingsSalvage(claudeOut.Text); sErr == nil && len(salvaged) > 0 {
-				Stderrf(ansiYellow, "Salvaged %d finding(s) from truncated response\n", len(salvaged))
-				findings = salvaged
+				findings = validateFindings(salvaged, pr.Files, pr.Diff)
+				Stderrf(ansiYellow, "Salvaged %d finding(s) from truncated response\n", len(findings))
 			} else {
 				Stderrf(ansiYellow, "Could not parse truncated response — proceeding with no findings\n")
 				findings = nil

@@ -143,10 +143,15 @@ func FilterNonActionable(findings []Finding) []Finding {
 	return kept
 }
 
+// maxSalvageScan limits how far back ParseFindingsSalvage scans from the end
+// of the truncated output. A single JSON finding is typically under 1 KB, so
+// 8 KB is enough to find the last complete object without doing O(n²) work
+// on very large responses.
+const maxSalvageScan = 8192
+
 // ParseFindingsSalvage attempts to recover complete findings from a truncated
-// JSON response. It locates the JSON array, then tries progressively shorter
-// substrings ending at each "}," or "}\n]" boundary to find the longest valid
-// prefix that parses.
+// JSON response. It locates the JSON array, then scans backwards from the
+// truncation point to find the longest valid JSON prefix that parses.
 func ParseFindingsSalvage(output string) ([]Finding, error) {
 	// Find the start of the JSON array inside a ```json fence.
 	fenceStart := strings.Index(output, "```json")
@@ -165,9 +170,15 @@ func ParseFindingsSalvage(output string) ([]Finding, error) {
 	arrStart += searchFrom
 	body := output[arrStart:]
 
-	// Walk backwards from the end looking for a "}," or "}" that lets us
-	// close the array cleanly. Try each candidate position.
-	for i := len(body) - 1; i >= 0; i-- {
+	// Limit the backward scan to avoid O(n²) on large responses.
+	scanFrom := len(body) - 1
+	scanTo := 0
+	if scanFrom-maxSalvageScan > scanTo {
+		scanTo = scanFrom - maxSalvageScan
+	}
+
+	// Walk backwards looking for a "}" that lets us close the array cleanly.
+	for i := scanFrom; i >= scanTo; i-- {
 		if body[i] != '}' {
 			continue
 		}

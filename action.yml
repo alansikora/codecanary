@@ -89,7 +89,11 @@ runs:
     - name: Fetch PR history
       shell: bash
       env:
-        GH_TOKEN: ${{ steps.review-token.outputs.token }}
+        GH_TOKEN: ${{ github.token }}
+      # Best-effort: deepening by the PR commit count makes the previous review
+      # SHA available for incremental diffs in the common case (new commits pushed).
+      # After force-pushes or rebases the old SHA is rewritten and won't be found;
+      # the review falls back to the full PR diff automatically.
       run: |
         PR_NUMBER="${{ github.event.pull_request.number }}"
         if [ -n "$PR_NUMBER" ]; then
