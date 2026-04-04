@@ -411,12 +411,8 @@ func EvaluateThreadsParallel(triaged []TriagedThread, provider ModelProvider, cf
 	var wg sync.WaitGroup
 
 	for i, t := range triaged {
-		if t.Class == TriageSkip {
+		if t.Class == TriageSkip || t.Class == TriageFileRemovedFromPR {
 			results[i] = ThreadResolution{Index: t.Index, Resolved: false}
-			continue
-		}
-		if t.Class == TriageFileRemovedFromPR {
-			results[i] = ThreadResolution{Index: t.Index, Resolved: true, Reason: "file_removed"}
 			continue
 		}
 		// Soft budget cap: skip remaining evaluations if budget is exceeded.

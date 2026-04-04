@@ -436,7 +436,7 @@ func runTriage(
 	if opts.DryRun {
 		LogTriage(triaged)
 		for _, t := range triaged {
-			if t.Class == TriageSkip {
+			if t.Class == TriageSkip || t.Class == TriageFileRemovedFromPR {
 				continue
 			}
 			fmt.Print("\n---\n\n")
@@ -445,15 +445,28 @@ func runTriage(
 		fmt.Print("\n---\n\n")
 	} else {
 		LogTriage(triaged)
+
+		// Pre-evaluation: auto-resolve file-removed threads (Go-only, no LLM).
+		for _, t := range triaged {
+			if t.Class == TriageFileRemovedFromPR {
+				fixed = append(fixed, fixedThread{Index: t.Index, Reason: "file_removed"})
+			}
+		}
+		if len(fixed) > 0 {
+			platform.HandleResolutions(reviewThreads, fixed)
+		}
+
+		// LLM evaluation for remaining threads.
 		needsEval := countNonSkipped(triaged)
 		if needsEval > 0 {
 			resolutions := EvaluateThreadsParallel(triaged, triageProvider, cfg, 3, tracker, cfg.MaxBudgetUSD)
 			LogResolutions(triaged, resolutions)
-			fixed = toFixedThreads(resolutions)
-
-			// Delegate resolution handling to the platform adapter.
-			platform.HandleResolutions(reviewThreads, fixed)
-		} else {
+			llmFixed := toFixedThreads(resolutions)
+			if len(llmFixed) > 0 {
+				platform.HandleResolutions(reviewThreads, llmFixed)
+				fixed = append(fixed, llmFixed...)
+			}
+		} else if len(fixed) == 0 {
 			fmt.Fprintf(os.Stderr, "No threads need re-evaluation — skipping Claude\n")
 		}
 	}
