@@ -178,6 +178,11 @@ func ParseFindingsSalvage(output string) ([]Finding, error) {
 	}
 
 	// Walk backwards looking for a "}" that lets us close the array cleanly.
+	// Note: this doesn't track string boundaries, so } inside JSON string
+	// values (e.g. code snippets) will trigger false candidates and wasted
+	// Unmarshal attempts. A forward bracket-matched pass would avoid this but
+	// adds complexity for a rare fallback path. Worst case: salvage fails and
+	// the caller proceeds with no findings (truncation warning is shown).
 	for i := scanFrom; i >= scanTo; i-- {
 		if body[i] != '}' {
 			continue
