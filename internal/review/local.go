@@ -7,10 +7,25 @@ import (
 	"strings"
 )
 
+// ensureCommitFetched makes sure sha exists in the local object store.
+// In shallow clones (e.g. GitHub Actions) the previous review's base commit
+// may be missing; this fetches it from origin so that ancestry checks and
+// incremental diffs can work.
+func ensureCommitFetched(sha string) {
+	// Already available locally — nothing to do.
+	if exec.Command("git", "cat-file", "-e", sha).Run() == nil {
+		return
+	}
+	// Try to fetch the specific commit. GitHub allows fetching reachable
+	// SHAs. Ignore errors — the caller will handle a missing object.
+	exec.Command("git", "fetch", "origin", sha, "--depth=1").Run() //nolint:errcheck
+}
+
 // isAncestor checks if the given SHA is an ancestor of HEAD.
 // Returns (false, nil) when sha is valid but not an ancestor (rebase).
 // Returns (false, err) when the git command itself fails.
 func isAncestor(sha string) (bool, error) {
+	ensureCommitFetched(sha)
 	err := exec.Command("git", "merge-base", "--is-ancestor", sha, "HEAD").Run()
 	if err == nil {
 		return true, nil
