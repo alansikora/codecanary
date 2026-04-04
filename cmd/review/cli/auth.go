@@ -89,10 +89,13 @@ var authRefreshCmd = &cobra.Command{
 		}
 
 		// Detect installs.
-		hasLocal := hasLocalInstall()
+		hasLocal, localErr := hasLocalInstall()
 		hasRemote, repo := hasRemoteInstall()
 
 		if !hasLocal && !hasRemote {
+			if localErr != "" {
+				return fmt.Errorf("%s\n\nRun this command from inside a git repo with an origin remote, or run `codecanary setup` first", localErr)
+			}
 			return fmt.Errorf("no CodeCanary installation found — run `codecanary setup` first")
 		}
 
@@ -290,13 +293,15 @@ func promptAndStoreNewKey(provider string, target refreshTarget, repo string) er
 }
 
 // hasLocalInstall checks if the per-repo local config exists.
-func hasLocalInstall() bool {
+// Returns (found, errMsg) where errMsg is non-empty when the check
+// could not run (e.g. not in a git repo) — callers should surface it.
+func hasLocalInstall() (bool, string) {
 	localPath, err := review.LocalConfigPath()
 	if err != nil {
-		return false
+		return false, fmt.Sprintf("could not check local install: %v", err)
 	}
 	_, err = os.Stat(localPath)
-	return err == nil
+	return err == nil, ""
 }
 
 // hasRemoteInstall checks if a .github/workflows/codecanary.yml exists and

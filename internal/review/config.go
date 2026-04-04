@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -149,6 +150,9 @@ type ReviewPolicy struct {
 	Ignore  []string `yaml:"ignore"`
 }
 
+// safeSlugSegment matches valid owner/repo name characters (GitHub-compatible).
+var safeSlugSegment = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
+
 // repoSlug returns "owner/repo" derived from the git remote origin URL
 // of the current working directory. Supports HTTPS, SSH, and SCP-style URLs.
 func repoSlug() (string, error) {
@@ -158,14 +162,14 @@ func repoSlug() (string, error) {
 	}
 	url := strings.TrimSpace(string(out))
 
-	// SCP-style: git@github.com:owner/repo.git
-	if i := strings.Index(url, ":"); i >= 0 && !strings.Contains(url[:i], "/") {
-		url = url[i+1:]
+	// SCP-style (no ://): git@github.com:owner/repo.git
+	if !strings.Contains(url, "://") {
+		if i := strings.Index(url, ":"); i >= 0 {
+			url = url[i+1:]
+		}
 	} else {
 		// HTTPS/SSH: strip scheme + host, keep path
-		if j := strings.Index(url, "://"); j >= 0 {
-			url = url[j+3:]
-		}
+		url = url[strings.Index(url, "://")+3:]
 		if k := strings.Index(url, "/"); k >= 0 {
 			url = url[k+1:]
 		}
@@ -176,7 +180,11 @@ func repoSlug() (string, error) {
 	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
 		return "", fmt.Errorf("could not parse owner/repo from remote origin")
 	}
-	return parts[0] + "/" + parts[1], nil
+	owner, repo := parts[0], parts[1]
+	if !safeSlugSegment.MatchString(owner) || !safeSlugSegment.MatchString(repo) {
+		return "", fmt.Errorf("unsafe characters in repo slug %q/%q", owner, repo)
+	}
+	return owner + "/" + repo, nil
 }
 
 // LocalConfigPath returns the path to the per-repo local config at
@@ -307,7 +315,8 @@ func FindRepoConfig() (string, error) {
 // FindConfig returns the config path for the current environment.
 // In GitHub Actions it returns the repo-level .codecanary/config.yml.
 // Otherwise it returns the per-repo local config at
-// ~/.codecanary/repos/<owner>/<repo>/config.yml.
+// ~/.codecanary/repos/<owner>/<repo>/config.yml, falling back to the
+// legacy global ~/.codecanary/config.yml with a deprecation warning.
 func FindConfig() (string, error) {
 	if os.Getenv("GITHUB_ACTIONS") != "" {
 		return FindRepoConfig()
@@ -317,8 +326,21 @@ func FindConfig() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if _, err := os.Stat(localPath); err != nil {
-		return "", fmt.Errorf("no local config found at %s — run `codecanary setup local`", localPath)
+	if _, err := os.Stat(localPath); err == nil {
+		return localPath, nil
 	}
-	return localPath, nil
+
+	// Fall back to legacy global config.
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("no local config found — run `codecanary setup local`")
+	}
+	legacyPath := filepath.Join(home, ".codecanary", "config.yml")
+	if _, err := os.Stat(legacyPath); err == nil {
+		Stderrf(ansiYellow, "Warning: using legacy global config at %s\n", legacyPath)
+		Stderrf(ansiYellow, "  Run `codecanary setup local` to create a per-repo config at %s\n", localPath)
+		return legacyPath, nil
+	}
+
+	return "", fmt.Errorf("no local config found at %s — run `codecanary setup local`", localPath)
 }
