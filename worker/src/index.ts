@@ -112,22 +112,11 @@ export default {
 };
 
 async function handleCheckInstall(request: Request, url: URL, env: Env): Promise<Response> {
-  // Require a valid GitHub token to prevent anonymous enumeration / rate-limit abuse.
   const authHeader = request.headers.get("Authorization");
   if (!authHeader?.startsWith("Bearer ")) {
     return Response.json({ error: "Missing Authorization header" }, { status: 401 });
   }
   const ghToken = authHeader.slice(7);
-  const userResp = await fetch(`${GITHUB_API}/user`, {
-    headers: {
-      Authorization: `Bearer ${ghToken}`,
-      Accept: "application/vnd.github+json",
-      "User-Agent": "codecanary-token-proxy",
-    },
-  });
-  if (!userResp.ok) {
-    return Response.json({ error: "Invalid GitHub token" }, { status: 401 });
-  }
 
   const repo = url.searchParams.get("repo");
   if (!repo || repo.split("/").length !== 2) {
@@ -135,6 +124,22 @@ async function handleCheckInstall(request: Request, url: URL, env: Env): Promise
       { error: "Missing or invalid 'repo' parameter (expected owner/name)" },
       { status: 400 }
     );
+  }
+
+  // Verify the caller has access to this repo using their own token.
+  // This prevents probing installation status for repos the user can't see.
+  const repoResp = await fetch(`${GITHUB_API}/repos/${repo}`, {
+    headers: {
+      Authorization: `Bearer ${ghToken}`,
+      Accept: "application/vnd.github+json",
+      "User-Agent": "codecanary-token-proxy",
+    },
+  });
+  if (repoResp.status === 401) {
+    return Response.json({ error: "Invalid GitHub token" }, { status: 401 });
+  }
+  if (!repoResp.ok) {
+    return Response.json({ error: "Repository not accessible" }, { status: 403 });
   }
 
   try {
