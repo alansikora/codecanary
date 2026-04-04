@@ -36,6 +36,9 @@ var Endpoint = "https://telemetry.codecanary.sh/telemetry"
 // sendTimeout caps the HTTP POST duration.
 var sendTimeout = 2 * time.Second
 
+// pending tracks in-flight sends so Wait() can block until they complete.
+var pending sync.WaitGroup
+
 // configDirFn returns the path to ~/.codecanary/. Tests can override this.
 var configDirFn = configDir
 
@@ -171,7 +174,11 @@ func SendReview(e ReviewEvent) {
 	e.OS = runtime.GOOS
 	e.Arch = runtime.GOARCH
 	e.Timestamp = time.Now().UTC().Format(time.RFC3339)
-	go send(e) //nolint:errcheck
+	pending.Add(1)
+	go func() {
+		defer pending.Done()
+		send(e)
+	}()
 }
 
 // SendSetup fires a setup_completed event in a background goroutine.
@@ -193,7 +200,17 @@ func SendSetup(version, provider, platform string) {
 		Platform:       platform,
 		Timestamp:      time.Now().UTC().Format(time.RFC3339),
 	}
-	go send(e) //nolint:errcheck
+	pending.Add(1)
+	go func() {
+		defer pending.Done()
+		send(e)
+	}()
+}
+
+// Wait blocks until all in-flight telemetry sends complete (or time out).
+// Call this before process exit.
+func Wait() {
+	pending.Wait()
 }
 
 // ---------- Internal ----------
