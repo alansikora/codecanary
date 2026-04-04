@@ -87,7 +87,7 @@ func newOpenAIProvider(mc *ModelConfig, env []string) ModelProvider {
 	return &openaiProvider{model: mc.Model, apiBase: apiBase, keyEnv: keyEnv, env: env}
 }
 
-func (p *openaiProvider) Run(ctx context.Context, prompt string, opts RunOpts) (*claudeResult, error) {
+func (p *openaiProvider) Run(ctx context.Context, prompt string, opts RunOpts) (*providerResult, error) {
 	apiKey := lookupEnvVar(p.env, p.keyEnv)
 	if apiKey == "" {
 		return nil, fmt.Errorf("API key not found: set %s or run `codecanary setup local`", p.keyEnv)

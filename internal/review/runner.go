@@ -70,8 +70,8 @@ func resolveEnv() []string {
 	return filtered
 }
 
-// claudeResult holds the text output and usage metadata from an LLM call.
-type claudeResult struct {
+// providerResult holds the text output and usage metadata from an LLM call.
+type providerResult struct {
 	Text        string
 	Usage       CallUsage
 	ModelUsages []CallUsage // per-model breakdown from modelUsage map
@@ -185,7 +185,7 @@ func formatResult(result *ReviewResult, format string) (string, error) {
 
 // trackUsage records the usage from a Claude call. It prefers per-model
 // breakdowns from ModelUsages, falling back to the aggregate Usage.
-func trackUsage(tracker *UsageTracker, result *claudeResult, phase string) {
+func trackUsage(tracker *UsageTracker, result *providerResult, phase string) {
 	if len(result.ModelUsages) > 0 {
 		for i := range result.ModelUsages {
 			result.ModelUsages[i].Phase = phase

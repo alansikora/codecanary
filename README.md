@@ -260,11 +260,11 @@ func init() {
 
 ```go
 type ModelProvider interface {
-    Run(ctx context.Context, prompt string, opts RunOpts) (*claudeResult, error)
+    Run(ctx context.Context, prompt string, opts RunOpts) (*providerResult, error)
 }
 ```
 
-`Run` receives the full prompt and returns a `claudeResult` with the response text and a `CallUsage` struct (input/output/cache tokens, cost, duration). See `provider_openai.go` for a minimal example.
+`Run` receives the full prompt and returns a `providerResult` with the response text and a `CallUsage` struct (input/output/cache tokens, cost, duration). See `provider_openai.go` for a minimal example.
 
 If your provider uses an OpenAI-compatible chat completions API, reuse the shared `doChat` helper and types from `provider_openai_compat.go`.
 

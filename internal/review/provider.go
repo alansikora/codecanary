@@ -22,7 +22,7 @@ type RunOpts struct {
 // ProviderFactory in the providers map via an init() function.
 type ModelProvider interface {
 	// Run sends a prompt and returns the result text plus usage metadata.
-	Run(ctx context.Context, prompt string, opts RunOpts) (*claudeResult, error)
+	Run(ctx context.Context, prompt string, opts RunOpts) (*providerResult, error)
 }
 
 // PricingEntry maps a model name substring to its pricing.

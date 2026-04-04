@@ -59,7 +59,7 @@ func newClaudeCLIProvider(mc *ModelConfig, env []string) ModelProvider {
 	return &claudeCLIProvider{model: mc.Model, env: env}
 }
 
-func (p *claudeCLIProvider) Run(ctx context.Context, prompt string, opts RunOpts) (*claudeResult, error) {
+func (p *claudeCLIProvider) Run(ctx context.Context, prompt string, opts RunOpts) (*providerResult, error) {
 	timeout := opts.Timeout
 	if timeout <= 0 {
 		timeout = 5 * time.Minute
@@ -92,7 +92,7 @@ func (p *claudeCLIProvider) Run(ctx context.Context, prompt string, opts RunOpts
 	var resp claudeJSONResponse
 	if err := json.Unmarshal(output, &resp); err != nil {
 		// Fallback: treat entire output as plain text (e.g. older CLI version).
-		return &claudeResult{Text: string(output)}, nil
+		return &providerResult{Text: string(output)}, nil
 	}
 
 	if resp.IsError {
@@ -101,7 +101,7 @@ func (p *claudeCLIProvider) Run(ctx context.Context, prompt string, opts RunOpts
 
 	// Note: the Claude CLI JSON output does not expose stop_reason, so we
 	// cannot detect truncation here. The CLI manages its own output limits.
-	result := &claudeResult{
+	result := &providerResult{
 		Text: resp.Result,
 		Usage: CallUsage{
 			Model:             resp.firstModel(),

@@ -123,7 +123,7 @@ type anthropicResponse struct {
 	} `json:"error"`
 }
 
-func (p *anthropicProvider) Run(ctx context.Context, prompt string, opts RunOpts) (*claudeResult, error) {
+func (p *anthropicProvider) Run(ctx context.Context, prompt string, opts RunOpts) (*providerResult, error) {
 	apiKey := lookupEnvVar(p.env, p.keyEnv)
 	if apiKey == "" {
 		return nil, fmt.Errorf("API key not found: set %s or run `codecanary setup local`", p.keyEnv)
@@ -220,7 +220,7 @@ func (p *anthropicProvider) Run(ctx context.Context, prompt string, opts RunOpts
 	}
 	usage.CostUSD = estimateCost(usage)
 
-	return &claudeResult{
+	return &providerResult{
 		Text:      strings.Join(textParts, ""),
 		Usage:     usage,
 		Truncated: truncated,

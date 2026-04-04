@@ -43,7 +43,7 @@ func newOpenRouterProvider(mc *ModelConfig, env []string) ModelProvider {
 	return &openrouterProvider{model: mc.Model, keyEnv: keyEnv, env: env}
 }
 
-func (p *openrouterProvider) Run(ctx context.Context, prompt string, opts RunOpts) (*claudeResult, error) {
+func (p *openrouterProvider) Run(ctx context.Context, prompt string, opts RunOpts) (*providerResult, error) {
 	apiKey := lookupEnvVar(p.env, p.keyEnv)
 	if apiKey == "" {
 		return nil, fmt.Errorf("API key not found: set %s or run `codecanary setup local`", p.keyEnv)
