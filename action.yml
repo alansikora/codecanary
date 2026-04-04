@@ -100,9 +100,9 @@ runs:
         if [ -n "$PR_NUMBER" ]; then
           COMMITS=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.commits')
           if [ -n "$COMMITS" ] && [ "$COMMITS" -gt 0 ] 2>/dev/null; then
-            if ! err=$(git fetch -q --deepen="$COMMITS" origin 2>&1); then
-                echo "::warning::git fetch --deepen failed: $err"
-              fi
+            if ! err=$(git fetch --deepen="$COMMITS" origin 2>&1); then
+              echo "::warning::git fetch --deepen failed: $err"
+            fi
           fi
         fi
 
