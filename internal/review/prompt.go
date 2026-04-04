@@ -394,10 +394,10 @@ func fitToContextWindow(
 	}
 
 	// Phase 2: Truncate diff. Keep removing the last 25% until it fits.
-	// Track previous length to detect when no further reduction is possible.
+	// Track core diff length (before marker) to detect fixed points.
 	trimmedDiff := diff
+	prevCoreLen := len(diff) + 1 // +1 so the first iteration always proceeds
 	for estimateTokens(prompt) > tokenBudget && len(trimmedDiff) > 0 {
-		prevLen := len(trimmedDiff)
 		cutpoint := len(trimmedDiff) * 3 / 4
 		if cutpoint == 0 {
 			// Nothing left to trim — rebuild with empty diff and stop.
@@ -411,13 +411,19 @@ func fitToContextWindow(
 		if nl := strings.LastIndex(trimmedDiff, "\n"); nl > 0 {
 			trimmedDiff = trimmedDiff[:nl]
 		}
+		coreLen := len(trimmedDiff)
+		if coreLen >= prevCoreLen {
+			// Core diff reached a fixed point (e.g. newline snap-back
+			// lands at the same position). Clear and stop.
+			trimmedDiff = ""
+			fmt.Fprintf(os.Stderr, "Warning: truncated diff to fit context window\n")
+			prompt = buildFn(trimmedContents, trimmedDiff)
+			break
+		}
+		prevCoreLen = coreLen
 		trimmedDiff += "\n... [diff truncated to fit context window]"
 		fmt.Fprintf(os.Stderr, "Warning: truncated diff to fit context window\n")
 		prompt = buildFn(trimmedContents, trimmedDiff)
-		// If length did not shrink, further iterations won't help.
-		if len(trimmedDiff) >= prevLen {
-			break
-		}
 	}
 
 	return prompt, true

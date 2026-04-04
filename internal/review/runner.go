@@ -291,7 +291,7 @@ func Run(opts RunOptions) error {
 		prompt = BuildPrompt(pr, cfg, startIndex, rctx.ProjectDocs)
 
 		// Fit prompt to the review model's context window.
-		prompt = fitPromptForModel(prompt, pr.FileContents, pr.Files, pr.Diff, cfg,
+		prompt = fitPromptForModel(prompt, pr.FileContents, pr.Files, pr.Diff, cfg.ReviewModel,
 			func(fc map[string]string, d string) string {
 				prCopy := *pr
 				prCopy.FileContents = fc
@@ -563,7 +563,7 @@ func runTriage(
 		}
 		Stderrf(ansiBold, "Falling back to full review (%d known issue%s excluded)...\n", len(unresolved), fbPlural)
 		prompt = BuildIncrementalPrompt(pr.Diff, cfg, unresolved, opts.PRNumber, startIndex, pr.FileContents, pr.Files, resolvedCtx, projectDocs)
-		prompt = fitPromptForModel(prompt, pr.FileContents, pr.Files, pr.Diff, cfg,
+		prompt = fitPromptForModel(prompt, pr.FileContents, pr.Files, pr.Diff, cfg.ReviewModel,
 			func(fc map[string]string, d string) string {
 				return BuildIncrementalPrompt(d, cfg, unresolved, opts.PRNumber, startIndex, fc, effectiveFiles(pr.Files, fc), resolvedCtx, projectDocs)
 			},
@@ -586,7 +586,7 @@ func runTriage(
 		}
 		Stderrf(ansiBold, "Reviewing incremental changes (%d known issue%s excluded)...\n", len(unresolved), plural)
 		prompt = BuildIncrementalPrompt(incrementalDiff, cfg, unresolved, opts.PRNumber, startIndex, incContents, incFiles, resolvedCtx, projectDocs)
-		prompt = fitPromptForModel(prompt, incContents, incFiles, incrementalDiff, cfg,
+		prompt = fitPromptForModel(prompt, incContents, incFiles, incrementalDiff, cfg.ReviewModel,
 			func(fc map[string]string, d string) string {
 				return BuildIncrementalPrompt(d, cfg, unresolved, opts.PRNumber, startIndex, fc, effectiveFiles(incFiles, fc), resolvedCtx, projectDocs)
 			},
@@ -596,7 +596,7 @@ func runTriage(
 	return prompt, fixed, stillOpenFindings
 }
 
-// fitPromptForModel runs fitToContextWindow using the review model's context
+// fitPromptForModel runs fitToContextWindow using the given model's context
 // budget (context window minus max output tokens). Returns the original prompt
 // unchanged if it already fits.
 func fitPromptForModel(
@@ -604,11 +604,11 @@ func fitPromptForModel(
 	fileContents map[string]string,
 	files []string,
 	diff string,
-	cfg *ReviewConfig,
+	model string,
 	buildFn func(fileContents map[string]string, diff string) string,
 ) string {
-	contextWindow := lookupContextWindow(cfg.ReviewModel)
-	maxOutput := lookupMaxOutputTokens(cfg.ReviewModel)
+	contextWindow := lookupContextWindow(model)
+	maxOutput := lookupMaxOutputTokens(model)
 	inputBudget := contextWindow - maxOutput
 	if inputBudget <= 0 {
 		return prompt
