@@ -246,10 +246,18 @@ func ExtractFileSnippet(content string, findingLine int, diffText string, maxLin
 }
 
 // ClassifyThreads triages unresolved threads using GitHub's outdated flag and reply presence.
+//
+// Two diffs serve different purposes:
+//   - activityDiff: the incremental diff (changes since last review). Used to decide whether
+//     to skip evaluation — when empty, non-outdated threads with no replies are TriageSkip.
+//   - contextDiff: the full PR diff (all changes). Used to determine the correct classification
+//     (TriageCodeChanged vs TriageCrossFileChange) and to extract FileDiff/FileSnippet for the
+//     evaluation prompt. This ensures fixes from earlier pushes are visible to the evaluator.
+//
 // prFiles is the current set of files in the PR; threads on files no longer in the PR
 // are classified as TriageFileRemovedFromPR and auto-resolved without an LLM call.
 // fileContents provides current file contents for building context snippets in triage prompts.
-func ClassifyThreads(threads []ReviewThread, fullDiff, botLogin string, prFiles []string, fileContents map[string]string) []TriagedThread {
+func ClassifyThreads(threads []ReviewThread, activityDiff, contextDiff, botLogin string, prFiles []string, fileContents map[string]string) []TriagedThread {
 	prFileSet := make(map[string]bool, len(prFiles))
 	for _, f := range prFiles {
 		prFileSet[f] = true
@@ -272,7 +280,7 @@ func ClassifyThreads(threads []ReviewThread, fullDiff, botLogin string, prFiles 
 
 		hasReply := hasNewHumanReply(t, botLogin)
 		outdated := t.Outdated
-		deleted := fileDeletedInDiff(fullDiff, t.Path)
+		deleted := fileDeletedInDiff(contextDiff, t.Path)
 
 		var class ThreadClassification
 		switch {
@@ -287,25 +295,30 @@ func ClassifyThreads(threads []ReviewThread, fullDiff, botLogin string, prFiles 
 		case hasReply:
 			class = TriageHasReply
 		default:
-			// Even if GitHub didn't mark the thread as outdated, check if the
-			// diff touches the same file. A fix may change nearby lines without
-			// affecting the exact commented range.
-			if fileInDiff(fullDiff, t.Path) {
+			// No GitHub outdated flag, no replies. Use the incremental diff to
+			// decide whether there is new activity worth evaluating.
+			if activityDiff == "" {
+				// No changes since last review — nothing new to evaluate.
+				class = TriageSkip
+			} else if fileInDiff(contextDiff, t.Path) {
+				// File was changed in the PR — classify as code-changed so the
+				// evaluator sees the file-scoped diff (which may include fixes
+				// from earlier pushes that the incremental diff missed).
 				class = TriageCodeChanged
-			} else if fullDiff != "" {
+			} else {
 				// Code changed in other files — evaluate in case the fix is cross-file.
 				class = TriageCrossFileChange
-			} else {
-				class = TriageSkip
 			}
 		}
 
+		// Extract context from the full PR diff so the evaluator can see all
+		// changes, including fixes that landed before the incremental diff window.
 		var fileDiff string
 		switch class {
 		case TriageCodeChanged, TriageCodeChangedReply:
-			fileDiff = ExtractFileDiff(fullDiff, t.Path)
+			fileDiff = ExtractFileDiff(contextDiff, t.Path)
 		case TriageCrossFileChange:
-			fileDiff = fullDiff
+			fileDiff = contextDiff
 		}
 
 		// Build a windowed file snippet for code-change evaluations.
