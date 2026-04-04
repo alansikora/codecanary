@@ -327,7 +327,8 @@ func writeProjectDocs(b *strings.Builder, docs map[string]string) {
 	b.WriteString("The following project documentation describes conventions and standards for this codebase. Use these to inform your review — flag violations of these conventions when relevant.\n\n")
 	for _, path := range slices.Sorted(maps.Keys(docs)) {
 		safe := escapePromptTag(docs[path], "project-doc")
-		fmt.Fprintf(b, "<project-doc path=%q>\n%s\n</project-doc>\n\n", path, safe)
+		safePath := strings.NewReplacer("<", "&lt;", `"`, "&quot;").Replace(path)
+		fmt.Fprintf(b, "<project-doc path=%q>\n%s\n</project-doc>\n\n", safePath, safe)
 	}
 }
 
@@ -349,6 +350,9 @@ func writeFileContents(b *strings.Builder, fileContents map[string]string, files
 		fmt.Fprintf(b, "### `%s`\n", safePath)
 		var numbered strings.Builder
 		lines := strings.Split(content, "\n")
+		if len(lines) > 0 && lines[len(lines)-1] == "" {
+			lines = lines[:len(lines)-1]
+		}
 		for i, line := range lines {
 			fmt.Fprintf(&numbered, "%d: %s\n", i+1, line)
 		}
