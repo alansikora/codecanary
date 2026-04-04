@@ -7,40 +7,6 @@ import (
 	"strings"
 )
 
-// ensureCommitFetched makes sure sha exists in the local object store.
-// In shallow clones (e.g. GitHub Actions) the previous review's base commit
-// may be missing; this fetches it from origin so that ancestry checks and
-// incremental diffs can work.
-func ensureCommitFetched(sha string) {
-	// Already available locally — nothing to do.
-	if exec.Command("git", "cat-file", "-e", sha).Run() == nil {
-		return
-	}
-	// Try to fetch the specific commit. GitHub allows fetching reachable
-	// SHAs. Log on failure but continue — the caller will handle a missing object.
-	if err := exec.Command("git", "fetch", "--depth=1", "origin", sha).Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not fetch commit %s from origin: %v\n", shortSHA(sha), err)
-	}
-}
-
-// isAncestor checks if the given SHA is an ancestor of HEAD.
-// Returns (false, nil) when sha is valid but not an ancestor (rebase).
-// Returns (false, err) when the git command itself fails.
-func isAncestor(sha string) (bool, error) {
-	ensureCommitFetched(sha)
-	err := exec.Command("git", "merge-base", "--is-ancestor", sha, "HEAD").Run()
-	if err == nil {
-		return true, nil
-	}
-	// merge-base --is-ancestor exits 1 for "not an ancestor" and 128+ for
-	// actual errors (bad object, not a repo, etc.). Go's exec surfaces the
-	// exit code via *exec.ExitError.
-	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-		return false, nil
-	}
-	return false, fmt.Errorf("git merge-base --is-ancestor: %w", err)
-}
-
 // FetchLocalDiff computes a diff of the current branch against the default
 // branch and returns a PRData suitable for review without a GitHub PR.
 func FetchLocalDiff() (*PRData, error) {

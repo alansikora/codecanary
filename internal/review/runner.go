@@ -122,33 +122,39 @@ func prepareReview(pr *PRData, configPath string) (*reviewContext, error) {
 	}, nil
 }
 
-// processFindings parses Claude's output, filters findings to diff files,
-// validates line numbers against the diff, removes non-actionable findings,
-// and tags status for incremental reviews.
-func processFindings(claudeText string, diffFiles []string, diff string, incremental bool) ([]Finding, error) {
+// processFindings parses Claude's output, filters findings to PR files,
+// validates line proximity against the PR diff, removes non-actionable
+// findings, and tags status for incremental reviews.
+//
+// prDiff is always the PR diff (base..head from GitHub or merge-base diff
+// locally) — never the incremental diff. This ensures findings are scoped to
+// the PR's own changes regardless of what diff the LLM prompt contained,
+// filtering out rebase noise and hallucinated line numbers.
+func processFindings(claudeText string, prFiles []string, prDiff string, incremental bool) ([]Finding, error) {
 	findings, err := ParseFindings(claudeText)
 	if err != nil {
 		return nil, fmt.Errorf("parsing findings: %w", err)
 	}
 
-	fileSet := make(map[string]bool, len(diffFiles))
-	for _, f := range diffFiles {
+	fileSet := make(map[string]bool, len(prFiles))
+	for _, f := range prFiles {
 		fileSet[f] = true
 	}
-	validLines := parseDiffLines(diff)
+	validLines := parseDiffLines(prDiff)
 
 	var filtered []Finding
 	for _, f := range findings {
 		if f.File == "" || fileSet[f.File] {
 			filtered = append(filtered, f)
 		} else {
-			fmt.Fprintf(os.Stderr, "Dropped finding on file outside diff: %s\n", f.File)
+			fmt.Fprintf(os.Stderr, "Dropped finding on file outside PR: %s\n", f.File)
 		}
 	}
 
-	// Validate line numbers: drop findings whose line is too far from any
-	// changed line in the diff. This catches hallucinated line numbers
-	// regardless of platform (GitHub, local, JSON output).
+	// Validate line proximity: drop findings whose line is too far from any
+	// changed line in the PR diff. This keeps findings anchored to the PR's
+	// actual changes — preventing scope creep, filtering rebase noise, and
+	// catching hallucinated line numbers.
 	var lineValid []Finding
 	for _, f := range filtered {
 		if f.File == "" || f.Line <= 0 {
@@ -160,10 +166,10 @@ func processFindings(claudeText string, diffFiles []string, diff string, increme
 			// File has no changed lines in the diff (e.g. mode-only change,
 			// binary file, pure deletion). Pass through — we can't validate.
 			lineValid = append(lineValid, f)
-		} else if abs(f.Line-nearest) <= MaxFindingDistance {
+		} else if abs(f.Line-nearest) <= MaxFindingProximity {
 			lineValid = append(lineValid, f)
 		} else {
-			fmt.Fprintf(os.Stderr, "Dropped finding with line outside diff range: %s (%s:%d)\n", f.ID, f.File, f.Line)
+			fmt.Fprintf(os.Stderr, "Dropped finding outside PR scope: %s (%s:%d)\n", f.ID, f.File, f.Line)
 		}
 	}
 	findings = FilterNonActionable(lineValid)
@@ -306,19 +312,11 @@ func Run(opts RunOptions) error {
 	var stillOpenFindings []Finding
 	isIncremental := len(reviewThreads) > 0 && previousSHA != ""
 
-	// promptDiff tracks which diff was used to build the LLM prompt so that
-	// processFindings validates lines against the same diff the model saw.
-	promptDiff := pr.Diff
-
 	if isIncremental {
-		var triageDiff string
-		prompt, triageDiff, fixed, stillOpenFindings = runTriage(
+		prompt, fixed, stillOpenFindings = runTriage(
 			pr, cfg, rctx.ProjectDocs, triageProvider, tracker, platform,
 			reviewThreads, previousSHA, startIndex, opts,
 		)
-		if triageDiff != "" {
-			promptDiff = triageDiff
-		}
 	} else {
 		// First review — full diff.
 		label := pr.HeadBranch
@@ -358,9 +356,19 @@ func Run(opts RunOptions) error {
 			Stderrf(ansiYellow, "Warning: review response was truncated — findings may be incomplete\n")
 		}
 
-		findings, err = processFindings(claudeOut.Text, pr.Files, promptDiff, isIncremental)
+		findings, err = processFindings(claudeOut.Text, pr.Files, pr.Diff, isIncremental)
 		if err != nil {
-			return err
+			if !claudeOut.Truncated {
+				return err
+			}
+			// Truncation broke the JSON — salvage any complete findings.
+			if salvaged, sErr := ParseFindingsSalvage(claudeOut.Text); sErr == nil && len(salvaged) > 0 {
+				Stderrf(ansiYellow, "Salvaged %d finding(s) from truncated response\n", len(salvaged))
+				findings = salvaged
+			} else {
+				Stderrf(ansiYellow, "Could not parse truncated response — proceeding with no findings\n")
+				findings = nil
+			}
 		}
 	}
 
@@ -449,43 +457,26 @@ func runTriage(
 	triageProvider ModelProvider, tracker *UsageTracker, platform ReviewPlatform,
 	reviewThreads []ReviewThread, previousSHA string, startIndex int,
 	opts RunOptions,
-) (string, string, []fixedThread, []Finding) {
+) (string, []fixedThread, []Finding) {
 	Stderrf(ansiBold, "Re-evaluating %d unresolved thread(s) (base %s)...\n", len(reviewThreads), shortSHA(previousSHA))
 
-	// Detect rebase: if previousSHA is not an ancestor of HEAD the branch was
-	// force-pushed and git diff previousSHA..HEAD would include unrelated
-	// base-branch changes, producing misleading reviews.
-	ancestor, ancestorErr := isAncestor(previousSHA)
-	if ancestorErr != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not check ancestry of %s: %v — treating as rebase\n", shortSHA(previousSHA), ancestorErr)
-	}
-	// Treat git failures the same as a confirmed rebase: skip the incremental
-	// diff which could be misleading if the SHA exists but ancestry is unknown.
-	rebased := !ancestor || ancestorErr != nil
-
-	var incrementalDiff string
-	var diffErr error
-
-	if rebased && ancestorErr == nil {
-		Stderrf(ansiYellow, "Rebase detected (base %s is no longer an ancestor of HEAD)\n", shortSHA(previousSHA))
+	// Try to compute an incremental diff (only changes since last review).
+	// This produces a smaller prompt when available. If it fails (e.g. shallow
+	// clone missing the previous SHA), we fall back to the full PR diff.
+	incrementalDiff, diffErr := platform.GetIncrementalDiff(previousSHA, pr.Files)
+	if diffErr != nil {
+		fmt.Fprintf(os.Stderr, "Could not compute incremental diff, will use full PR diff for reevaluation\n")
 	} else {
-		// Compute incremental diff via the platform adapter.
-		// In local modes this also includes uncommitted working-tree changes.
-		incrementalDiff, diffErr = platform.GetIncrementalDiff(previousSHA, pr.Files)
-		if diffErr != nil {
-			fmt.Fprintf(os.Stderr, "Could not compute incremental diff, will use full PR diff for reevaluation\n")
-		} else {
-			allowed := make(map[string]bool, len(pr.Files))
-			for _, f := range pr.Files {
-				allowed[f] = true
-			}
-			incrementalDiff = ScopeDiffToFiles(incrementalDiff, allowed)
+		allowed := make(map[string]bool, len(pr.Files))
+		for _, f := range pr.Files {
+			allowed[f] = true
 		}
+		incrementalDiff = ScopeDiffToFiles(incrementalDiff, allowed)
 	}
 
 	// Phase 1: Go-driven triage — classify threads.
 	reevalDiff := incrementalDiff
-	if rebased || diffErr != nil {
+	if diffErr != nil {
 		reevalDiff = pr.Diff
 	}
 
@@ -533,7 +524,7 @@ func runTriage(
 	}
 
 	if opts.ReplyOnly {
-		return "", "", fixed, nil
+		return "", fixed, nil
 	}
 
 	// Phase 2: Build review prompt for new findings.
@@ -581,21 +572,20 @@ func runTriage(
 		fmt.Fprintf(os.Stderr, "%d finding(s) resolved by code changes\n", resolved)
 	}
 
-	var prompt, promptDiff string
-	if rebased || diffErr != nil {
-		// No reliable incremental diff (rebase or error) — fall back to full
-		// PR diff but pass known issues so the LLM avoids duplicating them.
+	var prompt string
+	if diffErr != nil {
+		// No incremental diff available — fall back to full PR diff but pass
+		// known issues so the LLM avoids duplicating them.
 		fbPlural := "s"
 		if len(unresolved) == 1 {
 			fbPlural = ""
 		}
 		Stderrf(ansiBold, "Falling back to full review (%d known issue%s excluded)...\n", len(unresolved), fbPlural)
 		prompt = BuildIncrementalPrompt(pr.Diff, cfg, unresolved, opts.PRNumber, startIndex, pr.FileContents, pr.Files, resolvedCtx, projectDocs)
-		promptDiff = pr.Diff
 	} else if strings.TrimSpace(incrementalDiff) == "" {
 		// No new changes — return previous findings as still-open.
 		Stderrf(ansiGreen, "No new changes since last review\n")
-		return "", "", fixed, stillOpenFindings
+		return "", fixed, stillOpenFindings
 	} else {
 		incFiles := FilesFromDiff(incrementalDiff)
 		incContents := make(map[string]string, len(incFiles))
@@ -610,10 +600,9 @@ func runTriage(
 		}
 		Stderrf(ansiBold, "Reviewing incremental changes (%d known issue%s excluded)...\n", len(unresolved), plural)
 		prompt = BuildIncrementalPrompt(incrementalDiff, cfg, unresolved, opts.PRNumber, startIndex, incContents, incFiles, resolvedCtx, projectDocs)
-		promptDiff = incrementalDiff
 	}
 
-	return prompt, promptDiff, fixed, stillOpenFindings
+	return prompt, fixed, stillOpenFindings
 }
 
 // loadReviewConfig loads the review config from the given path, or

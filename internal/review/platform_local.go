@@ -19,14 +19,6 @@ func (l *LocalPlatform) LoadPreviousFindings() ([]ReviewThread, string, int) {
 	if state == nil || state.SHA == "" {
 		return nil, "", 0
 	}
-	ancestor, err := isAncestor(state.SHA)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not check ancestry of %s: %v — starting fresh\n", shortSHA(state.SHA), err)
-		return nil, "", 0
-	}
-	if !ancestor {
-		return nil, "", 0
-	}
 
 	fmt.Fprintf(os.Stderr, "Found previous local review at %s (%d findings)\n", shortSHA(state.SHA), len(state.Findings))
 	threads := findingsToKnownIssues(state.Findings)

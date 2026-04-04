@@ -86,6 +86,19 @@ runs:
           exit 1
         fi
 
+    - name: Fetch PR history
+      shell: bash
+      env:
+        GH_TOKEN: ${{ steps.review-token.outputs.token }}
+      run: |
+        PR_NUMBER="${{ github.event.pull_request.number }}"
+        if [ -n "$PR_NUMBER" ]; then
+          COMMITS=$(gh api repos/${{ github.repository }}/pulls/"$PR_NUMBER" --jq '.commits')
+          if [ -n "$COMMITS" ] && [ "$COMMITS" -gt 0 ] 2>/dev/null; then
+            git fetch --deepen="$COMMITS" origin
+          fi
+        fi
+
     - name: Run review
       shell: bash
       env:

@@ -23,10 +23,12 @@ func parseRepoSlug(repo string) (owner, name string, err error) {
 	return parts[0], parts[1], nil
 }
 
-// MaxFindingDistance is the maximum number of lines a finding may be from the
-// nearest diff line before it is dropped (runner.go) or demoted from inline
-// to body (PostReview). A single constant ensures both checks stay in sync.
-const MaxFindingDistance = 20
+// MaxFindingProximity is the maximum number of lines a finding may be from the
+// nearest changed line in the PR diff. Findings beyond this distance are dropped
+// (runner.go) or demoted from inline to body (PostReview). This enforces review
+// scope — keeping findings anchored to the PR's actual changes — and catches
+// hallucinated line numbers. A single constant ensures both checks stay in sync.
+const MaxFindingProximity = 20
 
 // HTML comment markers for embedding and detecting review data.
 // Dual prefixes support both current (codecanary) and legacy (clanopy) markers.
@@ -226,7 +228,7 @@ func PostReview(repo string, prNumber int, result *ReviewResult, diff string, co
 			return false
 		}
 		nearest := validLines.nearestLine(f.File, f.Line)
-		return nearest > 0 && abs(f.Line-nearest) <= MaxFindingDistance
+		return nearest > 0 && abs(f.Line-nearest) <= MaxFindingProximity
 	}
 
 	comments := make([]reviewComment, 0)
@@ -662,8 +664,6 @@ func GetIncrementalDiff(baseSHA string) (string, error) {
 	if !validSHA.MatchString(baseSHA) {
 		return "", fmt.Errorf("invalid SHA format: %q", baseSHA)
 	}
-	// Ensure the base SHA is available locally (shallow clones may not have it).
-	ensureCommitFetched(baseSHA)
 	out, err := exec.Command("git", "diff", baseSHA+"..HEAD").Output()
 	if err != nil {
 		return "", fmt.Errorf("git diff: %w", err)

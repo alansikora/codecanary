@@ -99,3 +99,35 @@ func TestFilterNonActionable(t *testing.T) {
 		})
 	}
 }
+
+func TestParseFindingsSalvageTruncated(t *testing.T) {
+	// Simulate a truncated response where the second finding is cut off mid-field.
+	output := "Here are my findings:\n\n```json\n[\n" +
+		"  {\n    \"id\": \"complete-finding\",\n    \"file\": \"main.go\",\n    \"line\": 10,\n    \"severity\": \"bug\",\n    \"title\": \"Complete\",\n    \"description\": \"This is complete.\",\n    \"fix_ref\": \"1-0\"\n  },\n" +
+		"  {\n    \"id\": \"truncated-finding\",\n    \"file\": \"main.go\",\n    \"line\": 20,\n    \"severity\": \"bug\",\n    \"title\": \"Truncated\",\n    \"description\": \"This finding is cut off mid-sen"
+
+	// Normal parse should fail.
+	_, err := ParseFindings(output)
+	if err == nil {
+		t.Fatal("expected ParseFindings to fail on truncated input")
+	}
+
+	// Salvage should recover the first complete finding.
+	findings, err := ParseFindingsSalvage(output)
+	if err != nil {
+		t.Fatalf("ParseFindingsSalvage() error: %v", err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 salvaged finding, got %d", len(findings))
+	}
+	if findings[0].ID != "complete-finding" {
+		t.Errorf("expected ID 'complete-finding', got %q", findings[0].ID)
+	}
+}
+
+func TestParseFindingsSalvageNoFence(t *testing.T) {
+	_, err := ParseFindingsSalvage("no json here")
+	if err == nil {
+		t.Fatal("expected error when no ```json fence present")
+	}
+}
