@@ -14,7 +14,6 @@ import (
 	"github.com/alansikora/codecanary/internal/setup"
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 )
 
 var authCmd = &cobra.Command{
@@ -84,8 +83,8 @@ var authRefreshCmd = &cobra.Command{
 	Short: "Check and update stored credentials",
 	Long:  "Validate the current API key and optionally replace it.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !term.IsTerminal(int(os.Stdin.Fd())) {
-			return fmt.Errorf("auth refresh requires an interactive terminal")
+		if err := requireTerminal("auth refresh"); err != nil {
+			return err
 		}
 
 		// Detect installs.

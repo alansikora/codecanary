@@ -7,6 +7,7 @@ import (
 
 	"github.com/alansikora/codecanary/internal/selfupdate"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var Version = "dev"
@@ -41,4 +42,12 @@ var rootCmd = &cobra.Command{
 func Execute() error {
 	rootCmd.Version = DisplayVersion()
 	return rootCmd.Execute()
+}
+
+// requireTerminal returns an error if stdin is not an interactive terminal.
+func requireTerminal(name string) error {
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return fmt.Errorf("%s requires an interactive terminal", name)
+	}
+	return nil
 }
