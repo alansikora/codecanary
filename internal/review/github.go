@@ -422,11 +422,12 @@ type graphQLThreadsResponse struct {
 						IsResolved bool   `json:"isResolved"`
 						Comments struct {
 							Nodes []struct {
-								Body     string `json:"body"`
-								Path     string `json:"path"`
-								Line     int    `json:"line"`
-								Outdated bool   `json:"outdated"`
-								Author   struct {
+								Body         string `json:"body"`
+								Path         string `json:"path"`
+								Line         int    `json:"line"`
+								OriginalLine int    `json:"originalLine"`
+								Outdated     bool   `json:"outdated"`
+								Author       struct {
 									Login string `json:"login"`
 								} `json:"author"`
 							} `json:"nodes"`
@@ -453,7 +454,7 @@ func FetchReviewThreads(repo string, prNumber int) ([]ReviewThread, error) {
           id
           isResolved
           comments(first:100){
-            nodes{body path line outdated author{login}}
+            nodes{body path line originalLine outdated author{login}}
           }
         }
       }
@@ -499,10 +500,15 @@ func FetchReviewThreads(repo string, prNumber int) ([]ReviewThread, error) {
 			})
 		}
 
+		line := comment.Line
+		if comment.Outdated && line == 0 && comment.OriginalLine > 0 {
+			line = comment.OriginalLine
+		}
+
 		threads = append(threads, ReviewThread{
 			ID:       node.ID,
 			Path:     comment.Path,
-			Line:     comment.Line,
+			Line:     line,
 			Body:     comment.Body,
 			Author:   comment.Author.Login,
 			Outdated: comment.Outdated,
