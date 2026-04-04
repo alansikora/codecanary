@@ -19,11 +19,15 @@ func escapePromptTag(content, tagName string) string {
 	return content
 }
 
-// escapeAllTags replaces every "<" in content with "&lt;", fully neutralising
-// any XML-like tag injection. Use this for untrusted user content (PR title,
+// escapeAllTags replaces every "<" and ">" in content with their HTML entities,
+// fully neutralising any XML-like tag injection. Both characters are escaped so
+// that LLM parsers that resolve "&lt;" back to "<" still cannot match a closing
+// ">" to form a complete tag. Use this for untrusted user content (PR title,
 // body, thread replies) where no structural tags should survive.
 func escapeAllTags(content string) string {
-	return strings.ReplaceAll(content, "<", "&lt;")
+	content = strings.ReplaceAll(content, "<", "&lt;")
+	content = strings.ReplaceAll(content, ">", "&gt;")
+	return content
 }
 
 // writeFencedBlock writes content inside a dynamic-length code fence with the
@@ -327,7 +331,7 @@ func writeProjectDocs(b *strings.Builder, docs map[string]string) {
 	b.WriteString("The following project documentation describes conventions and standards for this codebase. Use these to inform your review — flag violations of these conventions when relevant.\n\n")
 	for _, path := range slices.Sorted(maps.Keys(docs)) {
 		safe := escapePromptTag(docs[path], "project-doc")
-		safePath := strings.NewReplacer("<", "&lt;", `"`, "&quot;").Replace(path)
+		safePath := escapeAllTags(path)
 		fmt.Fprintf(b, "<project-doc path=%q>\n%s\n</project-doc>\n\n", safePath, safe)
 	}
 }
