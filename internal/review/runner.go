@@ -373,7 +373,13 @@ func runTriage(
 	// Detect rebase: if previousSHA is not an ancestor of HEAD the branch was
 	// force-pushed and git diff previousSHA..HEAD would include unrelated
 	// base-branch changes, producing misleading reviews.
-	rebased := !isAncestor(previousSHA)
+	var rebased bool
+	ancestor, ancestorErr := isAncestor(previousSHA)
+	if ancestorErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not check ancestry of %s: %v\n", shortSHA(previousSHA), ancestorErr)
+	} else {
+		rebased = !ancestor
+	}
 
 	var incrementalDiff string
 	var diffErr error
