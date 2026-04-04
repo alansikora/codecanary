@@ -12,7 +12,7 @@ import (
 func allResolved(threads []ReviewThread, fixed []fixedThread) bool {
 	fixedSet := make(map[int]bool, len(fixed))
 	for _, f := range fixed {
-		if f.Reason == "code_change" {
+		if isTrueResolution(f.Reason) {
 			fixedSet[f.Index] = true
 		}
 	}
@@ -39,7 +39,7 @@ func resolvedFindingIDs(allThreads, unresolved []ReviewThread, fixed []fixedThre
 	}
 	fixedSet := make(map[int]bool, len(fixed))
 	for _, f := range fixed {
-		if f.Reason == "code_change" {
+		if isTrueResolution(f.Reason) {
 			fixedSet[f.Index] = true
 		}
 	}
@@ -155,7 +155,14 @@ func (g *GithubPlatform) HandleResolutions(threads []ReviewThread, fixed []fixed
 		}
 		t := threads[f.Index]
 		label := threadLabel(t)
-		if f.Reason == "code_change" {
+		if isTrueResolution(f.Reason) {
+			// Post an explanatory comment for file_removed before resolving.
+			if f.Reason == "file_removed" {
+				msg := "File removed from PR — resolving."
+				if err := ReplyToThread(t.ID, msg); err != nil {
+					fmt.Fprintf(os.Stderr, "  ! %s — failed to post file-removed comment: %v\n", label, err)
+				}
+			}
 			if err := ResolveThread(t.ID); err != nil {
 				if strings.Contains(err.Error(), "Resource not accessible") {
 					fmt.Fprintf(os.Stderr, "  ~ %s (auto-resolve unavailable: token lacks permission)\n", label)
@@ -230,7 +237,7 @@ func (g *GithubPlatform) Publish(result *ReviewResult, pr *PRData, threads []Rev
 	} else if len(threads) > 0 {
 		codeFixedSet := make(map[int]bool, len(fixed))
 		for _, f := range fixed {
-			if f.Index >= 0 && f.Index < len(threads) && f.Reason == "code_change" {
+			if f.Index >= 0 && f.Index < len(threads) && isTrueResolution(f.Reason) {
 				codeFixedSet[f.Index] = true
 			}
 		}

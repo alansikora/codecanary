@@ -429,7 +429,7 @@ func runTriage(
 	}
 
 	botLogin := platform.ExcludedAuthor(reviewThreads)
-	triaged := ClassifyThreads(reviewThreads, reevalDiff, botLogin)
+	triaged := ClassifyThreads(reviewThreads, reevalDiff, botLogin, pr.Files)
 
 	var fixed []fixedThread
 
@@ -463,12 +463,12 @@ func runTriage(
 	}
 
 	// Phase 2: Build review prompt for new findings.
-	// Only code_change threads are truly resolved. Other reasons
+	// code_change and file_removed threads are truly resolved. Other reasons
 	// (dismissed, acknowledged, rebutted) stay in unresolved so they
 	// get re-triaged on future pushes.
 	fixedSet := make(map[int]bool, len(fixed))
 	for _, f := range fixed {
-		if f.Index >= 0 && f.Index < len(reviewThreads) && f.Reason == "code_change" {
+		if f.Index >= 0 && f.Index < len(reviewThreads) && isTrueResolution(f.Reason) {
 			fixedSet[f.Index] = true
 		}
 	}
@@ -485,7 +485,7 @@ func runTriage(
 	// Build resolved context for the incremental review prompt (anti-ping-pong).
 	var resolvedCtx []ResolvedContext
 	for _, f := range fixed {
-		if f.Index >= 0 && f.Index < len(reviewThreads) && f.Reason == "code_change" {
+		if f.Index >= 0 && f.Index < len(reviewThreads) && isTrueResolution(f.Reason) {
 			t := reviewThreads[f.Index]
 			title := t.Body
 			if nl := strings.Index(title, "\n"); nl >= 0 {
@@ -552,6 +552,13 @@ func loadReviewConfig(configPath string) (*ReviewConfig, error) {
 		return nil, fmt.Errorf("loading config: %w", err)
 	}
 	return cfg, nil
+}
+
+// isTrueResolution returns true for resolution reasons that fully close a thread.
+// code_change and file_removed are true resolutions. Other reasons (dismissed,
+// acknowledged, rebutted) keep the thread open for re-triage.
+func isTrueResolution(reason string) bool {
+	return reason == "code_change" || reason == "file_removed"
 }
 
 // shortSHA returns the first 8 characters of a SHA, or the full string if shorter.
