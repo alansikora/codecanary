@@ -259,7 +259,7 @@ func RunGitHub(canary bool, version string) error {
 
 	telemetry.SendSetup(version, provider, "github")
 
-	if telemetry.Enabled() {
+	if telemetry.IsFirstRun() {
 		fmt.Fprintf(os.Stderr, "\nAnonymous telemetry is on. Opt out: CODECANARY_NO_TELEMETRY=1\n")
 	}
 	fmt.Fprintf(os.Stderr, "  %s\n", strings.TrimSpace(string(prOut)))
