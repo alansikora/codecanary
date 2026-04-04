@@ -14,7 +14,14 @@ export default {
       return new Response(null, { status: 204 });
     }
 
-    if (request.method !== "POST" || new URL(request.url).pathname !== "/token") {
+    const url = new URL(request.url);
+
+    // GET /check-install?repo=owner/name — lightweight installation check.
+    if (request.method === "GET" && url.pathname === "/check-install") {
+      return handleCheckInstall(url, env);
+    }
+
+    if (request.method !== "POST" || url.pathname !== "/token") {
       return Response.json({ error: "Not found" }, { status: 404 });
     }
 
@@ -89,6 +96,25 @@ export default {
     }
   },
 };
+
+async function handleCheckInstall(url: URL, env: Env): Promise<Response> {
+  const repo = url.searchParams.get("repo");
+  if (!repo || repo.split("/").length !== 2) {
+    return Response.json(
+      { error: "Missing or invalid 'repo' parameter (expected owner/name)" },
+      { status: 400 }
+    );
+  }
+
+  try {
+    const appJwt = await generateAppJwt(env.APP_ID, env.APP_PRIVATE_KEY);
+    const installationId = await findInstallation(appJwt, repo);
+    return Response.json({ installed: installationId !== null });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    return Response.json({ error: message }, { status: 500 });
+  }
+}
 
 async function generateAppJwt(appId: string, privateKeyPem: string): Promise<string> {
   if (!privateKeyPem.includes("BEGIN PRIVATE KEY")) {
