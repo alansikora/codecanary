@@ -123,8 +123,9 @@ func prepareReview(pr *PRData, configPath string) (*reviewContext, error) {
 }
 
 // processFindings parses Claude's output, filters findings to diff files,
-// removes non-actionable findings, and tags status for incremental reviews.
-func processFindings(claudeText string, diffFiles []string, incremental bool) ([]Finding, error) {
+// validates line numbers against the diff, removes non-actionable findings,
+// and tags status for incremental reviews.
+func processFindings(claudeText string, diffFiles []string, diff string, incremental bool) ([]Finding, error) {
 	findings, err := ParseFindings(claudeText)
 	if err != nil {
 		return nil, fmt.Errorf("parsing findings: %w", err)
@@ -134,6 +135,8 @@ func processFindings(claudeText string, diffFiles []string, incremental bool) ([
 	for _, f := range diffFiles {
 		fileSet[f] = true
 	}
+	validLines := parseDiffLines(diff)
+
 	var filtered []Finding
 	for _, f := range findings {
 		if f.File == "" || fileSet[f.File] {
@@ -142,7 +145,24 @@ func processFindings(claudeText string, diffFiles []string, incremental bool) ([
 			fmt.Fprintf(os.Stderr, "Dropped finding on file outside diff: %s\n", f.File)
 		}
 	}
-	findings = FilterNonActionable(filtered)
+
+	// Validate line numbers: drop findings whose line is too far from any
+	// changed line in the diff. This catches hallucinated line numbers
+	// regardless of platform (GitHub, local, JSON output).
+	var lineValid []Finding
+	for _, f := range filtered {
+		if f.File == "" || f.Line <= 0 {
+			lineValid = append(lineValid, f)
+			continue
+		}
+		nearest := validLines.nearestLine(f.File, f.Line)
+		if nearest > 0 && abs(f.Line-nearest) <= MaxFindingDistance {
+			lineValid = append(lineValid, f)
+		} else {
+			fmt.Fprintf(os.Stderr, "Dropped finding with line outside diff range: %s (%s:%d)\n", f.ID, f.File, f.Line)
+		}
+	}
+	findings = FilterNonActionable(lineValid)
 
 	if incremental {
 		for i := range findings {
@@ -320,7 +340,7 @@ func Run(opts RunOptions) error {
 			Stderrf(ansiYellow, "Warning: review response was truncated — findings may be incomplete\n")
 		}
 
-		findings, err = processFindings(claudeOut.Text, pr.Files, isIncremental)
+		findings, err = processFindings(claudeOut.Text, pr.Files, pr.Diff, isIncremental)
 		if err != nil {
 			return err
 		}
