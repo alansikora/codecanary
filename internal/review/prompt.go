@@ -102,8 +102,8 @@ func BuildPrompt(pr *PRData, cfg *ReviewConfig, startIndex int, projectDocs map[
 	b.WriteString("  - \"suggestion\": Better patterns, readability improvements.\n")
 	b.WriteString("  - \"nitpick\": Minor style, naming, formatting.\n")
 	b.WriteString("- `title` (string): A short title for the finding.\n")
-	b.WriteString("- `description` (string): A detailed explanation of the issue.\n")
-	b.WriteString("- `suggestion` (string, optional): A suggested fix or improvement. For suggestions about broader patterns, structural concerns, or improvements that go beyond the scope of the current PR, recommend that the author discuss with the team or open a separate PR — do not imply they should fix it in this PR.\n")
+	b.WriteString("- `description` (string): A concise explanation of the issue — 2-3 sentences max. State what is wrong and why it matters. Do not repeat the code or walk through the logic step by step.\n")
+	b.WriteString("- `suggestion` (string, optional): A concise suggested fix — 1-2 sentences of prose, then a code block if helpful. Do not explain what the code block does. For suggestions about broader patterns or improvements beyond the current PR scope, recommend opening a separate PR — do not imply they should fix it here.\n")
 	first := startIndex + 1
 	fixRefPrefix := fmt.Sprintf("%d", pr.Number)
 	if pr.Number == 0 {
@@ -278,8 +278,8 @@ func BuildIncrementalPrompt(diff string, cfg *ReviewConfig, knownIssues []Review
 	b.WriteString("  - \"suggestion\": Better patterns, readability improvements.\n")
 	b.WriteString("  - \"nitpick\": Minor style, naming, formatting.\n")
 	b.WriteString("- `title` (string): A short title for the finding.\n")
-	b.WriteString("- `description` (string): A detailed explanation of the issue.\n")
-	b.WriteString("- `suggestion` (string, optional): A suggested fix or improvement. For suggestions about broader patterns, structural concerns, or improvements that go beyond the scope of the current PR, recommend that the author discuss with the team or open a separate PR — do not imply they should fix it in this PR.\n")
+	b.WriteString("- `description` (string): A concise explanation of the issue — 2-3 sentences max. State what is wrong and why it matters. Do not repeat the code or walk through the logic step by step.\n")
+	b.WriteString("- `suggestion` (string, optional): A concise suggested fix — 1-2 sentences of prose, then a code block if helpful. Do not explain what the code block does. For suggestions about broader patterns or improvements beyond the current PR scope, recommend opening a separate PR — do not imply they should fix it here.\n")
 	first := startIndex + 1
 	fixRefPrefix := fmt.Sprintf("%d", prNumber)
 	if prNumber == 0 {
