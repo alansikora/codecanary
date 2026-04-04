@@ -16,7 +16,15 @@ func (l *LocalPlatform) LoadPreviousFindings() ([]ReviewThread, string, int) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not load local state: %v\n", err)
 	}
-	if state == nil || state.SHA == "" || !isAncestor(state.SHA) {
+	if state == nil || state.SHA == "" {
+		return nil, "", 0
+	}
+	ancestor, err := isAncestor(state.SHA)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not check ancestry of %s: %v\n", shortSHA(state.SHA), err)
+		return nil, "", 0
+	}
+	if !ancestor {
 		return nil, "", 0
 	}
 

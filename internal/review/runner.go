@@ -409,22 +409,40 @@ func runTriage(
 ) (string, []fixedThread, []Finding) {
 	Stderrf(ansiBold, "Re-evaluating %d unresolved thread(s) (base %s)...\n", len(reviewThreads), shortSHA(previousSHA))
 
-	// Compute incremental diff via the platform adapter.
-	// In local modes this also includes uncommitted working-tree changes.
-	incrementalDiff, diffErr := platform.GetIncrementalDiff(previousSHA, pr.Files)
-	if diffErr != nil {
-		fmt.Fprintf(os.Stderr, "Could not compute incremental diff, will use full PR diff for reevaluation\n")
+	// Detect rebase: if previousSHA is not an ancestor of HEAD the branch was
+	// force-pushed and git diff previousSHA..HEAD would include unrelated
+	// base-branch changes, producing misleading reviews.
+	ancestor, ancestorErr := isAncestor(previousSHA)
+	if ancestorErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not check ancestry of %s: %v\n", shortSHA(previousSHA), ancestorErr)
+	}
+	// Treat git failures the same as a confirmed rebase: skip the incremental
+	// diff which could be misleading if the SHA exists but ancestry is unknown.
+	rebased := !ancestor || ancestorErr != nil
+
+	var incrementalDiff string
+	var diffErr error
+
+	if rebased {
+		Stderrf(ansiYellow, "Rebase detected (base %s is no longer an ancestor of HEAD)\n", shortSHA(previousSHA))
 	} else {
-		allowed := make(map[string]bool, len(pr.Files))
-		for _, f := range pr.Files {
-			allowed[f] = true
+		// Compute incremental diff via the platform adapter.
+		// In local modes this also includes uncommitted working-tree changes.
+		incrementalDiff, diffErr = platform.GetIncrementalDiff(previousSHA, pr.Files)
+		if diffErr != nil {
+			fmt.Fprintf(os.Stderr, "Could not compute incremental diff, will use full PR diff for reevaluation\n")
+		} else {
+			allowed := make(map[string]bool, len(pr.Files))
+			for _, f := range pr.Files {
+				allowed[f] = true
+			}
+			incrementalDiff = ScopeDiffToFiles(incrementalDiff, allowed)
 		}
-		incrementalDiff = ScopeDiffToFiles(incrementalDiff, allowed)
 	}
 
 	// Phase 1: Go-driven triage — classify threads.
 	reevalDiff := incrementalDiff
-	if diffErr != nil {
+	if rebased || diffErr != nil {
 		reevalDiff = pr.Diff
 	}
 
@@ -506,14 +524,15 @@ func runTriage(
 	}
 
 	var prompt string
-	if diffErr != nil {
-		// No incremental diff — fall back to full review.
+	if rebased || diffErr != nil {
+		// No reliable incremental diff (rebase or error) — fall back to full
+		// PR diff but pass known issues so the LLM avoids duplicating them.
 		fbPlural := "s"
 		if len(unresolved) == 1 {
 			fbPlural = ""
 		}
-		fmt.Fprintf(os.Stderr, "Falling back to full review (%d known issue%s excluded)...\n", len(unresolved), fbPlural)
-		prompt = BuildPrompt(pr, cfg, startIndex, projectDocs)
+		Stderrf(ansiBold, "Falling back to full review (%d known issue%s excluded)...\n", len(unresolved), fbPlural)
+		prompt = BuildIncrementalPrompt(pr.Diff, cfg, unresolved, opts.PRNumber, startIndex, pr.FileContents, pr.Files, resolvedCtx, projectDocs)
 	} else if strings.TrimSpace(incrementalDiff) == "" {
 		// No new changes — return previous findings as still-open.
 		Stderrf(ansiGreen, "No new changes since last review\n")

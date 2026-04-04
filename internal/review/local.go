@@ -7,8 +7,20 @@ import (
 )
 
 // isAncestor checks if the given SHA is an ancestor of HEAD.
-func isAncestor(sha string) bool {
-	return exec.Command("git", "merge-base", "--is-ancestor", sha, "HEAD").Run() == nil
+// Returns (false, nil) when sha is valid but not an ancestor (rebase).
+// Returns (false, err) when the git command itself fails.
+func isAncestor(sha string) (bool, error) {
+	err := exec.Command("git", "merge-base", "--is-ancestor", sha, "HEAD").Run()
+	if err == nil {
+		return true, nil
+	}
+	// merge-base --is-ancestor exits 1 for "not an ancestor" and 128+ for
+	// actual errors (bad object, not a repo, etc.). Go's exec surfaces the
+	// exit code via *exec.ExitError.
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, fmt.Errorf("git merge-base --is-ancestor: %w", err)
 }
 
 // FetchLocalDiff computes a diff of the current branch against the default
