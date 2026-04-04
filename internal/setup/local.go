@@ -7,10 +7,11 @@ import (
 
 	"github.com/alansikora/codecanary/internal/credentials"
 	"github.com/alansikora/codecanary/internal/review"
+	"github.com/alansikora/codecanary/internal/telemetry"
 )
 
 // RunLocal executes the interactive local setup wizard.
-func RunLocal() error {
+func RunLocal(version string) error {
 	fmt.Fprintf(os.Stderr, "CodeCanary — Local Setup\n\n")
 
 	// 1. Select provider.
@@ -66,6 +67,8 @@ func RunLocal() error {
 	if _, err := writeReviewPolicy(repoConfigPath); err != nil {
 		return err
 	}
+
+	telemetry.SendSetup(version, provider, "local")
 
 	fmt.Fprintf(os.Stderr, "\nSetup complete! Run `codecanary review` to review your current changes.\n")
 	fmt.Fprintf(os.Stderr, "Customize review rules and context in .codecanary/review.yml\n")

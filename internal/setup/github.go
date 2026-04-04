@@ -10,12 +10,13 @@ import (
 
 	"github.com/alansikora/codecanary/internal/auth"
 	"github.com/alansikora/codecanary/internal/review"
+	"github.com/alansikora/codecanary/internal/telemetry"
 	"github.com/charmbracelet/huh"
 	"gopkg.in/yaml.v3"
 )
 
 // RunGitHub executes the interactive GitHub Actions setup wizard.
-func RunGitHub(canary bool) error {
+func RunGitHub(canary bool, version string) error {
 	fmt.Fprintf(os.Stderr, "CodeCanary — GitHub Actions Setup\n\n")
 
 	// 1. Check for gh CLI.
@@ -255,6 +256,8 @@ func RunGitHub(canary bool) error {
 	if err != nil {
 		return fmt.Errorf("creating PR: %s\n%s", err, string(prOut))
 	}
+
+	telemetry.SendSetup(version, provider, "github")
 
 	fmt.Fprintf(os.Stderr, "  %s\n", strings.TrimSpace(string(prOut)))
 	fmt.Fprintf(os.Stderr, "\nDone! Merge the PR to enable automated reviews.\n")

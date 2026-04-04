@@ -23,13 +23,13 @@ var setupCmd = &cobra.Command{
 		}
 		switch mode {
 		case "local":
-			return setup.RunLocal()
+			return setup.RunLocal(Version)
 		case "github":
 			canary, err := cmd.Flags().GetBool("canary")
 			if err != nil {
 				return fmt.Errorf("flag --canary: %w", err)
 			}
-			return setup.RunGitHub(canary)
+			return setup.RunGitHub(canary, Version)
 		default:
 			return fmt.Errorf("unknown setup mode: %s", mode)
 		}
@@ -44,7 +44,7 @@ var setupLocalCmd = &cobra.Command{
 		if !term.IsTerminal(int(os.Stdin.Fd())) {
 			return fmt.Errorf("setup requires an interactive terminal")
 		}
-		return setup.RunLocal()
+		return setup.RunLocal(Version)
 	},
 }
 
@@ -60,7 +60,7 @@ var setupGithubCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("flag --canary: %w", err)
 		}
-		return setup.RunGitHub(canary)
+		return setup.RunGitHub(canary, Version)
 	},
 }
 

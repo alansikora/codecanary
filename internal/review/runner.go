@@ -6,8 +6,10 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/alansikora/codecanary/internal/credentials"
+	"github.com/alansikora/codecanary/internal/telemetry"
 )
 
 // RunOptions configures a review run.
@@ -19,6 +21,7 @@ type RunOptions struct {
 	Post       bool
 	DryRun     bool
 	ReplyOnly  bool           // evaluate thread replies only, skip new findings
+	Version    string         // binary version (for telemetry)
 	PR         *PRData        // pre-fetched PRData (used in local mode)
 	Platform   ReviewPlatform // environment adapter (GitHub or local)
 }
@@ -206,6 +209,7 @@ func currentHEAD() (string, error) {
 
 // Run orchestrates the full review flow using the platform adapter.
 func Run(opts RunOptions) error {
+	startTime := time.Now()
 	platform := opts.Platform
 	pr := opts.PR
 
@@ -355,6 +359,41 @@ func Run(opts RunOptions) error {
 
 	// 10. Report usage.
 	platform.ReportUsage(tracker)
+
+	// 11. Anonymous telemetry (fire-and-forget).
+	if !opts.DryRun && telemetry.Enabled() {
+		calls := tracker.Calls()
+		var totalIn, totalOut, totalCache int
+		var totalCost float64
+		for _, c := range calls {
+			totalIn += c.InputTokens
+			totalOut += c.OutputTokens
+			totalCache += c.CacheReadTokens
+			totalCost += c.CostUSD
+		}
+		bySeverity := make(map[string]int)
+		for _, f := range result.Findings {
+			bySeverity[f.Severity]++
+		}
+		platformName := "github"
+		if _, ok := opts.Platform.(*LocalPlatform); ok {
+			platformName = "local"
+		}
+		telemetry.SendReview(telemetry.ReviewEvent{
+			Version:           opts.Version,
+			Provider:          cfg.Provider,
+			Platform:          platformName,
+			IsIncremental:     isIncremental,
+			NewFindings:       len(result.Findings),
+			StillOpenFindings: len(result.StillOpen),
+			BySeverity:        bySeverity,
+			InputTokens:       totalIn,
+			OutputTokens:      totalOut,
+			CacheReadTokens:   totalCache,
+			CostUSD:           totalCost,
+			DurationMS:        time.Since(startTime).Milliseconds(),
+		})
+	}
 
 	return nil
 }
