@@ -79,7 +79,6 @@ func getOrCreateID() string {
 		}
 		_ = os.MkdirAll(dir, 0o755)
 		_ = os.WriteFile(path, []byte(id+"\n"), 0o600)
-		fmt.Fprintf(os.Stderr, "Anonymous telemetry is on. Opt out: CODECANARY_NO_TELEMETRY=1\n")
 		installID = id
 	})
 	return installID
