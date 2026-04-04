@@ -379,7 +379,7 @@ func runTriage(
 	}
 	// Treat git failures the same as a confirmed rebase: skip the incremental
 	// diff which could be misleading if the SHA exists but ancestry is unknown.
-	rebased := !ancestor
+	rebased := !ancestor || ancestorErr != nil
 
 	var incrementalDiff string
 	var diffErr error
