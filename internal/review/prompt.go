@@ -346,18 +346,19 @@ func estimateTokens(s string) int {
 // If it does not, it progressively trims file contents (dropping the largest
 // files first) and then truncates the diff until the prompt fits.
 //
+// prompt is the already-built prompt to check first (avoids a redundant rebuild).
 // buildFn rebuilds the prompt from the (possibly trimmed) file contents and diff.
 // files is the ordered list of file paths (determines inclusion order).
 //
 // Returns the (possibly trimmed) prompt and true if any trimming occurred.
 func fitToContextWindow(
+	prompt string,
 	buildFn func(fileContents map[string]string, diff string) string,
 	fileContents map[string]string,
 	files []string,
 	diff string,
 	tokenBudget int,
 ) (string, bool) {
-	prompt := buildFn(fileContents, diff)
 	if estimateTokens(prompt) <= tokenBudget {
 		return prompt, false
 	}
@@ -393,22 +394,30 @@ func fitToContextWindow(
 	}
 
 	// Phase 2: Truncate diff. Keep removing the last 25% until it fits.
+	// Track previous length to detect when no further reduction is possible.
 	trimmedDiff := diff
 	for estimateTokens(prompt) > tokenBudget && len(trimmedDiff) > 0 {
+		prevLen := len(trimmedDiff)
 		cutpoint := len(trimmedDiff) * 3 / 4
-		if cutpoint == len(trimmedDiff) {
-			cutpoint = 0
+		if cutpoint == 0 {
+			// Nothing left to trim — rebuild with empty diff and stop.
+			trimmedDiff = ""
+			fmt.Fprintf(os.Stderr, "Warning: truncated diff to fit context window\n")
+			prompt = buildFn(trimmedContents, trimmedDiff)
+			break
 		}
 		trimmedDiff = trimmedDiff[:cutpoint]
-		if trimmedDiff != "" {
-			// Try to cut at a newline boundary to avoid splitting a diff hunk.
-			if nl := strings.LastIndex(trimmedDiff, "\n"); nl > 0 {
-				trimmedDiff = trimmedDiff[:nl]
-			}
-			trimmedDiff += "\n... [diff truncated to fit context window]"
+		// Try to cut at a newline boundary to avoid splitting a diff hunk.
+		if nl := strings.LastIndex(trimmedDiff, "\n"); nl > 0 {
+			trimmedDiff = trimmedDiff[:nl]
 		}
+		trimmedDiff += "\n... [diff truncated to fit context window]"
 		fmt.Fprintf(os.Stderr, "Warning: truncated diff to fit context window\n")
 		prompt = buildFn(trimmedContents, trimmedDiff)
+		// If length did not shrink, further iterations won't help.
+		if len(trimmedDiff) >= prevLen {
+			break
+		}
 	}
 
 	return prompt, true

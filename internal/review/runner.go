@@ -296,6 +296,7 @@ func Run(opts RunOptions) error {
 				prCopy := *pr
 				prCopy.FileContents = fc
 				prCopy.Diff = d
+				prCopy.Files = effectiveFiles(pr.Files, fc)
 				return BuildPrompt(&prCopy, cfg, startIndex, rctx.ProjectDocs)
 			},
 		)
@@ -564,7 +565,7 @@ func runTriage(
 		prompt = BuildIncrementalPrompt(pr.Diff, cfg, unresolved, opts.PRNumber, startIndex, pr.FileContents, pr.Files, resolvedCtx, projectDocs)
 		prompt = fitPromptForModel(prompt, pr.FileContents, pr.Files, pr.Diff, cfg,
 			func(fc map[string]string, d string) string {
-				return BuildIncrementalPrompt(d, cfg, unresolved, opts.PRNumber, startIndex, fc, pr.Files, resolvedCtx, projectDocs)
+				return BuildIncrementalPrompt(d, cfg, unresolved, opts.PRNumber, startIndex, fc, effectiveFiles(pr.Files, fc), resolvedCtx, projectDocs)
 			},
 		)
 	} else if strings.TrimSpace(incrementalDiff) == "" {
@@ -587,7 +588,7 @@ func runTriage(
 		prompt = BuildIncrementalPrompt(incrementalDiff, cfg, unresolved, opts.PRNumber, startIndex, incContents, incFiles, resolvedCtx, projectDocs)
 		prompt = fitPromptForModel(prompt, incContents, incFiles, incrementalDiff, cfg,
 			func(fc map[string]string, d string) string {
-				return BuildIncrementalPrompt(d, cfg, unresolved, opts.PRNumber, startIndex, fc, incFiles, resolvedCtx, projectDocs)
+				return BuildIncrementalPrompt(d, cfg, unresolved, opts.PRNumber, startIndex, fc, effectiveFiles(incFiles, fc), resolvedCtx, projectDocs)
 			},
 		)
 	}
@@ -612,11 +613,24 @@ func fitPromptForModel(
 	if inputBudget <= 0 {
 		return prompt
 	}
-	fitted, trimmed := fitToContextWindow(buildFn, fileContents, files, diff, inputBudget)
+	fitted, trimmed := fitToContextWindow(prompt, buildFn, fileContents, files, diff, inputBudget)
 	if trimmed {
 		Stderrf(ansiYellow, "Warning: prompt was trimmed to fit context window (%d token budget)\n", inputBudget)
 	}
 	return fitted
+}
+
+// effectiveFiles returns the subset of files that still have entries in fc,
+// preserving the original order. Used to keep the "Files in This Diff" header
+// in sync with trimmed file contents.
+func effectiveFiles(files []string, fc map[string]string) []string {
+	var out []string
+	for _, f := range files {
+		if _, ok := fc[f]; ok {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // loadReviewConfig loads the review config from the given path, or

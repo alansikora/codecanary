@@ -59,6 +59,8 @@ func init() {
 			{"claude-haiku-4-5", 200_000},
 			{"claude-haiku-3-5", 200_000},
 			{"claude-haiku-3", 200_000},
+			// Catch-all for any Claude model string (e.g. via OpenRouter).
+			{"claude-", 200_000},
 		},
 		SuggestedReviewModel: "claude-sonnet-4-6",
 		SuggestedTriageModel: "claude-haiku-4-5-20251001",

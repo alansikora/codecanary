@@ -70,6 +70,8 @@ func init() {
 			{"o3", 200_000},
 			{"o1-mini", 128_000},
 			{"o1", 200_000},
+			// Catch-all for any GPT model string (e.g. via OpenRouter).
+			{"gpt-", 128_000},
 		},
 		SuggestedReviewModel: "gpt-5.4",
 		SuggestedTriageModel: "gpt-5.4-mini",

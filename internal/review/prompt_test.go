@@ -35,6 +35,9 @@ func TestLookupContextWindow(t *testing.T) {
 		{"gpt-4o-2024-08-06", 128_000},
 		{"gpt-4.1-mini", 1_047_576},
 		{"gpt-5.4", 1_000_000},
+		// Catch-all entries cover unknown Claude/GPT variants.
+		{"claude-future-model", 200_000},
+		{"gpt-99", 128_000},
 		{"unknown-model-xyz", defaultContextWindow}, // fallback
 	}
 	for _, tt := range tests {
@@ -53,13 +56,34 @@ func TestFitToContextWindow_UnderBudget(t *testing.T) {
 	buildFn := func(fc map[string]string, d string) string {
 		return "small prompt: " + d
 	}
+	initial := buildFn(fileContents, diff)
 
-	prompt, trimmed := fitToContextWindow(buildFn, fileContents, files, diff, 100_000)
+	prompt, trimmed := fitToContextWindow(initial, buildFn, fileContents, files, diff, 100_000)
 	if trimmed {
 		t.Error("expected no trimming for prompt under budget")
 	}
 	if !strings.Contains(prompt, diff) {
 		t.Error("expected prompt to contain original diff")
+	}
+}
+
+func TestFitToContextWindow_SkipsRebuild_WhenUnderBudget(t *testing.T) {
+	// Verify that buildFn is never called when the initial prompt fits.
+	called := false
+	buildFn := func(fc map[string]string, d string) string {
+		called = true
+		return "rebuilt"
+	}
+
+	prompt, trimmed := fitToContextWindow("small", buildFn, nil, nil, "", 100_000)
+	if trimmed {
+		t.Error("expected no trimming")
+	}
+	if called {
+		t.Error("buildFn should not be called when prompt already fits")
+	}
+	if prompt != "small" {
+		t.Errorf("expected original prompt, got %q", prompt)
 	}
 }
 
@@ -87,11 +111,12 @@ func TestFitToContextWindow_DropFiles(t *testing.T) {
 		b.WriteString(d)
 		return b.String()
 	}
+	initial := buildFn(fileContents, diff)
 
 	// Budget that fits small.go + diff but not large.go.
 	// header(7) + small(400) + diff(5) = 412 chars ≈ 103 tokens
 	// header(7) + large(4000) + small(400) + diff(5) = 4412 chars ≈ 1103 tokens
-	prompt, trimmed := fitToContextWindow(buildFn, fileContents, files, diff, 200)
+	prompt, trimmed := fitToContextWindow(initial, buildFn, fileContents, files, diff, 200)
 	if !trimmed {
 		t.Error("expected trimming to occur")
 	}
@@ -113,9 +138,10 @@ func TestFitToContextWindow_TruncateDiff(t *testing.T) {
 	buildFn := func(fc map[string]string, d string) string {
 		return "header\n" + d
 	}
+	initial := buildFn(fileContents, diff)
 
 	// Budget much smaller than the diff.
-	prompt, trimmed := fitToContextWindow(buildFn, fileContents, files, diff, 1000)
+	prompt, trimmed := fitToContextWindow(initial, buildFn, fileContents, files, diff, 1000)
 	if !trimmed {
 		t.Error("expected trimming to occur")
 	}
@@ -127,6 +153,29 @@ func TestFitToContextWindow_TruncateDiff(t *testing.T) {
 	}
 }
 
+func TestFitToContextWindow_TruncateDiff_Terminates(t *testing.T) {
+	// Regression: verify the loop terminates even when base template
+	// alone exceeds budget (no amount of diff trimming can help).
+	bigHeader := strings.Repeat("H", 8000) // ~2000 tokens
+	fileContents := map[string]string{}
+	files := []string{}
+	diff := strings.Repeat("+line\n", 1000)
+
+	buildFn := func(fc map[string]string, d string) string {
+		return bigHeader + d
+	}
+	initial := buildFn(fileContents, diff)
+
+	// Budget smaller than the header alone — loop must still terminate.
+	prompt, trimmed := fitToContextWindow(initial, buildFn, fileContents, files, diff, 100)
+	if !trimmed {
+		t.Error("expected trimming to occur")
+	}
+	// The prompt will still be over budget but the function should return
+	// without infinite-looping.
+	_ = prompt
+}
+
 func TestFitToContextWindow_DropFilesBeforeDiff(t *testing.T) {
 	// Verify that files are dropped before diff is truncated.
 	fileContents := map[string]string{
@@ -135,13 +184,7 @@ func TestFitToContextWindow_DropFilesBeforeDiff(t *testing.T) {
 	files := []string{"a.go"}
 	diff := "+small diff"
 
-	var calls []string
 	buildFn := func(fc map[string]string, d string) string {
-		if len(fc) == 0 {
-			calls = append(calls, "no-files")
-		} else {
-			calls = append(calls, "with-files")
-		}
 		var b strings.Builder
 		for _, f := range files {
 			if c, ok := fc[f]; ok {
@@ -151,11 +194,12 @@ func TestFitToContextWindow_DropFilesBeforeDiff(t *testing.T) {
 		b.WriteString(d)
 		return b.String()
 	}
+	initial := buildFn(fileContents, diff)
 
 	// Budget that fits the diff alone but not with file contents.
 	// diff only: 11 chars ≈ 2 tokens
 	// with file: 2011 chars ≈ 502 tokens
-	prompt, trimmed := fitToContextWindow(buildFn, fileContents, files, diff, 100)
+	prompt, trimmed := fitToContextWindow(initial, buildFn, fileContents, files, diff, 100)
 	if !trimmed {
 		t.Error("expected trimming")
 	}
