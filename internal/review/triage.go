@@ -525,7 +525,7 @@ func LogTriage(triaged []TriagedThread) {
 func LogResolutions(triaged []TriagedThread, resolutions []ThreadResolution) {
 	fmt.Fprintf(os.Stderr, "\n")
 	for i, r := range resolutions {
-		if triaged[i].Class == TriageSkip {
+		if triaged[i].Class == TriageSkip || triaged[i].Class == TriageFileRemovedFromPR {
 			continue
 		}
 		label := threadLabel(triaged[i].Thread)
