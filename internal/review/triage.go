@@ -537,8 +537,6 @@ func LogResolutions(triaged []TriagedThread, resolutions []ThreadResolution) {
 			}
 		} else if r.Resolved {
 			switch r.Reason {
-			case "file_removed":
-				fmt.Fprintf(os.Stderr, "  [resolved] %s — file removed from PR\n", label)
 			case "code_change":
 				fmt.Fprintf(os.Stderr, "  [resolved] %s — fixed by code change\n", label)
 			case "dismissed":
