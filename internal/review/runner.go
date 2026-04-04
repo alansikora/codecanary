@@ -384,6 +384,7 @@ func Run(opts RunOptions) error {
 			platformName = "local"
 		}
 		telemetry.SendReview(telemetry.ReviewEvent{
+			Repo:              opts.Repo,
 			Version:           opts.Version,
 			Provider:          cfg.Provider,
 			Platform:          platformName,

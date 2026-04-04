@@ -1,7 +1,7 @@
 // Package telemetry collects anonymous, non-PII usage data for CodeCanary.
 //
 // What is collected (every field is documented on the event structs):
-//   - A random installation UUID (not tied to any user, repo, or org)
+//   - A deterministic UUID derived from a SHA-256 hash of the repo name
 //   - Event type, binary version, OS, architecture
 //   - LLM provider name and platform (github/local)
 //   - Aggregate counts: findings, tokens, cost, duration
@@ -17,13 +17,13 @@ package telemetry
 
 import (
 	"bytes"
-	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -40,50 +40,45 @@ var sendTimeout = 2 * time.Second
 // pending tracks in-flight sends so Wait() can block until they complete.
 var pending sync.WaitGroup
 
+// ---------- Repository-based ID ----------
+
+const firstRunMarker = ".telemetry_seen"
+
 // configDirFn returns the path to ~/.codecanary/. Tests can override this.
 var configDirFn = configDir
 
-// ---------- Installation ID ----------
+// repoID derives a deterministic, anonymous ID from a repository name
+// (e.g. "owner/repo"). The ID is a SHA-256 hash formatted as a UUID-like
+// string, so the same repo always produces the same ID regardless of
+// which machine or CI runner is used.
+// Returns "" if repo is empty.
+func repoID(repo string) string {
+	if repo == "" {
+		return ""
+	}
+	h := sha256.Sum256([]byte(repo))
+	// Format first 16 bytes as UUID (version 5-style, SHA-based).
+	b := h[:16]
+	b[6] = (b[6] & 0x0f) | 0x50 // version 5
+	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
 
-const idFileName = "installation_id"
+// detectRepoFn resolves the current repo name. Tests can override this.
+var detectRepoFn = detectRepo
 
-var uuidV4Re = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
-
-var (
-	installOnce sync.Once
-	installID   string
-	firstRun    bool
-)
-
-// getOrCreateID returns a persistent anonymous UUID.
-// It reads from ~/.codecanary/installation_id or generates a new one.
-// Returns "" if anything goes wrong (errors are swallowed).
-func getOrCreateID() string {
-	installOnce.Do(func() {
-		dir, err := configDirFn()
-		if err != nil {
-			return
-		}
-		path := filepath.Join(dir, idFileName)
-
-		if data, err := os.ReadFile(path); err == nil {
-			id := strings.TrimSpace(string(data))
-			if uuidV4Re.MatchString(id) {
-				installID = id
-				return
-			}
-		}
-
-		id, err := newUUIDv4()
-		if err != nil {
-			return
-		}
-		_ = os.MkdirAll(dir, 0o755)
-		_ = os.WriteFile(path, []byte(id+"\n"), 0o600)
-		installID = id
-		firstRun = true
-	})
-	return installID
+// detectRepo returns the "owner/repo" for the current working directory
+// by shelling out to gh. Returns "" on any failure.
+func detectRepo() string {
+	out, err := exec.Command("gh", "repo", "view",
+		"--json", "nameWithOwner",
+		"--jq", ".nameWithOwner",
+	).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func configDir() (string, error) {
@@ -94,22 +89,31 @@ func configDir() (string, error) {
 	return filepath.Join(home, ".codecanary"), nil
 }
 
-// newUUIDv4 generates a RFC 4122 version-4 UUID using crypto/rand.
-func newUUIDv4() (string, error) {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "", err
+var firstRun bool
+
+// ---------- First-run detection ----------
+
+// checkFirstRun returns true if this is the first telemetry send on
+// this machine. It creates a marker file (~/.codecanary/.telemetry_seen)
+// on first call and returns false on subsequent runs.
+func checkFirstRun() bool {
+	dir, err := configDirFn()
+	if err != nil {
+		return false
 	}
-	b[6] = (b[6] & 0x0f) | 0x40 // version 4
-	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
-	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
-		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
+	path := filepath.Join(dir, firstRunMarker)
+	if _, err := os.Stat(path); err == nil {
+		return false
+	}
+	_ = os.MkdirAll(dir, 0o755)
+	_ = os.WriteFile(path, []byte("1\n"), 0o600)
+	return true
 }
 
 // ---------- Opt-out ----------
 
-// IsFirstRun reports whether the current process just created a new
-// installation ID (i.e. this is the very first run on this machine).
+// IsFirstRun reports whether the current process just created the
+// first-run marker (i.e. this is the very first run on this machine).
 // Must be called after SendSetup or SendReview to get a meaningful result.
 func IsFirstRun() bool {
 	return firstRun
@@ -132,6 +136,10 @@ func Enabled() bool {
 type ReviewEvent struct {
 	InstallationID string `json:"installation_id"`
 	Event          string `json:"event"`
+
+	// Repo is the owner/repo identifier used to derive InstallationID.
+	// It is cleared before the event is sent (never transmitted).
+	Repo string `json:"-"`
 
 	// Binary metadata.
 	Version string `json:"version"`
@@ -172,13 +180,34 @@ type SetupEvent struct {
 
 // ---------- Public API ----------
 
+// resolveID returns a repo-based installation ID.
+// If repo is empty, it falls back to auto-detection via gh.
+// Returns "" if the repo cannot be determined.
+func resolveID(repo string) string {
+	if repo == "" {
+		repo = detectRepoFn()
+	}
+	return repoID(repo)
+}
+
+// fireAndForget sends a telemetry payload in a background goroutine,
+// checks the first-run marker, and tracks the in-flight send.
+func fireAndForget(payload any) {
+	firstRun = checkFirstRun()
+	pending.Add(1)
+	go func() {
+		defer pending.Done()
+		send(payload)
+	}()
+}
+
 // SendReview fires a review_completed event in a background goroutine.
 // Never blocks. Silently swallows all errors.
 func SendReview(e ReviewEvent) {
 	if !Enabled() {
 		return
 	}
-	e.InstallationID = getOrCreateID()
+	e.InstallationID = resolveID(e.Repo)
 	if e.InstallationID == "" {
 		return
 	}
@@ -186,11 +215,7 @@ func SendReview(e ReviewEvent) {
 	e.OS = runtime.GOOS
 	e.Arch = runtime.GOARCH
 	e.Timestamp = time.Now().UTC().Format(time.RFC3339)
-	pending.Add(1)
-	go func() {
-		defer pending.Done()
-		send(e)
-	}()
+	fireAndForget(e)
 }
 
 // SendSetup fires a setup_completed event in a background goroutine.
@@ -198,7 +223,7 @@ func SendSetup(version, provider, platform string) {
 	if !Enabled() {
 		return
 	}
-	id := getOrCreateID()
+	id := resolveID("")
 	if id == "" {
 		return
 	}
@@ -212,11 +237,7 @@ func SendSetup(version, provider, platform string) {
 		Platform:       platform,
 		Timestamp:      time.Now().UTC().Format(time.RFC3339),
 	}
-	pending.Add(1)
-	go func() {
-		defer pending.Done()
-		send(e)
-	}()
+	fireAndForget(e)
 }
 
 // Wait blocks until all in-flight telemetry sends complete, with a hard
