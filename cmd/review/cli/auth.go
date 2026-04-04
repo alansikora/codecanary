@@ -181,7 +181,7 @@ var authRefreshCmd = &cobra.Command{
 		// Remote and local credentials live in different stores and
 		// have different capabilities (GitHub secrets are write-only).
 		if target.isRemote {
-			secretName := setup.ProviderSecretName()
+			secretName := setup.ProviderEnvVar()
 			if auth.GitHubSecretExists(repo, secretName) {
 				fmt.Fprintf(os.Stderr, "Secret %s exists on %s (value cannot be read)\n\n", secretName, repo)
 				var replace bool
@@ -275,7 +275,7 @@ func promptAndStoreNewKey(provider string, target refreshTarget, repo string) er
 			return fmt.Errorf("cannot set GitHub secret: repository is unknown")
 		}
 		// All providers share the same secret name (CODECANARY_PROVIDER_SECRET).
-		secretName := setup.ProviderSecretName()
+		secretName := setup.ProviderEnvVar()
 		fmt.Fprintf(os.Stderr, "Setting %s secret on %s...\n", secretName, repo)
 		if err := auth.SetGitHubSecret(repo, secretName, apiKey); err != nil {
 			return fmt.Errorf("setting GitHub secret: %w", err)

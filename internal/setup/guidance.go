@@ -20,7 +20,8 @@ func ProviderGuidance(provider string) string {
 	}
 }
 
-// ProviderEnvVar returns the environment variable name used for provider credentials.
+// ProviderEnvVar returns the canonical name used for provider credentials — both as
+// a local environment variable and as a GitHub Actions secret name.
 func ProviderEnvVar() string {
 	return credentials.EnvVar
 }
@@ -31,11 +32,6 @@ func GitHubPermissionsGuidance() string {
   contents: read         — read repository code
   pull-requests: write   — post review comments on PRs
   id-token: write        — OIDC token for secure authentication`
-}
-
-// ProviderSecretName returns the GitHub secret name for the provider API key.
-func ProviderSecretName() string {
-	return credentials.EnvVar
 }
 
 // TelemetryOptOutMessage is the message shown on first run to inform about telemetry.

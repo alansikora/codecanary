@@ -98,7 +98,7 @@ func RunGitHub(canary bool, version string) error {
 	}
 
 	// 8. Provider-specific auth and secret setup.
-	secretName := ProviderSecretName()
+	secretName := ProviderEnvVar()
 	secretExists := auth.GitHubSecretExists(repo, secretName)
 	previousProvider := readPreviousProvider()
 
