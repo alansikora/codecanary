@@ -34,3 +34,15 @@ type ReviewPlatform interface {
 	// to GITHUB_ENV. Locally this prints a usage table to stderr.
 	ReportUsage(tracker *UsageTracker)
 }
+
+// combineFindings strips the Status field from stillOpen findings (so persisted
+// state doesn't carry triage labels) and merges them with new findings.
+func combineFindings(stillOpen, newFindings []Finding) []Finding {
+	var surviving []Finding
+	for _, f := range stillOpen {
+		sf := f
+		sf.Status = ""
+		surviving = append(surviving, sf)
+	}
+	return mergeFindings(surviving, newFindings)
+}

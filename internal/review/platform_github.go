@@ -265,14 +265,7 @@ func (g *GithubPlatform) SaveState(result *ReviewResult, stillOpen []Finding, is
 		return nil // non-fatal
 	}
 
-	// Strip "still open" status before saving.
-	var surviving []Finding
-	for _, f := range stillOpen {
-		sf := f
-		sf.Status = ""
-		surviving = append(surviving, sf)
-	}
-	allFindings := mergeFindings(surviving, result.Findings)
+	allFindings := combineFindings(stillOpen, result.Findings)
 
 	if err := SaveLocalState(branch, &LocalState{
 		SHA:      result.SHA,

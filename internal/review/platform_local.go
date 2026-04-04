@@ -52,14 +52,7 @@ func (l *LocalPlatform) Publish(result *ReviewResult, _ *PRData, _ []ReviewThrea
 }
 
 func (l *LocalPlatform) SaveState(result *ReviewResult, stillOpen []Finding, _ bool) error {
-	// Strip "still open" status before saving.
-	var surviving []Finding
-	for _, f := range stillOpen {
-		sf := f
-		sf.Status = ""
-		surviving = append(surviving, sf)
-	}
-	allFindings := mergeFindings(surviving, result.Findings)
+	allFindings := combineFindings(stillOpen, result.Findings)
 
 	if err := SaveLocalState(l.Branch, &LocalState{
 		SHA:      result.SHA,
