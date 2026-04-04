@@ -54,29 +54,5 @@ func (p *openrouterProvider) Run(ctx context.Context, prompt string, opts RunOpt
 		return nil, err
 	}
 
-	usage := CallUsage{
-		Model:      p.model,
-		DurationMS: durationMS,
-	}
-	if chatResp.Usage != nil {
-		usage.InputTokens = chatResp.Usage.PromptTokens
-		usage.OutputTokens = chatResp.Usage.CompletionTokens
-		// OpenRouter reports cached tokens the same way as OpenAI.
-		if chatResp.Usage.PromptTokensDetails != nil && chatResp.Usage.PromptTokensDetails.CachedTokens > 0 {
-			usage.CacheReadTokens = chatResp.Usage.PromptTokensDetails.CachedTokens
-			usage.InputTokens = max(0, chatResp.Usage.PromptTokens-usage.CacheReadTokens)
-		}
-	}
-	usage.CostUSD = estimateCost(usage)
-
-	text := ""
-	if len(chatResp.Choices) > 0 {
-		text = chatResp.Choices[0].Message.Content
-	}
-
-	return &claudeResult{
-		Text:      text,
-		Usage:     usage,
-		Truncated: truncated,
-	}, nil
+	return chatResultFromResponse(p.model, chatResp, durationMS, truncated), nil
 }

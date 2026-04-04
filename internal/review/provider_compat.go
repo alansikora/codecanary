@@ -120,3 +120,32 @@ func doChat(ctx context.Context, apiBase, apiKey, model, prompt string, timeout 
 
 	return &chatResp, durationMS, truncated, nil
 }
+
+// chatResultFromResponse builds a claudeResult from a chat completions
+// response. Both the openai and openrouter adapters call this after doChat.
+func chatResultFromResponse(model string, chatResp *chatResponse, durationMS int, truncated bool) *claudeResult {
+	usage := CallUsage{
+		Model:      model,
+		DurationMS: durationMS,
+	}
+	if chatResp.Usage != nil {
+		usage.OutputTokens = chatResp.Usage.CompletionTokens
+		usage.InputTokens = chatResp.Usage.PromptTokens
+		if chatResp.Usage.PromptTokensDetails != nil && chatResp.Usage.PromptTokensDetails.CachedTokens > 0 {
+			usage.CacheReadTokens = chatResp.Usage.PromptTokensDetails.CachedTokens
+			usage.InputTokens = max(0, chatResp.Usage.PromptTokens-usage.CacheReadTokens)
+		}
+	}
+	usage.CostUSD = estimateCost(usage)
+
+	text := ""
+	if len(chatResp.Choices) > 0 {
+		text = chatResp.Choices[0].Message.Content
+	}
+
+	return &claudeResult{
+		Text:      text,
+		Usage:     usage,
+		Truncated: truncated,
+	}
+}
