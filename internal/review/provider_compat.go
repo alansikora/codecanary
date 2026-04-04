@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -66,7 +67,7 @@ func doChat(ctx context.Context, apiBase, apiKey, model, prompt string, timeout 
 		Messages: []chatMessage{
 			{Role: "user", Content: prompt},
 		},
-		MaxTokens: 16384,
+		MaxTokens: lookupMaxOutputTokens(model),
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -113,6 +114,10 @@ func doChat(ctx context.Context, apiBase, apiKey, model, prompt string, timeout 
 
 	if len(chatResp.Choices) == 0 {
 		return nil, 0, fmt.Errorf("API returned no choices")
+	}
+
+	if chatResp.Choices[0].FinishReason == "length" {
+		fmt.Fprintf(os.Stderr, "Warning: response truncated (hit %d token output limit) — review may be incomplete\n", lookupMaxOutputTokens(model))
 	}
 
 	return &chatResp, durationMS, nil

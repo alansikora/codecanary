@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -32,6 +33,22 @@ func init() {
 			{"claude-haiku-3-5", modelPricing{0.80, 4, 1.0, 0.08}},
 			// Haiku 3
 			{"claude-haiku-3", modelPricing{0.25, 1.25, 0.30, 0.03}},
+		},
+		MaxOutputTokens: []MaxTokensEntry{
+			// Opus 4.6 / 4.5: 128k output
+			{"claude-opus-4-6", 128_000},
+			{"claude-opus-4-5", 128_000},
+			// Opus 4.1 / 4: 32k output
+			{"claude-opus-4-1", 32_000},
+			{"claude-opus-4-", 32_000},
+			// Sonnet 4.6 / 4.5 / 4: 64k output
+			{"claude-sonnet-4", 64_000},
+			// Haiku 4.5: 64k output
+			{"claude-haiku-4-5", 64_000},
+			// Haiku 3.5: 8k output
+			{"claude-haiku-3-5", 8_192},
+			// Haiku 3: 4k output
+			{"claude-haiku-3", 4_096},
 		},
 		SuggestedReviewModel: "claude-sonnet-4-6",
 		SuggestedTriageModel: "claude-haiku-4-5-20251001",
@@ -123,7 +140,7 @@ func (p *anthropicProvider) Run(ctx context.Context, prompt string, opts RunOpts
 	// Place cache_control on the content block so the prompt is cached.
 	reqBody := anthropicRequest{
 		Model:     p.model,
-		MaxTokens: 16384,
+		MaxTokens: lookupMaxOutputTokens(p.model),
 		Messages: []anthropicMessage{
 			{
 				Role: "user",
@@ -178,6 +195,10 @@ func (p *anthropicProvider) Run(ctx context.Context, prompt string, opts RunOpts
 
 	if msgResp.Error != nil {
 		return nil, fmt.Errorf("Anthropic API error: %s", msgResp.Error.Message) //nolint:staticcheck // proper noun
+	}
+
+	if msgResp.StopReason == "max_tokens" {
+		fmt.Fprintf(os.Stderr, "Warning: response truncated (hit %d token output limit) — review may be incomplete\n", lookupMaxOutputTokens(p.model))
 	}
 
 	// Extract text from content blocks.

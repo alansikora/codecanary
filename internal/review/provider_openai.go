@@ -30,6 +30,25 @@ func init() {
 			{"o1-mini", modelPricing{0.55, 2.20, 0.55, 0.55}},
 			{"o1", modelPricing{15, 60, 15, 7.50}},
 		},
+		MaxOutputTokens: []MaxTokensEntry{
+			// GPT-5.4 family: 128k output
+			{"gpt-5.4-nano", 128_000},
+			{"gpt-5.4-mini", 128_000},
+			{"gpt-5.4", 128_000},
+			// GPT-4.1 family: 32k output
+			{"gpt-4.1-nano", 32_768},
+			{"gpt-4.1-mini", 32_768},
+			{"gpt-4.1", 32_768},
+			// GPT-4o family: 16k output
+			{"gpt-4o-mini", 16_384},
+			{"gpt-4o", 16_384},
+			// o-series reasoning
+			{"o4-mini", 100_000},
+			{"o3-mini", 100_000},
+			{"o3", 100_000},
+			{"o1-mini", 65_536},
+			{"o1", 100_000},
+		},
 		SuggestedReviewModel: "gpt-5.4",
 		SuggestedTriageModel: "gpt-5.4-mini",
 	}
