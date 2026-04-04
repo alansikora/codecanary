@@ -29,10 +29,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
 
-      # v1 is a floating action tag (uses: codecanary@v1). Only move it
+      # v1 is a floating action branch (uses: codecanary@v1). Using a
+      # branch instead of a tag keeps v1 out of the tag namespace so
+      # GitHub's auto release notes only see semver tags. Only update
       # for v0.x/v1.x releases. When a v2 line ships, add a separate step.
-      - name: Update v1 action tag
+      - name: Update v1 action branch
         if: startsWith(github.ref_name, 'v0.') || startsWith(github.ref_name, 'v1.')
         run: |
-          git tag -f v1 "${{ github.sha }}"
-          git push origin v1 --force
+          git push origin "${{ github.sha }}:refs/heads/v1" --force
