@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -75,7 +76,7 @@ const defaultMaxOutputTokens = 16384
 
 // lookupMaxOutputTokens returns the maximum output token limit for a model.
 // Searches each provider's MaxOutputTokens entries by substring match.
-// Returns defaultMaxOutputTokens if the model is unknown.
+// Returns defaultMaxOutputTokens and warns once if the model is unknown.
 func lookupMaxOutputTokens(model string) int {
 	lower := strings.ToLower(model)
 	for _, name := range providerNames() {
@@ -84,6 +85,18 @@ func lookupMaxOutputTokens(model string) int {
 			if strings.Contains(lower, entry.Substring) {
 				return entry.MaxOutputTokens
 			}
+		}
+	}
+	if model != "" {
+		warnedMu.Lock()
+		key := "max_tokens:" + model
+		alreadyWarned := warnedModels[key]
+		if !alreadyWarned {
+			warnedModels[key] = true
+		}
+		warnedMu.Unlock()
+		if !alreadyWarned {
+			fmt.Fprintf(os.Stderr, "Warning: unknown model %q — using default max output tokens (%d)\n", model, defaultMaxOutputTokens)
 		}
 	}
 	return defaultMaxOutputTokens
