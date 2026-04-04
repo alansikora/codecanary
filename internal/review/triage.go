@@ -457,7 +457,7 @@ func buildCodeChangePrompt(t TriagedThread, cfg *ReviewConfig) string {
 	b.WriteString("- A change to nearby or adjacent code counts IF it effectively resolves the concern (e.g. fixing the logic, adding the missing check, refactoring the problematic pattern).\n")
 	b.WriteString("- A structural change also counts — for example, if code was moved before a guard condition, control flow was reordered, or the code was refactored so the finding no longer applies.\n")
 	b.WriteString("- If file context is provided, check the current code state — if the issue no longer exists in the current code, it is resolved regardless of which specific diff line fixed it.\n")
-	b.WriteString("- Answer NO only if the finding's concern is still present in the current code.\n\n")
+	b.WriteString("- Answer NO if the code changes do not address the finding, or if file context is provided and the concern is still present in the current code.\n\n")
 	writeCodeChangeResolutionFormat(&b)
 
 	return b.String()
@@ -543,7 +543,7 @@ func buildCrossFilePrompt(t TriagedThread, cfg *ReviewConfig) string {
 	b.WriteString("- Answer YES if a change in another file effectively resolves the concern (e.g. fixing the caller instead of the callee, adding validation in a different layer, removing the code path that triggers the issue).\n")
 	b.WriteString("- A structural change also counts — for example, if code was moved, control flow was reordered, or the code was refactored so the finding no longer applies.\n")
 	b.WriteString("- If file context is provided, check the current code state — if the issue no longer exists in the current code, it is resolved regardless of which specific diff line fixed it.\n")
-	b.WriteString("- Answer NO only if the finding's concern is still present in the current code.\n\n")
+	b.WriteString("- Answer NO if none of the changes in this diff are related to the finding, or if file context is provided and the concern is still present in the current code.\n\n")
 	writeCodeChangeResolutionFormat(&b)
 
 	return b.String()
