@@ -151,7 +151,7 @@ type ReviewPolicy struct {
 }
 
 // safeSlugSegment matches valid owner/repo name characters (GitHub-compatible).
-var safeSlugSegment = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
+var safeSlugSegment = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$`)
 
 // repoSlug returns "owner/repo" derived from the git remote origin URL
 // of the current working directory. Supports HTTPS, SSH, and SCP-style URLs.
@@ -331,11 +331,9 @@ func FindConfig() (string, error) {
 	}
 
 	// Fall back to legacy global config.
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("no local config found — run `codecanary setup local`")
-	}
-	legacyPath := filepath.Join(home, ".codecanary", "config.yml")
+	// localPath is ~/.codecanary/repos/<owner>/<repo>/config.yml;
+	// walk up from repos/<owner>/<repo>/ to ~/.codecanary/.
+	legacyPath := filepath.Join(filepath.Dir(localPath), "..", "..", "..", "config.yml")
 	if _, err := os.Stat(legacyPath); err == nil {
 		Stderrf(ansiYellow, "Warning: using legacy global config at %s\n", legacyPath)
 		Stderrf(ansiYellow, "  Run `codecanary setup local` to create a per-repo config at %s\n", localPath)
