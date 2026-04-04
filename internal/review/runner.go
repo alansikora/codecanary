@@ -483,9 +483,11 @@ func runTriage(
 	}
 
 	// Build resolved context for the incremental review prompt (anti-ping-pong).
+	// Only include code_change resolutions — file_removed threads reference
+	// files no longer in the PR and would confuse the model.
 	var resolvedCtx []ResolvedContext
 	for _, f := range fixed {
-		if f.Index >= 0 && f.Index < len(reviewThreads) && isTrueResolution(f.Reason) {
+		if f.Index >= 0 && f.Index < len(reviewThreads) && f.Reason == "code_change" {
 			t := reviewThreads[f.Index]
 			title := t.Body
 			if nl := strings.Index(title, "\n"); nl >= 0 {
