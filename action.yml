@@ -90,14 +90,15 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
+        REPO: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
       # Best-effort: deepening by the PR commit count makes the previous review
       # SHA available for incremental diffs in the common case (new commits pushed).
       # After force-pushes or rebases the old SHA is rewritten and won't be found;
       # the review falls back to the full PR diff automatically.
       run: |
-        PR_NUMBER="${{ github.event.pull_request.number }}"
         if [ -n "$PR_NUMBER" ]; then
-          COMMITS=$(gh api repos/${{ github.repository }}/pulls/"$PR_NUMBER" --jq '.commits')
+          COMMITS=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.commits')
           if [ -n "$COMMITS" ] && [ "$COMMITS" -gt 0 ] 2>/dev/null; then
             git fetch --deepen="$COMMITS" origin
           fi
