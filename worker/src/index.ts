@@ -10,12 +10,33 @@ const GITHUB_API = "https://api.github.com";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Authorization, Content-Type",
+    };
+
     if (request.method === "OPTIONS") {
-      return new Response(null, { status: 204 });
+      return new Response(null, { status: 204, headers: corsHeaders });
     }
 
-    if (request.method !== "POST" || new URL(request.url).pathname !== "/token") {
-      return Response.json({ error: "Not found" }, { status: 404 });
+    const withCors = (resp: Response): Response => {
+      const patched = new Response(resp.body, resp);
+      for (const [k, v] of Object.entries(corsHeaders)) {
+        patched.headers.set(k, v);
+      }
+      return patched;
+    };
+
+    const url = new URL(request.url);
+
+    // GET /check-install?repo=owner/name — lightweight installation check.
+    if (request.method === "GET" && url.pathname === "/check-install") {
+      return withCors(await handleCheckInstall(request, url, env));
+    }
+
+    if (request.method !== "POST" || url.pathname !== "/token") {
+      return withCors(Response.json({ error: "Not found" }, { status: 404 }));
     }
 
     try {
@@ -89,6 +110,49 @@ export default {
     }
   },
 };
+
+async function handleCheckInstall(request: Request, url: URL, env: Env): Promise<Response> {
+  const authHeader = request.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    return Response.json({ error: "Missing Authorization header" }, { status: 401 });
+  }
+  const ghToken = authHeader.slice(7);
+
+  const repo = url.searchParams.get("repo");
+  if (!repo || repo.split("/").length !== 2) {
+    return Response.json(
+      { error: "Missing or invalid 'repo' parameter (expected owner/name)" },
+      { status: 400 }
+    );
+  }
+
+  // Verify the caller has access to this repo using their own token.
+  // This prevents probing installation status for repos the user can't see.
+  const repoResp = await fetch(`${GITHUB_API}/repos/${repo}`, {
+    headers: {
+      Authorization: `Bearer ${ghToken}`,
+      Accept: "application/vnd.github+json",
+      "User-Agent": "codecanary-token-proxy",
+    },
+  });
+  if (repoResp.status === 401) {
+    await repoResp.text();
+    return Response.json({ error: "Invalid GitHub token" }, { status: 401 });
+  }
+  if (!repoResp.ok) {
+    await repoResp.text();
+    return Response.json({ error: "Repository not accessible" }, { status: 403 });
+  }
+
+  try {
+    const appJwt = await generateAppJwt(env.APP_ID, env.APP_PRIVATE_KEY);
+    const installationId = await findInstallation(appJwt, repo);
+    return Response.json({ installed: installationId !== null });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    return Response.json({ error: message }, { status: 500 });
+  }
+}
 
 async function generateAppJwt(appId: string, privateKeyPem: string): Promise<string> {
   if (!privateKeyPem.includes("BEGIN PRIVATE KEY")) {
