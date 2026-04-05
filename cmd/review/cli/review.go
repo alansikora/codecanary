@@ -21,6 +21,22 @@ var reviewCmd = &cobra.Command{
 		configPath, _ := cmd.Flags().GetString("config")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		replyOnly, _ := cmd.Flags().GetBool("reply-only")
+		failOn, _ := cmd.Flags().GetString("fail-on")
+
+		// Validate --fail-on value.
+		if failOn != "" {
+			validSeverities := []string{"critical", "bug", "warning", "suggestion", "nitpick"}
+			valid := false
+			for _, s := range validSeverities {
+				if failOn == s {
+					valid = true
+					break
+				}
+			}
+			if !valid {
+				return fmt.Errorf("invalid --fail-on value %q: must be one of: critical, bug, warning, suggestion, nitpick", failOn)
+			}
+		}
 
 		// Explicit PR number — GitHub mode.
 		if len(args) > 0 {
@@ -29,14 +45,15 @@ var reviewCmd = &cobra.Command{
 				return fmt.Errorf("invalid PR number %q: %w", args[0], err)
 			}
 			return review.Run(review.RunOptions{
-				Repo:       repo,
-				PRNumber:   prNumber,
-				ConfigPath: configPath,
-				Output:     output,
-				Post:       post,
-				DryRun:     dryRun,
-				ReplyOnly:  replyOnly,
-				Version:    Version,
+				Repo:           repo,
+				PRNumber:       prNumber,
+				ConfigPath:     configPath,
+				Output:         output,
+				Post:           post,
+				DryRun:         dryRun,
+				ReplyOnly:      replyOnly,
+				FailOnSeverity: failOn,
+				Version:        Version,
 				Platform: &review.GithubPlatform{
 					Repo:         repo,
 					PRNumber:     prNumber,
@@ -51,14 +68,15 @@ var reviewCmd = &cobra.Command{
 		if prNumber, err := review.DetectPRNumber(repo); err == nil {
 			review.Stderrf(review.ColorCyan, "Auto-detected PR #%d from current branch\n", prNumber)
 			return review.Run(review.RunOptions{
-				Repo:       repo,
-				PRNumber:   prNumber,
-				ConfigPath: configPath,
-				Output:     output,
-				Post:       post,
-				DryRun:     dryRun,
-				ReplyOnly:  replyOnly,
-				Version:    Version,
+				Repo:           repo,
+				PRNumber:       prNumber,
+				ConfigPath:     configPath,
+				Output:         output,
+				Post:           post,
+				DryRun:         dryRun,
+				ReplyOnly:      replyOnly,
+				FailOnSeverity: failOn,
+				Version:        Version,
 				Platform: &review.GithubPlatform{
 					Repo:         repo,
 					PRNumber:     prNumber,
@@ -86,13 +104,14 @@ var reviewCmd = &cobra.Command{
 		}
 
 		return review.Run(review.RunOptions{
-			PR:         pr,
-			ConfigPath: configPath,
-			Output:     output,
-			Post:       post,
-			DryRun:     dryRun,
-			ReplyOnly:  replyOnly,
-			Version:    Version,
+			PR:             pr,
+			ConfigPath:     configPath,
+			Output:         output,
+			Post:           post,
+			DryRun:         dryRun,
+			ReplyOnly:      replyOnly,
+			FailOnSeverity: failOn,
+			Version:        Version,
 			Platform: &review.LocalPlatform{
 				Branch:       pr.HeadBranch,
 				OutputFormat: output,
@@ -107,6 +126,7 @@ func init() {
 	reviewCmd.Flags().Bool("post", false, "Post findings as a PR comment")
 	reviewCmd.Flags().StringP("config", "c", "", "Path to review config (auto-detected if empty)")
 	reviewCmd.Flags().Bool("reply-only", false, "Evaluate thread replies only, skip new findings")
+	reviewCmd.Flags().String("fail-on", "", "Exit non-zero when findings at or above this severity exist (critical, bug, warning, suggestion, nitpick)")
 	reviewCmd.PersistentFlags().Bool("dry-run", false, "Show prompt without running Claude")
 	rootCmd.AddCommand(reviewCmd)
 }
