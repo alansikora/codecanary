@@ -96,7 +96,6 @@ Once merged, CodeCanary reviews every PR on open and push. Draft PRs are skipped
 | `--repo, -r` | GitHub repo (owner/name) |
 | `--output, -o` | Output format: `terminal`, `markdown`, or `json` (auto-detects TTY) |
 | `--post` | Post findings as a PR review comment |
-| `--post` | Post findings as a PR review comment |
 | `--config, -c` | Path to config file (auto-detected if empty) |
 | `--reply-only` | Re-evaluate thread replies only, skip new findings |
 | `--dry-run` | Show the prompt without calling the LLM |
