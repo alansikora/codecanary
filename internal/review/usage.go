@@ -140,7 +140,8 @@ func (u *UsageTracker) Report(repo string, prNumber int) *UsageReport {
 
 // WriteUsageEnv writes the usage report as a CODECANARY_USAGE env var
 // to $GITHUB_ENV so subsequent workflow steps can read it. No-op outside
-// GitHub Actions.
+// GitHub Actions. Also writes a markdown summary to $GITHUB_STEP_SUMMARY
+// when that env var is set.
 func WriteUsageEnv(report *UsageReport) error {
 	path := os.Getenv("GITHUB_ENV")
 	if path == "" {
@@ -161,6 +162,63 @@ func WriteUsageEnv(report *UsageReport) error {
 	if _, err := fmt.Fprintf(f, "CODECANARY_USAGE=%s\n", data); err != nil {
 		return fmt.Errorf("writing to GITHUB_ENV: %w", err)
 	}
+
+	if err := writeStepSummary(report); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to write GitHub Step Summary: %v\n", err)
+	}
+
+	return nil
+}
+
+// formatInt formats an integer with thousands separators (e.g. 1234567 -> "1,234,567").
+func formatInt(n int) string {
+	s := fmt.Sprintf("%d", n)
+	if n < 0 {
+		s = s[1:]
+	}
+	var result []byte
+	for i, c := range s {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			result = append(result, ',')
+		}
+		result = append(result, byte(c))
+	}
+	if n < 0 {
+		return "-" + string(result)
+	}
+	return string(result)
+}
+
+// writeStepSummary appends a markdown usage table to $GITHUB_STEP_SUMMARY.
+// No-op if $GITHUB_STEP_SUMMARY is not set or if the report has no calls.
+func writeStepSummary(report *UsageReport) error {
+	path := os.Getenv("GITHUB_STEP_SUMMARY")
+	if path == "" {
+		return nil
+	}
+	if len(report.Calls) == 0 {
+		return nil
+	}
+
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("opening GITHUB_STEP_SUMMARY: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	fmt.Fprintln(f, "## CodeCanary Usage")
+	fmt.Fprintln(f, "")
+	fmt.Fprintln(f, "| Phase | Model | Input tokens | Output tokens | Cost |")
+	fmt.Fprintln(f, "|-------|-------|-------------|---------------|------|")
+	for _, c := range report.Calls {
+		fmt.Fprintf(f, "| %s | %s | %s | %s | $%.4f |\n",
+			c.Phase, c.Model,
+			formatInt(c.InputTokens), formatInt(c.OutputTokens),
+			c.CostUSD)
+	}
+	fmt.Fprintf(f, "| **Total** | | **%s** | **%s** | **$%.4f** |\n",
+		formatInt(report.TotalInputTokens), formatInt(report.TotalOutputTokens),
+		report.TotalCostUSD)
 
 	return nil
 }
