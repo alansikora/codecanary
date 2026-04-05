@@ -27,7 +27,7 @@ There are three runtime contexts:
 
 **GitHub mode**: Fetches PR metadata (title, body, author, branches) and diff via `gh pr view` and `gh pr diff`.
 
-**Local mode**: Computes diff from merge-base to HEAD via `git diff $(git merge-base HEAD main)..HEAD`. Uses current branch name as the title and `git config user.name` as the author.
+**Local mode**: Detects the default branch (`main`, falling back to `master`) and computes diff from merge-base to HEAD via `git diff $(git merge-base HEAD <default-branch>)..HEAD`. Uses current branch name as the title and `git config user.name` as the author.
 
 If the PR is a setup PR (only adds workflow files with no real code changes), the review is skipped with an informational comment.
 
@@ -44,8 +44,8 @@ If the PR is a setup PR (only adds workflow files with no real code changes), th
 
 Two `ModelProvider` instances are created from config:
 
-- **Review provider**: The main model that reviews code (e.g. `claude-sonnet-4-6`).
-- **Triage provider**: A cheaper model for re-evaluating previous findings (e.g. `claude-haiku-4-5`).
+- **Review provider**: The main model that reviews code (configured via `review_model` in config).
+- **Triage provider**: A cheaper model for re-evaluating previous findings (configured via `triage_model` in config).
 
 Each provider is constructed via the factory registry in `provider.go`. The provider name determines which adapter handles the API call (Anthropic, OpenAI, OpenRouter, or Claude CLI).
 
