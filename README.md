@@ -62,7 +62,7 @@ codecanary review --post         # same, but also post findings to the PR on Git
 codecanary review --output json  # machine-readable output
 ```
 
-If your branch has an open PR, CodeCanary auto-detects it. Otherwise it diffs against the default branch. State is tracked in `.codecanary/.state/` for incremental reviews on subsequent runs.
+If your branch has an open PR, CodeCanary auto-detects it. Otherwise it diffs against the default branch. State is tracked in `~/.codecanary/state/` for incremental reviews on subsequent runs.
 
 ### GitHub Actions
 
@@ -95,6 +95,7 @@ Once merged, CodeCanary reviews every PR on open and push. Draft PRs are skipped
 |------|-------------|
 | `--repo, -r` | GitHub repo (owner/name) |
 | `--output, -o` | Output format: `terminal`, `markdown`, or `json` (auto-detects TTY) |
+| `--post` | Post findings as a PR review comment |
 | `--post` | Post findings as a PR review comment |
 | `--config, -c` | Path to config file (auto-detected if empty) |
 | `--reply-only` | Re-evaluate thread replies only, skip new findings |

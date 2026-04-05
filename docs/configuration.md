@@ -4,13 +4,11 @@ CodeCanary uses a `.codecanary/config.yml` file in your repository. The setup wi
 
 ## Config file locations
 
-Config is resolved in this order (first match wins):
+The `--config` flag always takes precedence when provided. Otherwise, config resolution depends on context:
 
-1. `--config` flag on the CLI
-2. `.codecanary/config.yml` in the repo
-3. `~/.codecanary/repos/<owner>/<repo>/config.yml` (local per-repo config)
+**GitHub Actions**: uses the repo-level `.codecanary/config.yml` (walks up from the working directory). Legacy `.codecanary.yml` at repo root is also supported with a deprecation warning.
 
-Legacy: `.codecanary.yml` at repo root is still supported with a deprecation warning.
+**Local CLI**: uses `~/.codecanary/repos/<owner>/<repo>/config.yml` (created by `codecanary setup local`). Falls back to the legacy global `~/.codecanary/config.yml` with a deprecation warning. The repo-level `.codecanary/config.yml` is not used locally — it's for CI only.
 
 ## Full config reference
 

@@ -42,11 +42,11 @@ Abstracts LLM invocations. The core engine calls `provider.Run(ctx, prompt, opts
 
 Abstracts environment-specific operations: loading previous findings, publishing results, saving state, resolving threads, reporting usage.
 
-**Implementations**: `GithubPlatform` (posts to PRs, reads threads via API), `LocalPlatform` (prints to terminal, persists state to `.codecanary/state/`).
+**Implementations**: `GithubPlatform` (posts to PRs, reads threads via API), `LocalPlatform` (prints to terminal, persists state to `~/.codecanary/state/`).
 
 ## Adding a new LLM provider
 
-Create `internal/review/provider_<name>.go`. Your file does three things: implements `ModelProvider`, and registers everything via `init()`.
+Create `internal/review/provider_<name>.go`. Your file does two things: implements `ModelProvider` and registers the factory via `init()`.
 
 ### 1. Register a `ProviderFactory`
 
