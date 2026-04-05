@@ -323,11 +323,14 @@ func ClassifyThreads(threads []ReviewThread, activityDiff, contextDiff, botLogin
 		}
 
 		// Build a windowed file snippet for code-change evaluations.
+		// Use file-scoped diff for snippet range calculation so hunk line
+		// numbers from other files don't pull in wrong sections.
 		var fileSnippet string
 		if content, ok := fileContents[t.Path]; ok {
 			switch class {
 			case TriageCodeChanged, TriageCodeChangedReply:
-				fileSnippet = ExtractFileSnippet(content, t.Line, fileDiff, 300)
+				scopedDiff := ExtractFileDiff(contextDiff, t.Path)
+				fileSnippet = ExtractFileSnippet(content, t.Line, scopedDiff, 300)
 			case TriageCrossFileChange:
 				// Show finding's file context even though the diff is in other files.
 				fileSnippet = ExtractFileSnippet(content, t.Line, "", 200)
