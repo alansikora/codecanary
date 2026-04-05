@@ -13,6 +13,7 @@ type LocalPlatform struct {
 }
 
 func (l *LocalPlatform) LoadPreviousFindings() ([]ReviewThread, string, int) {
+	l.savedFindings = nil
 	state, err := LoadLocalState(l.Branch)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not load local state: %v\n", err)

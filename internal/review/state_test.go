@@ -7,8 +7,8 @@ import (
 func TestFindingFromThreadLosesLocalStateFields(t *testing.T) {
 	// This test documents the known limitation: FindingFromThread cannot
 	// reconstruct findings from the plain-text body that findingsToKnownIssues
-	// produces. This is why LocalPlatform.OriginalFinding exists — it
-	// bypasses FindingFromThread entirely for local mode via SavedFinding.
+	// produces. This is why LocalPlatform.SavedFinding exists — it
+	// bypasses FindingFromThread entirely for local mode.
 	//
 	// In GitHub mode, FindingFromThread works correctly because PR comments
 	// contain embedded JSON markers (<!-- codecanary:finding {...} -->).
