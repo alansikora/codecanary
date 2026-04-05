@@ -7,8 +7,9 @@ import (
 
 // LocalPlatform implements ReviewPlatform for local-only reviews (no PR).
 type LocalPlatform struct {
-	Branch       string
-	OutputFormat string // user-requested output format (may be empty)
+	Branch        string
+	OutputFormat  string    // user-requested output format (may be empty)
+	savedFindings []Finding // original findings from state, indexed parallel to threads
 }
 
 func (l *LocalPlatform) LoadPreviousFindings() ([]ReviewThread, string, int) {
@@ -21,8 +22,19 @@ func (l *LocalPlatform) LoadPreviousFindings() ([]ReviewThread, string, int) {
 	}
 
 	fmt.Fprintf(os.Stderr, "Found previous local review at %s (%d findings)\n", shortSHA(state.SHA), len(state.Findings))
+	l.savedFindings = state.Findings
 	threads := findingsToKnownIssues(state.Findings)
 	return threads, state.SHA, len(state.Findings)
+}
+
+// SavedFinding returns the persisted Finding from the loaded state at the
+// given thread index. This avoids the lossy FindingFromThread reconstruction
+// that drops id, title, description, and suggestion fields.
+func (l *LocalPlatform) SavedFinding(index int) (Finding, bool) {
+	if index < 0 || index >= len(l.savedFindings) {
+		return Finding{}, false
+	}
+	return l.savedFindings[index], true
 }
 
 func (l *LocalPlatform) ExcludedAuthor(_ []ReviewThread) string {

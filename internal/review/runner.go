@@ -560,6 +560,15 @@ func runTriage(
 			continue
 		}
 		unresolved = append(unresolved, t)
+		// Use original finding from local state when available (lossless).
+		// Fall back to FindingFromThread for GitHub mode (has embedded JSON).
+		if lp, ok := platform.(*LocalPlatform); ok {
+			if f, ok := lp.SavedFinding(i); ok {
+				f.Status = "still open"
+				stillOpenFindings = append(stillOpenFindings, f)
+				continue
+			}
+		}
 		stillOpenFindings = append(stillOpenFindings, FindingFromThread(t))
 	}
 
