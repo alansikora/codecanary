@@ -100,9 +100,9 @@ First, an incremental diff is computed (`git diff <previousSHA>..HEAD`). Two dif
 | `TriageHasReply` | Human replied (no code changes) | LLM evaluates reply intent |
 | `TriageCodeChangedReply` | Both code changed and human replied | LLM evaluates both |
 | `TriageCrossFileChange` | Changes in other files only | LLM evaluates with full PR diff |
-| `TriageFileRemovedFromPR` | File no longer in PR | Auto-resolved (no LLM) |
+| `TriageFileRemovedFromPR` | File no longer in PR | Auto-resolved by Go code (no LLM) -- thread resolved on GitHub |
 
-Threads classified as `TriageFileRemovedFromPR` are auto-resolved without an LLM call.
+Threads classified as `TriageFileRemovedFromPR` are auto-resolved without an LLM call. The Go code sets reason `file_removed` and resolves the thread directly.
 
 For remaining threads, `EvaluateThreadsParallel()` runs up to 3 concurrent LLM calls using the triage model. Each thread gets a tailored prompt with:
 - The finding text
@@ -112,12 +112,11 @@ For remaining threads, `EvaluateThreadsParallel()` runs up to 3 concurrent LLM c
 
 The LLM returns JSON: `{"resolved": true, "reason": "code_change"}` or `{"resolved": false}`.
 
-Resolution reasons and their effects:
+LLM resolution reasons and their effects:
 
 | Reason | Effect | Thread stays open? |
 |---|---|---|
 | `code_change` | Thread resolved on GitHub | No |
-| `file_removed` | Thread resolved on GitHub | No |
 | `dismissed` | Ack reply posted | Yes (re-triaged on next push) |
 | `acknowledged` | Ack reply posted | Yes |
 | `rebutted` | Ack reply posted | Yes |
