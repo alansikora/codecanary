@@ -334,6 +334,10 @@ func ClassifyThreads(threads []ReviewThread, activityDiff, contextDiff, botLogin
 			case TriageCrossFileChange:
 				// Show finding's file context even though the diff is in other files.
 				fileSnippet = ExtractFileSnippet(content, t.Line, "", 200)
+			case TriageHasReply:
+				// Show current file state so the LLM can judge whether the author's
+				// rebuttal is technically accurate given the code as it stands.
+				fileSnippet = ExtractFileSnippet(content, t.Line, "", 200)
 			}
 		}
 
@@ -474,6 +478,7 @@ func buildReplyPrompt(t TriagedThread, cfg *ReviewConfig) string {
 
 	writeFinding(&b, t.Thread)
 	writeReplies(&b, t.Thread, t.BotLogin)
+	writeFileSnippet(&b, t.FileSnippet)
 
 	if ctx := evalContext(cfg, "reply"); ctx != "" {
 		fmt.Fprintf(&b, "## Additional Context\n%s\n\n", ctx)
