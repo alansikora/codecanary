@@ -5,7 +5,66 @@ import (
 	"maps"
 	"slices"
 	"strings"
+
+	"github.com/bmatcuk/doublestar/v4"
 )
+
+// filterRulesForFiles returns only the rules that apply to the given file list.
+// A rule applies when:
+//   - It has no Paths and no ExcludePaths (always applies).
+//   - It has Paths: at least one file matches at least one Paths pattern AND is
+//     not excluded by all ExcludePaths patterns (i.e. at least one matching file
+//     survives exclusion).
+//   - It has only ExcludePaths (no Paths): at least one file is NOT matched by
+//     any ExcludePaths pattern.
+//
+// When files is empty, all rules are returned (no file list to filter against).
+// Match errors from doublestar.Match are treated as no match.
+func filterRulesForFiles(rules []Rule, files []string) []Rule {
+	if len(files) == 0 {
+		return rules
+	}
+
+	out := make([]Rule, 0, len(rules))
+	for _, r := range rules {
+		if len(r.Paths) == 0 && len(r.ExcludePaths) == 0 {
+			out = append(out, r)
+			continue
+		}
+
+		if len(r.Paths) == 0 {
+			// Only ExcludePaths: include if at least one file is not excluded.
+			for _, f := range files {
+				if !matchesAny(f, r.ExcludePaths) {
+					out = append(out, r)
+					break
+				}
+			}
+			continue
+		}
+
+		// Has Paths (and possibly ExcludePaths): include if at least one file
+		// matches Paths and is not excluded.
+		for _, f := range files {
+			if matchesAny(f, r.Paths) && !matchesAny(f, r.ExcludePaths) {
+				out = append(out, r)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// matchesAny reports whether file matches any of the given glob patterns.
+// Errors from doublestar.Match are treated as no match.
+func matchesAny(file string, patterns []string) bool {
+	for _, pat := range patterns {
+		if matched, _ := doublestar.Match(pat, file); matched {
+			return true
+		}
+	}
+	return false
+}
 
 // escapePromptTag neutralises any XML-like tag matching tagName in content,
 // preventing adversarial repos from injecting fake prompt sections.
@@ -76,12 +135,17 @@ func BuildPrompt(pr *PRData, cfg *ReviewConfig, startIndex int, projectDocs map[
 
 	// Review rules.
 	if cfg != nil && len(cfg.Rules) > 0 {
-		b.WriteString("## Review Rules\n")
-		b.WriteString("Apply the following rules when reviewing:\n\n")
-		for _, rule := range cfg.Rules {
-			fmt.Fprintf(&b, "- **%s** (severity: %s): %s\n", rule.ID, rule.Severity, rule.Description)
+		rules := filterRulesForFiles(cfg.Rules, pr.Files)
+		if len(rules) > 0 {
+			b.WriteString("## Review Rules\n")
+			b.WriteString("Apply the following rules when reviewing:\n\n")
+			for _, rule := range rules {
+				fmt.Fprintf(&b, "- **%s** (severity: %s): %s\n", rule.ID, rule.Severity, rule.Description)
+			}
+			b.WriteString("\n")
+		} else {
+			b.WriteString("## Review Rules\nNo specific rules are defined. Perform a general code review covering correctness, security, performance, and maintainability.\n\n")
 		}
-		b.WriteString("\n")
 	} else {
 		b.WriteString("## Review Rules\nNo specific rules are defined. Perform a general code review covering correctness, security, performance, and maintainability.\n\n")
 	}
@@ -184,12 +248,17 @@ func BuildIncrementalPrompt(diff string, cfg *ReviewConfig, knownIssues []Review
 
 	// Review rules.
 	if cfg != nil && len(cfg.Rules) > 0 {
-		b.WriteString("## Review Rules\n")
-		b.WriteString("Apply the following rules when reviewing:\n\n")
-		for _, rule := range cfg.Rules {
-			fmt.Fprintf(&b, "- **%s** (severity: %s): %s\n", rule.ID, rule.Severity, rule.Description)
+		rules := filterRulesForFiles(cfg.Rules, files)
+		if len(rules) > 0 {
+			b.WriteString("## Review Rules\n")
+			b.WriteString("Apply the following rules when reviewing:\n\n")
+			for _, rule := range rules {
+				fmt.Fprintf(&b, "- **%s** (severity: %s): %s\n", rule.ID, rule.Severity, rule.Description)
+			}
+			b.WriteString("\n")
+		} else {
+			b.WriteString("## Review Rules\nNo specific rules are defined. Perform a general code review covering correctness, security, performance, and maintainability.\n\n")
 		}
-		b.WriteString("\n")
 	} else {
 		b.WriteString("## Review Rules\nNo specific rules are defined. Perform a general code review covering correctness, security, performance, and maintainability.\n\n")
 	}
