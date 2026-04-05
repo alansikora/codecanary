@@ -277,7 +277,15 @@ func BuildIncrementalPrompt(diff string, cfg *ReviewConfig, knownIssues []Review
 		b.WriteString("## Known Issues (DO NOT DUPLICATE)\n")
 		b.WriteString("These issues are already reported and unresolved. Do NOT report them again:\n\n")
 		for _, t := range knownIssues {
-			fmt.Fprintf(&b, "- `%s:%d`\n", t.Path, t.Line)
+			sev := severityFromThreadBody(t.Body)
+			id := FindingIDFromThread(t.Body)
+			title := titleFromThreadBody(t.Body)
+			if id != "" && title != "" {
+				icon := severityIcon(sev)
+				fmt.Fprintf(&b, "- `%s:%d` \u2014 %s %s \u2014 %s: %s\n", t.Path, t.Line, icon, sev, id, title)
+			} else {
+				fmt.Fprintf(&b, "- `%s:%d`\n", t.Path, t.Line)
+			}
 		}
 		b.WriteString("\n")
 	}
