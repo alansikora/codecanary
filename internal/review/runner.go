@@ -21,6 +21,7 @@ type RunOptions struct {
 	Post       bool
 	DryRun     bool
 	ReplyOnly  bool           // evaluate thread replies only, skip new findings
+	ClaudePath string         // override claude CLI binary path (overrides config claude_path)
 	Version    string         // binary version (for telemetry)
 	PR         *PRData        // pre-fetched PRData (used in local mode)
 	Platform   ReviewPlatform // environment adapter (GitHub or local)
@@ -296,8 +297,12 @@ func Run(opts RunOptions) error {
 		return err
 	}
 	cfg := rctx.Config
-	reviewMC := &ModelConfig{Provider: cfg.Provider, Model: cfg.ReviewModel, APIBase: cfg.APIBase, APIKeyEnv: cfg.APIKeyEnv}
-	triageMC := &ModelConfig{Provider: cfg.Provider, Model: cfg.TriageModel, APIBase: cfg.APIBase, APIKeyEnv: cfg.APIKeyEnv}
+	claudePath := cfg.ClaudePath
+	if opts.ClaudePath != "" {
+		claudePath = opts.ClaudePath
+	}
+	reviewMC := &ModelConfig{Provider: cfg.Provider, Model: cfg.ReviewModel, APIBase: cfg.APIBase, APIKeyEnv: cfg.APIKeyEnv, ClaudeArgs: cfg.ClaudeArgs, ClaudePath: claudePath}
+	triageMC := &ModelConfig{Provider: cfg.Provider, Model: cfg.TriageModel, APIBase: cfg.APIBase, APIKeyEnv: cfg.APIKeyEnv, ClaudeArgs: cfg.ClaudeArgs, ClaudePath: claudePath}
 	reviewProvider := NewProviderForRole(reviewMC, rctx.Env)
 	triageProvider := NewProviderForRole(triageMC, rctx.Env)
 	tracker := rctx.Tracker

@@ -103,6 +103,47 @@ func TestValidate_AnyModelForAnthropic(t *testing.T) {
 	}
 }
 
+func TestValidate_ClaudeArgsBlockedReserved(t *testing.T) {
+	reserved := []string{"--print", "--output-format", "--no-session-persistence", "--model", "--max-budget-usd"}
+	for _, arg := range reserved {
+		cfg := &ReviewConfig{Provider: "claude", ReviewModel: "sonnet", TriageModel: "haiku", ClaudeArgs: []string{arg}}
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("expected error for reserved arg %q", arg)
+		}
+	}
+}
+
+func TestValidate_ClaudeArgsAllowed(t *testing.T) {
+	cfg := &ReviewConfig{
+		Provider: "claude", ReviewModel: "sonnet", TriageModel: "haiku",
+		ClaudeArgs: []string{"--mcp-config", "/path/to/config.json"},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidate_ClaudeArgsNonClaudeProvider(t *testing.T) {
+	cfg := &ReviewConfig{
+		Provider: "anthropic", ReviewModel: "claude-sonnet-4-6", TriageModel: "claude-haiku-4-5-20251001",
+		ClaudeArgs: []string{"--mcp-config", "/path/to/config.json"},
+	}
+	// Should not error — only warns to stderr.
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("unexpected error for non-claude provider with claude_args: %v", err)
+	}
+}
+
+func TestValidate_ClaudePathCustom(t *testing.T) {
+	cfg := &ReviewConfig{
+		Provider: "claude", ReviewModel: "sonnet", TriageModel: "haiku",
+		ClaudePath: "/usr/local/bin/claude-beta",
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 func TestValidate_ValidCLIModels(t *testing.T) {
 	for _, m := range []string{"haiku", "sonnet", "opus"} {
 		cfg := &ReviewConfig{Provider: "claude", ReviewModel: m, TriageModel: m}
