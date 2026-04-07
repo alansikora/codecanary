@@ -54,19 +54,19 @@ type claudeCLIProvider struct {
 	model      string
 	env        []string
 	extraArgs  []string // from ClaudeArgs; appended after all managed flags
-	binaryPath string   // from ClaudePath; defaults to "claude"
+	binaryPath string   // resolved Claude CLI binary path; never empty
 }
 
 func newClaudeCLIProvider(mc *ModelConfig, env []string) ModelProvider {
-	path := mc.ClaudePath
-	if path == "" {
-		path = "claude"
+	binaryPath := mc.ClaudePath
+	if binaryPath == "" {
+		binaryPath = "claude"
 	}
 	return &claudeCLIProvider{
 		model:      mc.Model,
 		env:        env,
 		extraArgs:  mc.ClaudeArgs,
-		binaryPath: path,
+		binaryPath: binaryPath,
 	}
 }
 

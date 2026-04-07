@@ -110,6 +110,10 @@ func TestValidate_ClaudeArgsBlockedReserved(t *testing.T) {
 		if err := cfg.Validate(); err == nil {
 			t.Errorf("expected error for reserved arg %q", arg)
 		}
+		cfg2 := &ReviewConfig{Provider: "claude", ReviewModel: "sonnet", TriageModel: "haiku", ClaudeArgs: []string{arg + "=somevalue"}}
+		if err := cfg2.Validate(); err == nil {
+			t.Errorf("expected error for reserved arg %q (=value form)", arg)
+		}
 	}
 }
 
@@ -131,6 +135,17 @@ func TestValidate_ClaudeArgsNonClaudeProvider(t *testing.T) {
 	// Should not error — only warns to stderr.
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("unexpected error for non-claude provider with claude_args: %v", err)
+	}
+}
+
+func TestValidate_ClaudePathNonClaudeProvider(t *testing.T) {
+	cfg := &ReviewConfig{
+		Provider: "anthropic", ReviewModel: "claude-sonnet-4-6", TriageModel: "claude-haiku-4-5-20251001",
+		ClaudePath: "/usr/local/bin/claude-beta",
+	}
+	// Should not error — only warns to stderr.
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("unexpected error for non-claude provider with claude_path: %v", err)
 	}
 }
 

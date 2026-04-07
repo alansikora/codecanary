@@ -144,7 +144,11 @@ func (c *ReviewConfig) Validate() error {
 	}
 	if c.Provider == "claude" {
 		for _, arg := range c.ClaudeArgs {
-			if claudeReservedArgs[arg] {
+			name := arg
+			if i := strings.IndexByte(arg, '='); i >= 0 {
+				name = arg[:i]
+			}
+			if claudeReservedArgs[name] {
 				return fmt.Errorf("claude_args: %q is managed by codecanary and cannot be overridden", arg)
 			}
 		}
