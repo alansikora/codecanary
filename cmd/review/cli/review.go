@@ -21,6 +21,7 @@ var reviewCmd = &cobra.Command{
 		configPath, _ := cmd.Flags().GetString("config")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		replyOnly, _ := cmd.Flags().GetBool("reply-only")
+		claudePath, _ := cmd.Flags().GetString("claude-path")
 
 		// Explicit PR number — GitHub mode.
 		if len(args) > 0 {
@@ -36,6 +37,7 @@ var reviewCmd = &cobra.Command{
 				Post:       post,
 				DryRun:     dryRun,
 				ReplyOnly:  replyOnly,
+				ClaudePath: claudePath,
 				Version:    Version,
 				Platform: &review.GithubPlatform{
 					Repo:         repo,
@@ -58,6 +60,7 @@ var reviewCmd = &cobra.Command{
 				Post:       post,
 				DryRun:     dryRun,
 				ReplyOnly:  replyOnly,
+				ClaudePath: claudePath,
 				Version:    Version,
 				Platform: &review.GithubPlatform{
 					Repo:         repo,
@@ -92,6 +95,7 @@ var reviewCmd = &cobra.Command{
 			Post:       post,
 			DryRun:     dryRun,
 			ReplyOnly:  replyOnly,
+			ClaudePath: claudePath,
 			Version:    Version,
 			Platform: &review.LocalPlatform{
 				Branch:       pr.HeadBranch,
@@ -107,6 +111,7 @@ func init() {
 	reviewCmd.Flags().Bool("post", false, "Post findings as a PR comment")
 	reviewCmd.Flags().StringP("config", "c", "", "Path to review config (auto-detected if empty)")
 	reviewCmd.Flags().Bool("reply-only", false, "Evaluate thread replies only, skip new findings")
+	reviewCmd.Flags().String("claude-path", "", "Path to the Claude CLI binary (overrides config claude_path)")
 	reviewCmd.PersistentFlags().Bool("dry-run", false, "Show prompt without running Claude")
 	rootCmd.AddCommand(reviewCmd)
 }

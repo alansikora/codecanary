@@ -22,6 +22,11 @@ triage_model: claude-haiku-4-5-20251001  # required: model for thread re-evaluat
 api_key_env: ANTHROPIC_API_KEY  # env var holding the API key (default per provider)
 api_base: https://...           # override base URL (openai provider only)
 
+claude_args: []                 # extra args passed to the Claude CLI (claude provider only)
+# claude_args:
+#   - "--mcp-config=/path/to/mcp.json"
+claude_path: claude             # path to the Claude CLI binary (default: "claude")
+
 max_budget_usd: 0.50            # per-review spending limit in USD (default: 0 = unlimited)
 timeout_minutes: 5              # per-invocation timeout
 max_file_size: 102400           # per-file content limit in bytes (default 100KB)
@@ -93,6 +98,29 @@ triage_model: haiku
 ```
 
 Uses your Claude CLI's authentication — make sure you're logged in by running `claude`.
+
+#### Extra CLI arguments
+
+Use `claude_args` to pass additional flags to the Claude CLI invocation:
+
+```yaml
+provider: claude
+review_model: sonnet
+triage_model: haiku
+claude_args:
+  - "--mcp-config=/path/to/mcp.json"
+```
+
+All elements must be flags (starting with `-`). Use `--flag=value` form for flags that take a value — bare values like `"/path/to/file"` are rejected to prevent positional argument injection.
+
+The following flags are managed by codecanary and cannot appear in `claude_args`:
+`--print`, `--output-format`, `--no-session-persistence`, `--model`, `--max-budget-usd`.
+
+Use `claude_path` to point to a non-default binary (e.g. a beta release):
+
+```yaml
+claude_path: /usr/local/bin/claude-beta
+```
 
 ## Models
 

@@ -31,6 +31,8 @@ type ReviewConfig struct {
 	Provider     string            `yaml:"provider"`        // "anthropic", "openai", "openrouter", or "claude"
 	APIBase      string            `yaml:"api_base"`        // override base URL (openai provider only)
 	APIKeyEnv    string            `yaml:"api_key_env"`     // env var name for API key (default depends on provider)
+	ClaudeArgs   []string          `yaml:"claude_args"`     // extra args passed to the Claude CLI binary (claude provider only)
+	ClaudePath   string            `yaml:"claude_path"`     // path to Claude CLI binary (default: "claude")
 	Evaluation   *EvaluationConfig `yaml:"evaluation"`
 }
 
@@ -38,10 +40,12 @@ type ReviewConfig struct {
 // single ModelProvider instance. Used internally to build review and triage
 // providers from the flat ReviewConfig fields.
 type ModelConfig struct {
-	Provider  string
-	Model     string
-	APIBase   string
-	APIKeyEnv string
+	Provider   string
+	Model      string
+	APIBase    string
+	APIKeyEnv  string
+	ClaudeArgs []string // forwarded to claudeCLIProvider; ignored by other providers
+	ClaudePath string   // forwarded to claudeCLIProvider; empty means "claude"
 }
 
 // EvaluationConfig holds per-evaluation-type settings for re-evaluation prompts.
@@ -138,6 +142,22 @@ func (c *ReviewConfig) Validate() error {
 			return err
 		}
 	}
+	if c.Provider == "claude" {
+		for _, arg := range c.ClaudeArgs {
+			if !strings.HasPrefix(arg, "-") {
+				return fmt.Errorf("claude_args: %q is not a flag; use --flag=value form to avoid positional argument injection", arg)
+			}
+			name := arg
+			if i := strings.IndexByte(arg, '='); i >= 0 {
+				name = arg[:i]
+			}
+			if claudeReservedArgs[name] {
+				return fmt.Errorf("claude_args: %q is managed by codecanary and cannot be overridden", arg)
+			}
+		}
+	} else if len(c.ClaudeArgs) > 0 || c.ClaudePath != "" {
+		Stderrf(ansiYellow, "Warning: claude_args and claude_path are ignored for provider %q\n", c.Provider)
+	}
 	for i, r := range c.Rules {
 		if r.Severity != "" && !validSeverities[r.Severity] {
 			return fmt.Errorf("rule %d (%q): invalid severity %q", i, r.ID, r.Severity)
@@ -153,6 +173,15 @@ type ReviewPolicy struct {
 	Rules   []Rule   `yaml:"rules"`
 	Context string   `yaml:"context"`
 	Ignore  []string `yaml:"ignore"`
+}
+
+// claudeReservedArgs are flags codecanary always controls; users cannot override them via claude_args.
+var claudeReservedArgs = map[string]bool{
+	"--print":                  true,
+	"--output-format":          true,
+	"--no-session-persistence": true,
+	"--model":                  true,
+	"--max-budget-usd":         true,
 }
 
 // safeSlugSegment matches valid owner/repo name characters (GitHub-compatible).

@@ -51,12 +51,23 @@ func validateClaude(mc *ModelConfig) error {
 // claudeCLIProvider implements ModelProvider using the Claude CLI binary.
 // Requires the `claude` binary in PATH and an OAuth token.
 type claudeCLIProvider struct {
-	model string
-	env   []string
+	model      string
+	env        []string
+	extraArgs  []string // from ClaudeArgs; appended after all managed flags
+	binaryPath string   // resolved Claude CLI binary path; never empty
 }
 
 func newClaudeCLIProvider(mc *ModelConfig, env []string) ModelProvider {
-	return &claudeCLIProvider{model: mc.Model, env: env}
+	binaryPath := mc.ClaudePath
+	if binaryPath == "" {
+		binaryPath = "claude"
+	}
+	return &claudeCLIProvider{
+		model:      mc.Model,
+		env:        env,
+		extraArgs:  mc.ClaudeArgs,
+		binaryPath: binaryPath,
+	}
 }
 
 func (p *claudeCLIProvider) Run(ctx context.Context, prompt string, opts RunOpts) (*providerResult, error) {
@@ -74,7 +85,8 @@ func (p *claudeCLIProvider) Run(ctx context.Context, prompt string, opts RunOpts
 	if opts.MaxBudgetUSD > 0 {
 		args = append(args, "--max-budget-usd", fmt.Sprintf("%.2f", opts.MaxBudgetUSD))
 	}
-	cmd := exec.CommandContext(ctx, "claude", args...)
+	args = append(args, p.extraArgs...)
+	cmd := exec.CommandContext(ctx, p.binaryPath, args...)
 	cmd.Env = p.env
 	cmd.Stdin = strings.NewReader(prompt)
 	output, err := cmd.Output()

@@ -21,6 +21,7 @@ type RunOptions struct {
 	Post       bool
 	DryRun     bool
 	ReplyOnly  bool           // evaluate thread replies only, skip new findings
+	ClaudePath string         // override claude CLI binary path (overrides config claude_path)
 	Version    string         // binary version (for telemetry)
 	PR         *PRData        // pre-fetched PRData (used in local mode)
 	Platform   ReviewPlatform // environment adapter (GitHub or local)
@@ -296,8 +297,34 @@ func Run(opts RunOptions) error {
 		return err
 	}
 	cfg := rctx.Config
+	if opts.ClaudePath != "" && cfg.Provider != "claude" {
+		Stderrf(ansiYellow, "Warning: --claude-path is ignored for provider %q\n", cfg.Provider)
+	}
+	claudePath := cfg.ClaudePath
+	if cfg.Provider == "claude" {
+		if opts.ClaudePath != "" {
+			claudePath = opts.ClaudePath
+		}
+		// Resolve the effective binary path before validation so LookPath and
+		// execution use the same value.
+		if claudePath == "" {
+			claudePath = "claude"
+		}
+		cfg.ClaudePath = claudePath
+		if !opts.DryRun {
+			if _, err := exec.LookPath(claudePath); err != nil {
+				return fmt.Errorf("claude binary %q not found: %w", claudePath, err)
+			}
+		}
+	}
 	reviewMC := &ModelConfig{Provider: cfg.Provider, Model: cfg.ReviewModel, APIBase: cfg.APIBase, APIKeyEnv: cfg.APIKeyEnv}
 	triageMC := &ModelConfig{Provider: cfg.Provider, Model: cfg.TriageModel, APIBase: cfg.APIBase, APIKeyEnv: cfg.APIKeyEnv}
+	if cfg.Provider == "claude" {
+		reviewMC.ClaudeArgs = cfg.ClaudeArgs
+		reviewMC.ClaudePath = claudePath
+		triageMC.ClaudeArgs = cfg.ClaudeArgs
+		triageMC.ClaudePath = claudePath
+	}
 	reviewProvider := NewProviderForRole(reviewMC, rctx.Env)
 	triageProvider := NewProviderForRole(triageMC, rctx.Env)
 	tracker := rctx.Tracker
@@ -652,6 +679,3 @@ func shortSHA(sha string) string {
 	}
 	return sha
 }
-
-
-
