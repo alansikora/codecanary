@@ -326,14 +326,13 @@ func ClassifyThreads(threads []ReviewThread, activityDiff, contextDiff, botLogin
 		}
 
 		// Build a windowed file snippet for code-change evaluations.
-		// Use file-scoped diff for snippet range calculation so hunk line
-		// numbers from other files don't pull in wrong sections.
+		// Reuse fileDiff (already file-scoped) for snippet range calculation
+		// so hunk line numbers from other files don't pull in wrong sections.
 		var fileSnippet string
 		if content, ok := fileContents[t.Path]; ok {
 			switch class {
 			case TriageCodeChanged, TriageCodeChangedReply:
-				scopedDiff := ExtractFileDiff(contextDiff, t.Path)
-				fileSnippet = ExtractFileSnippet(content, t.Line, scopedDiff, 300)
+				fileSnippet = ExtractFileSnippet(content, t.Line, fileDiff, 300)
 			case TriageCrossFileChange:
 				// Show finding's file context even though the diff is in other files.
 				fileSnippet = ExtractFileSnippet(content, t.Line, "", 200)
@@ -705,7 +704,10 @@ func EvaluateThreadsParallel(triaged []TriagedThread, provider ModelProvider, cf
 			res = validateResolutionReason(res, tt.Class)
 
 			// Level 2: widen to full PR diff if file-scoped check was inconclusive.
-			if !res.Resolved && tt.FullDiff != "" {
+			// Only for TriageCodeChanged — TriageCodeChangedReply has author replies
+			// that buildWidenedScopePrompt doesn't include, so widening would drop
+			// the reply context and prevent dismissed/acknowledged/rebutted resolutions.
+			if !res.Resolved && tt.FullDiff != "" && tt.Class == TriageCodeChanged {
 				if err := CheckBudget(tracker, maxBudgetUSD); err == nil {
 					fmt.Fprintf(os.Stderr, "  [widen]    %s — checking full PR diff\n", threadLabel(tt.Thread))
 					prompt2 := buildWidenedScopePrompt(tt, cfg)
