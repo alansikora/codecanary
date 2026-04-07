@@ -24,8 +24,7 @@ api_base: https://...           # override base URL (openai provider only)
 
 claude_args: []                 # extra args passed to the Claude CLI (claude provider only)
 # claude_args:
-#   - "--mcp-config"
-#   - "/path/to/mcp.json"
+#   - "--mcp-config=/path/to/mcp.json"
 claude_path: claude             # path to the Claude CLI binary (default: "claude")
 
 max_budget_usd: 0.50            # per-review spending limit in USD (default: 0 = unlimited)
@@ -109,9 +108,10 @@ provider: claude
 review_model: sonnet
 triage_model: haiku
 claude_args:
-  - "--mcp-config"
-  - "/path/to/mcp.json"
+  - "--mcp-config=/path/to/mcp.json"
 ```
+
+All elements must be flags (starting with `-`). Use `--flag=value` form for flags that take a value — bare values like `"/path/to/file"` are rejected to prevent positional argument injection.
 
 The following flags are managed by codecanary and cannot appear in `claude_args`:
 `--print`, `--output-format`, `--no-session-persistence`, `--model`, `--max-budget-usd`.

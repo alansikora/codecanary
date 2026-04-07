@@ -120,10 +120,20 @@ func TestValidate_ClaudeArgsBlockedReserved(t *testing.T) {
 func TestValidate_ClaudeArgsAllowed(t *testing.T) {
 	cfg := &ReviewConfig{
 		Provider: "claude", ReviewModel: "sonnet", TriageModel: "haiku",
-		ClaudeArgs: []string{"--mcp-config", "/path/to/config.json"},
+		ClaudeArgs: []string{"--mcp-config=/path/to/config.json"},
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidate_ClaudeArgsPositionalRejected(t *testing.T) {
+	cfg := &ReviewConfig{
+		Provider: "claude", ReviewModel: "sonnet", TriageModel: "haiku",
+		ClaudeArgs: []string{"--mcp-config", "/path/to/config.json"},
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for positional arg in claude_args")
 	}
 }
 
