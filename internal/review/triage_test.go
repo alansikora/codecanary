@@ -285,6 +285,96 @@ func TestBuildCodeChangeReplyPrompt_AllowsAllReasons(t *testing.T) {
 	}
 }
 
+// --- ClassifyThreads diff scoping tests ---
+
+func TestClassifyThreads_FileScopedDiffForCodeChanged(t *testing.T) {
+	threads := []ReviewThread{
+		{Path: "a.go", Line: 10, Body: "Issue in a.go", Outdated: true},
+	}
+	fullDiff := "diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -10,3 +10,3 @@\n-old\n+new\n" +
+		"diff --git a/b.go b/b.go\n--- a/b.go\n+++ b/b.go\n@@ -5,3 +5,3 @@\n-old b\n+new b\n"
+
+	triaged := ClassifyThreads(threads, fullDiff, fullDiff, "bot", []string{"a.go", "b.go"}, nil)
+
+	if triaged[0].Class != TriageCodeChanged {
+		t.Fatalf("expected TriageCodeChanged, got %d", triaged[0].Class)
+	}
+	if strings.Contains(triaged[0].FileDiff, "b.go") {
+		t.Error("FileDiff for TriageCodeChanged should be file-scoped, not full PR diff")
+	}
+	if !strings.Contains(triaged[0].FileDiff, "a.go") {
+		t.Error("FileDiff should contain the finding's file diff")
+	}
+	// FullDiff should contain the entire PR diff for widened-scope fallback.
+	if !strings.Contains(triaged[0].FullDiff, "b.go") {
+		t.Error("FullDiff should contain the full PR diff for fallback")
+	}
+}
+
+func TestClassifyThreads_NoFullDiffForCrossFile(t *testing.T) {
+	threads := []ReviewThread{
+		{Path: "a.go", Line: 10, Body: "Issue in a.go"},
+	}
+	diff := "diff --git a/b.go b/b.go\n--- a/b.go\n+++ b/b.go\n@@ -5,3 +5,3 @@\n-old b\n+new b\n"
+
+	triaged := ClassifyThreads(threads, diff, diff, "bot", []string{"a.go", "b.go"}, nil)
+
+	if triaged[0].Class != TriageCrossFileChange {
+		t.Fatalf("expected TriageCrossFileChange, got %d", triaged[0].Class)
+	}
+	// TriageCrossFileChange already gets the full diff as FileDiff — no fallback needed.
+	if triaged[0].FullDiff != "" {
+		t.Error("FullDiff should be empty for TriageCrossFileChange (no fallback needed)")
+	}
+}
+
+func TestBuildWidenedScopePrompt(t *testing.T) {
+	tt := TriagedThread{
+		Thread: ReviewThread{
+			Path: "main.go",
+			Line: 10,
+			Body: "Found a bug",
+		},
+		FullDiff:    "+ fix in other file",
+		FileSnippet: "9: before\n10: the line\n11: after\n",
+	}
+	prompt := buildWidenedScopePrompt(tt, nil)
+
+	if !strings.Contains(prompt, "full PR diff") {
+		t.Error("widened prompt should mention full PR diff")
+	}
+	if !strings.Contains(prompt, "another file") {
+		t.Error("widened prompt should guide LLM to check other files")
+	}
+	if !strings.Contains(prompt, "+ fix in other file") {
+		t.Error("widened prompt should include FullDiff content")
+	}
+	if !strings.Contains(prompt, "## Current File Content") {
+		t.Error("widened prompt should include file snippet")
+	}
+	// Should only allow code_change reason (no reply-based reasons).
+	if strings.Contains(prompt, `"acknowledged"`) || strings.Contains(prompt, `"dismissed"`) {
+		t.Error("widened prompt should not offer reply-based resolution reasons")
+	}
+}
+
+func TestClassifyThreads_FullDiffForCrossFile(t *testing.T) {
+	threads := []ReviewThread{
+		{Path: "a.go", Line: 10, Body: "Issue in a.go"},
+	}
+	// Only b.go changed — finding's file (a.go) is not in the diff.
+	diff := "diff --git a/b.go b/b.go\n--- a/b.go\n+++ b/b.go\n@@ -5,3 +5,3 @@\n-old b\n+new b\n"
+
+	triaged := ClassifyThreads(threads, diff, diff, "bot", []string{"a.go", "b.go"}, nil)
+
+	if triaged[0].Class != TriageCrossFileChange {
+		t.Fatalf("expected TriageCrossFileChange, got %d", triaged[0].Class)
+	}
+	if !strings.Contains(triaged[0].FileDiff, "b.go") {
+		t.Error("FileDiff for TriageCrossFileChange should contain the full PR diff")
+	}
+}
+
 func TestValidateResolutionReason_RejectsInvalidReasonForCodeChangeOnly(t *testing.T) {
 	// Simulate Claude returning "acknowledged" for a code-change-only thread.
 	output := "```json\n{\"resolved\": true, \"reason\": \"acknowledged\"}\n```"

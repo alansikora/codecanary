@@ -28,7 +28,8 @@ type TriagedThread struct {
 	Thread      ReviewThread
 	Index       int                  // original index in the unresolved slice
 	Class       ThreadClassification
-	FileDiff    string               // diff hunks for this file only (context for Claude)
+	FileDiff    string               // file-scoped diff (level 1) or full diff (cross-file)
+	FullDiff    string               // full PR diff for widened-scope fallback; empty when not applicable
 	FileSnippet string               // windowed file content around finding + diff hunks
 	BotLogin    string               // login of the review bot, for filtering replies
 }
@@ -311,26 +312,27 @@ func ClassifyThreads(threads []ReviewThread, activityDiff, contextDiff, botLogin
 			}
 		}
 
-		// Always use the full PR diff for evaluation so the evaluator can see
-		// cross-file fixes. A finding on file A may be resolved by changes in
-		// file B (e.g. adding catch-all entries in a provider file to suppress
-		// a warning in the lookup function). File-scoped extraction would hide
-		// the fix when the finding's file also has unrelated changes in the PR.
-		var fileDiff string
+		// Use file-scoped diff for same-file evaluations to reduce noise.
+		// The full PR diff can drown out the relevant fix with changes from
+		// unrelated files, causing false "not resolved" verdicts. Cross-file
+		// evaluations keep the full diff since the fix is in a different file.
+		var fileDiff, fullDiff string
 		switch class {
-		case TriageCodeChanged, TriageCodeChangedReply, TriageCrossFileChange:
+		case TriageCodeChanged, TriageCodeChangedReply:
+			fileDiff = ExtractFileDiff(contextDiff, t.Path)
+			fullDiff = contextDiff // retained for widened-scope fallback
+		case TriageCrossFileChange:
 			fileDiff = contextDiff
 		}
 
 		// Build a windowed file snippet for code-change evaluations.
-		// Use file-scoped diff for snippet range calculation so hunk line
-		// numbers from other files don't pull in wrong sections.
+		// Reuse fileDiff (already file-scoped) for snippet range calculation
+		// so hunk line numbers from other files don't pull in wrong sections.
 		var fileSnippet string
 		if content, ok := fileContents[t.Path]; ok {
 			switch class {
 			case TriageCodeChanged, TriageCodeChangedReply:
-				scopedDiff := ExtractFileDiff(contextDiff, t.Path)
-				fileSnippet = ExtractFileSnippet(content, t.Line, scopedDiff, 300)
+				fileSnippet = ExtractFileSnippet(content, t.Line, fileDiff, 300)
 			case TriageCrossFileChange:
 				// Show finding's file context even though the diff is in other files.
 				fileSnippet = ExtractFileSnippet(content, t.Line, "", 200)
@@ -342,6 +344,7 @@ func ClassifyThreads(threads []ReviewThread, activityDiff, contextDiff, botLogin
 			Index:       i,
 			Class:       class,
 			FileDiff:    fileDiff,
+			FullDiff:    fullDiff,
 			FileSnippet: fileSnippet,
 			BotLogin:    botLogin,
 		}
@@ -444,24 +447,24 @@ func buildCodeChangePrompt(t TriagedThread, cfg *ReviewConfig) string {
 
 	writeFinding(&b, t.Thread)
 
+	writeFileSnippet(&b, t.FileSnippet)
+
 	b.WriteString("## Code Changes\n```diff\n")
 	b.WriteString(t.FileDiff)
 	b.WriteString("\n```\n\n")
-
-	writeFileSnippet(&b, t.FileSnippet)
 
 	if ctx := evalContext(cfg, "code_change"); ctx != "" {
 		fmt.Fprintf(&b, "## Additional Context\n%s\n\n", ctx)
 	}
 
 	b.WriteString("## Task\n")
-	b.WriteString("Determine whether the issue you raised has been resolved.\n")
-	b.WriteString("Examine the code changes (which may span multiple files) AND the current file content (if provided).\n")
-	b.WriteString("- Answer YES if a change — in this file or another file — fixes the root cause, removes the problematic code, or meaningfully changes the code so the finding no longer applies.\n")
+	b.WriteString("Determine whether the issue you raised has been resolved.\n\n")
+	b.WriteString("**Start with the current file content** (if provided). Read the code around the finding location and determine whether the issue still exists. If the problematic code has been fixed, removed, or restructured so the finding no longer applies, the answer is YES — regardless of which specific diff line produced the fix.\n\n")
+	b.WriteString("If file content is not available, examine the diff for evidence that the issue was addressed.\n")
+	b.WriteString("- A change that fixes the root cause, removes the problematic code, or meaningfully changes the code so the finding no longer applies → YES.\n")
 	b.WriteString("- A change to nearby or adjacent code counts IF it effectively resolves the concern (e.g. fixing the logic, adding the missing check, refactoring the problematic pattern).\n")
 	b.WriteString("- A structural change also counts — for example, if code was moved before a guard condition, control flow was reordered, or the code was refactored so the finding no longer applies.\n")
-	b.WriteString("- If file context is provided, check the current code state — if the issue no longer exists in the current code, it is resolved regardless of which specific diff line fixed it.\n")
-	b.WriteString("- Answer NO if the code changes do not address the finding, or if file context is provided and the concern is still present in the current code.\n\n")
+	b.WriteString("- Answer NO only if the concern is still present in the current code (when file content is provided) or if the diff does not address the finding.\n\n")
 	writeCodeChangeResolutionFormat(&b)
 
 	return b.String()
@@ -498,11 +501,11 @@ func buildCodeChangeReplyPrompt(t TriagedThread, cfg *ReviewConfig) string {
 	writeFinding(&b, t.Thread)
 	writeReplies(&b, t.Thread, t.BotLogin)
 
+	writeFileSnippet(&b, t.FileSnippet)
+
 	b.WriteString("## Code Changes\n```diff\n")
 	b.WriteString(t.FileDiff)
 	b.WriteString("\n```\n\n")
-
-	writeFileSnippet(&b, t.FileSnippet)
 
 	if ctx := evalContext(cfg, "code_change"); ctx != "" {
 		fmt.Fprintf(&b, "## Additional Context (Code Changes)\n%s\n\n", ctx)
@@ -512,13 +515,13 @@ func buildCodeChangeReplyPrompt(t TriagedThread, cfg *ReviewConfig) string {
 	}
 
 	b.WriteString("## Task\n")
-	b.WriteString("Is the finding resolved? It may be resolved by the code change, the reply, or both.\n")
-	b.WriteString("Evaluate the code changes (which may span multiple files), the current file content (if provided), and the reply.\n\n")
-	b.WriteString("- **Fixed by code change**: The diff or current file state shows the issue is resolved — the root cause is fixed, removed, or the code is changed in a way that makes the finding no longer applicable. The fix may be in a different file (e.g. adding entries in a provider file to address a concern in the lookup function). A structural change also counts (e.g. code moved before a guard condition, control flow reordered). If file context is provided, check the current code state — if the issue no longer exists, it is resolved.\n")
+	b.WriteString("Is the finding resolved? It may be resolved by the code change, the reply, or both.\n\n")
+	b.WriteString("**Start with the current file content** (if provided). If the issue no longer exists in the current code — the root cause is fixed, the code was removed, or the code was restructured — it is resolved by code change regardless of which diff line produced the fix.\n\n")
+	b.WriteString("If the code still shows the issue, evaluate the reply:\n")
 	b.WriteString("- **Dismissed**: Reply explicitly asks the reviewer to dismiss, ignore, or skip the finding (e.g. \"dismiss this\", \"you can safely dismiss\", \"please ignore\", \"skip this one\"). The author is exercising their authority to close the thread without further justification.\n")
 	b.WriteString("- **Acknowledged**: Reply indicates the finding is intentional, accepted, or tracked elsewhere (e.g. \"intentional\", \"will fix in a future PR\", \"tracked in issue #N\").\n")
 	b.WriteString("- **Rebutted**: Reply provides concrete technical reasoning showing the finding is not applicable. Vague disagreement (\"I don't think so\") does NOT qualify — the reply must cite specific technical details, framework behavior, or project constraints.\n")
-	b.WriteString("- **Not resolved**: Reply is a question, vague disagreement, or does not address the finding.\n\n")
+	b.WriteString("- **Not resolved**: The issue is still in the code, and the reply is a question, vague disagreement, or does not address the finding.\n\n")
 	writeResolutionFormat(&b)
 
 	return b.String()
@@ -531,11 +534,11 @@ func buildCrossFilePrompt(t TriagedThread, cfg *ReviewConfig) string {
 
 	writeFinding(&b, t.Thread)
 
+	writeFileSnippet(&b, t.FileSnippet)
+
 	b.WriteString("## All Code Changes\n```diff\n")
 	b.WriteString(t.FileDiff)
 	b.WriteString("\n```\n\n")
-
-	writeFileSnippet(&b, t.FileSnippet)
 
 	if ctx := evalContext(cfg, "code_change"); ctx != "" {
 		fmt.Fprintf(&b, "## Additional Context\n%s\n\n", ctx)
@@ -543,14 +546,49 @@ func buildCrossFilePrompt(t TriagedThread, cfg *ReviewConfig) string {
 
 	b.WriteString("## Task\n")
 	b.WriteString("Determine whether the issue you raised has been resolved, even though the changes are in different files from where you left your finding.\n")
-	b.WriteString("Examine both the code changes AND the current file content (if provided).\n")
-	b.WriteString("- Answer YES if a change in another file effectively resolves the concern (e.g. fixing the caller instead of the callee, adding validation in a different layer, removing the code path that triggers the issue).\n")
-	b.WriteString("- A structural change also counts — for example, if code was moved, control flow was reordered, or the code was refactored so the finding no longer applies.\n")
-	b.WriteString("- If file context is provided, check the current code state — if the issue no longer exists in the current code, it is resolved regardless of which specific diff line fixed it.\n")
+	b.WriteString("**Start with the current file content** (if provided). If the issue no longer exists in the current code, the answer is YES.\n\n")
+	b.WriteString("Otherwise, examine the code changes for evidence of a cross-file fix.\n")
+	writeCrossFileCriteria(&b)
 	b.WriteString("- Answer NO if none of the changes in this diff are related to the finding, or if file context is provided and the concern is still present in the current code.\n\n")
 	writeCodeChangeResolutionFormat(&b)
 
 	return b.String()
+}
+
+// buildWidenedScopePrompt is the level-2 fallback prompt used when the file-scoped
+// evaluation (level 1) found no fix. It sends the full PR diff so the evaluator can
+// detect cross-file fixes that the narrower scope missed.
+func buildWidenedScopePrompt(t TriagedThread, cfg *ReviewConfig) string {
+	var b strings.Builder
+
+	b.WriteString("You are a code reviewer. You previously raised a finding on a pull request. A focused check of the finding's file did not find a fix. Now examine ALL code changes across the PR — the fix may be in a different file.\n\n")
+
+	writeFinding(&b, t.Thread)
+
+	writeFileSnippet(&b, t.FileSnippet)
+
+	b.WriteString("## All Code Changes (full PR)\n```diff\n")
+	b.WriteString(t.FullDiff)
+	b.WriteString("\n```\n\n")
+
+	if ctx := evalContext(cfg, "code_change"); ctx != "" {
+		fmt.Fprintf(&b, "## Additional Context\n%s\n\n", ctx)
+	}
+
+	b.WriteString("## Task\n")
+	b.WriteString("The finding's file was already checked and the issue appears unresolved there. Examine the full PR diff to determine if a change in another file resolves the concern.\n\n")
+	writeCrossFileCriteria(&b)
+	b.WriteString("- Answer NO if none of the changes in the diff are related to the finding.\n\n")
+	writeCodeChangeResolutionFormat(&b)
+
+	return b.String()
+}
+
+// writeCrossFileCriteria writes the shared YES-criteria bullets for cross-file evaluations.
+// Used by both buildCrossFilePrompt and buildWidenedScopePrompt.
+func writeCrossFileCriteria(b *strings.Builder) {
+	b.WriteString("- Answer YES if a change in another file effectively resolves the concern (e.g. fixing the caller instead of the callee, adding validation in a different layer, removing the code path that triggers the issue).\n")
+	b.WriteString("- A structural change also counts — for example, if code was moved, control flow was reordered, or the code was refactored so the finding no longer applies.\n")
 }
 
 // writeFileSnippet adds the current file content section to the prompt when available.
@@ -654,6 +692,7 @@ func EvaluateThreadsParallel(triaged []TriagedThread, provider ModelProvider, cf
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
+			// Level 1: file-scoped evaluation.
 			prompt := BuildPerThreadPrompt(tt, cfg)
 			result, err := provider.Run(context.Background(), prompt, RunOpts{})
 			if err != nil {
@@ -663,6 +702,27 @@ func EvaluateThreadsParallel(triaged []TriagedThread, provider ModelProvider, cf
 			trackUsage(tracker, result, "triage")
 			res := parseThreadResolution(result.Text, tt.Index)
 			res = validateResolutionReason(res, tt.Class)
+
+			// Level 2: widen to full PR diff if file-scoped check was inconclusive.
+			// Only for TriageCodeChanged — TriageCodeChangedReply has author replies
+			// that buildWidenedScopePrompt doesn't include, so widening would drop
+			// the reply context and prevent dismissed/acknowledged/rebutted resolutions.
+			if !res.Resolved && tt.FullDiff != "" && tt.Class == TriageCodeChanged {
+				if err := CheckBudget(tracker, maxBudgetUSD); err == nil {
+					fmt.Fprintf(os.Stderr, "  [widen]    %s — checking full PR diff\n", threadLabel(tt.Thread))
+					prompt2 := buildWidenedScopePrompt(tt, cfg)
+					result2, err := provider.Run(context.Background(), prompt2, RunOpts{})
+					if err == nil {
+						trackUsage(tracker, result2, "triage")
+						res2 := parseThreadResolution(result2.Text, tt.Index)
+						res2 = validateResolutionReason(res2, tt.Class)
+						if res2.Resolved {
+							res = res2
+						}
+					}
+				}
+			}
+
 			results[idx] = res
 		}(i, t)
 	}
