@@ -96,7 +96,7 @@ First, an incremental diff is computed (`git diff <previousSHA>..HEAD`). Two dif
 | Classification | Condition | Evaluation |
 |---|---|---|
 | `TriageSkip` | No activity diff, not outdated, no replies | Skipped (no LLM) |
-| `TriageCodeChanged` | GitHub outdated flag, or file in PR diff | LLM evaluates with full PR diff + file snippet |
+| `TriageCodeChanged` | GitHub outdated flag, or file in PR diff | LLM evaluates with file-scoped diff + file snippet |
 | `TriageHasReply` | Human replied (no code changes) | LLM evaluates reply intent |
 | `TriageCodeChangedReply` | Both code changed and human replied | LLM evaluates both |
 | `TriageCrossFileChange` | Changes in other files only | LLM evaluates with full PR diff |
@@ -104,11 +104,12 @@ First, an incremental diff is computed (`git diff <previousSHA>..HEAD`). Two dif
 
 Threads classified as `TriageFileRemovedFromPR` are auto-resolved without an LLM call. The Go code sets reason `file_removed` and resolves the thread directly.
 
-For remaining threads, `EvaluateThreadsParallel()` runs up to 3 concurrent LLM calls using the triage model. Each thread gets a tailored prompt with:
-- The finding text
-- The full PR diff (so cross-file fixes are visible)
-- A windowed file snippet around the finding location (built from the file-scoped diff to get correct line ranges)
-- A task asking whether the finding is resolved
+For remaining threads, `EvaluateThreadsParallel()` runs up to 3 concurrent LLM calls using the triage model. Evaluation uses a **two-level approach** to balance precision and coverage:
+
+- **Level 1 (file-scoped)**: The LLM receives the finding, the current file content (presented first), and a file-scoped diff. This catches same-file fixes with minimal noise. Most evaluations resolve here.
+- **Level 2 (widened scope)**: Only when level 1 says "not resolved" and the thread is `TriageCodeChanged` (file is in the PR diff). The LLM receives the full PR diff with a prompt primed to look for cross-file fixes. This catches the edge case where the finding's file has unrelated changes but the actual fix is in a different file.
+
+For `TriageCrossFileChange`, only the full PR diff is used (no level 1 — there's no file-scoped diff to show).
 
 The LLM returns JSON: `{"resolved": true, "reason": "code_change"}` or `{"resolved": false}`.
 
@@ -176,7 +177,7 @@ If telemetry is enabled (opt-in), fires an anonymous event with aggregate stats:
 
 **Two diffs for triage.** The incremental diff (changes since last review) decides whether to skip evaluation. The full PR diff (all changes) provides context for evaluation. This prevents the "triage horizon" bug where fixes committed before the triage baseline become invisible.
 
-**Full PR diff for evaluation.** All triage classifications receive the full PR diff, not file-scoped extracts. This ensures cross-file fixes are visible to the evaluator (e.g. adding entries in a provider file to address a warning in the lookup function).
+**Two-level triage evaluation.** Same-file evaluations (`TriageCodeChanged`) start with a file-scoped diff (level 1) to reduce noise — the full PR diff can drown out the relevant fix with changes from unrelated files. If level 1 finds no fix, a widened-scope fallback (level 2) sends the full PR diff to catch cross-file fixes. Cross-file evaluations (`TriageCrossFileChange`) go straight to the full diff. The file snippet (current code state) is presented first in all evaluation prompts, so the LLM checks whether the issue still exists before analyzing the diff.
 
 **Per-thread evaluation.** Each unresolved thread gets its own LLM call with tailored context, rather than one bulk prompt. This allows fine-grained classification, parallel execution, and per-thread budget control.
 
