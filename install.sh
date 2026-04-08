@@ -21,15 +21,14 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-auth_header() {
-  if [ -n "${GITHUB_TOKEN:-}" ]; then
-    echo "Authorization: token ${GITHUB_TOKEN}"
-  elif [ -n "${GH_TOKEN:-}" ]; then
-    echo "Authorization: token ${GH_TOKEN}"
-  else
-    echo "X-No-Auth: true"
-  fi
-}
+CURL_AUTH=""
+if [ -n "${CODECANARY_GITHUB_TOKEN:-}" ]; then
+  CURL_AUTH="--oauth2-bearer ${CODECANARY_GITHUB_TOKEN}"
+elif [ -n "${GITHUB_TOKEN:-}" ]; then
+  CURL_AUTH="--oauth2-bearer ${GITHUB_TOKEN}"
+elif [ -n "${GH_TOKEN:-}" ]; then
+  CURL_AUTH="--oauth2-bearer ${GH_TOKEN}"
+fi
 
 detect_os() {
   case "$(uname -s)" in
@@ -52,7 +51,7 @@ ARCH="$(detect_arch)"
 
 if [ -z "$TAG" ]; then
   echo "Fetching latest release..."
-  TAG="$(curl -fsSL -H "$(auth_header)" "https://api.github.com/repos/${REPO}/releases/latest" \
+  TAG="$(curl -fsSL $CURL_AUTH "https://api.github.com/repos/${REPO}/releases/latest" \
     | grep '"tag_name"' \
     | cut -d'"' -f4)"
   if [ -z "$TAG" ]; then
@@ -63,7 +62,7 @@ case "$TAG" in *[!a-zA-Z0-9._-]*)
   echo "Error: unexpected tag format: $TAG" >&2; exit 1;; esac
 
 echo "Fetching release ${TAG}..."
-URL="$(curl -fsSL -H "$(auth_header)" "https://api.github.com/repos/${REPO}/releases/tags/${TAG}" \
+URL="$(curl -fsSL $CURL_AUTH "https://api.github.com/repos/${REPO}/releases/tags/${TAG}" \
   | grep '"browser_download_url"' \
   | grep "_${OS}_${ARCH}\.tar\.gz" \
   | cut -d'"' -f4)"
