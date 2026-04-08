@@ -21,14 +21,23 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-CURL_AUTH=""
+_gh_token=""
 if [ -n "${CODECANARY_GITHUB_TOKEN:-}" ]; then
-  CURL_AUTH="--oauth2-bearer ${CODECANARY_GITHUB_TOKEN}"
+  _gh_token="${CODECANARY_GITHUB_TOKEN}"
 elif [ -n "${GITHUB_TOKEN:-}" ]; then
-  CURL_AUTH="--oauth2-bearer ${GITHUB_TOKEN}"
+  _gh_token="${GITHUB_TOKEN}"
 elif [ -n "${GH_TOKEN:-}" ]; then
-  CURL_AUTH="--oauth2-bearer ${GH_TOKEN}"
+  _gh_token="${GH_TOKEN}"
 fi
+
+# Authenticated curl wrapper for GitHub API calls.
+ghcurl() {
+  if [ -n "$_gh_token" ]; then
+    curl -fsSL --oauth2-bearer "$_gh_token" "$@"
+  else
+    curl -fsSL "$@"
+  fi
+}
 
 detect_os() {
   case "$(uname -s)" in
@@ -51,7 +60,7 @@ ARCH="$(detect_arch)"
 
 if [ -z "$TAG" ]; then
   echo "Fetching latest release..."
-  TAG="$(curl -fsSL $CURL_AUTH "https://api.github.com/repos/${REPO}/releases/latest" \
+  TAG="$(ghcurl "https://api.github.com/repos/${REPO}/releases/latest" \
     | grep '"tag_name"' \
     | cut -d'"' -f4)"
   if [ -z "$TAG" ]; then
@@ -62,7 +71,7 @@ case "$TAG" in *[!a-zA-Z0-9._-]*)
   echo "Error: unexpected tag format: $TAG" >&2; exit 1;; esac
 
 echo "Fetching release ${TAG}..."
-URL="$(curl -fsSL $CURL_AUTH "https://api.github.com/repos/${REPO}/releases/tags/${TAG}" \
+URL="$(ghcurl "https://api.github.com/repos/${REPO}/releases/tags/${TAG}" \
   | grep '"browser_download_url"' \
   | grep "_${OS}_${ARCH}\.tar\.gz" \
   | cut -d'"' -f4)"
