@@ -8,9 +8,12 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 )
+
+var validAppSlug = regexp.MustCompile(`^[a-zA-Z0-9-]+$`)
 
 const codeCanaryAppInstallURL = "https://github.com/apps/codecanary-bot/installations/new"
 const checkInstallURL = "https://oidc.codecanary.sh/check-install"
@@ -40,8 +43,11 @@ func CheckCodeCanaryAppInstalled(repo string) (bool, bool) {
 		return false, false
 	}
 	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode >= 500 {
+		return false, false // server error — check inconclusive
+	}
 	if resp.StatusCode != http.StatusOK {
-		return false, false
+		return false, true // 4xx — definitive "not installed" or auth issue
 	}
 	var result struct {
 		Installed bool `json:"installed"`
@@ -56,16 +62,20 @@ func CheckCodeCanaryAppInstalled(repo string) (bool, bool) {
 // (e.g. "claude") is installed on the repository using `gh api`.
 // Returns (installed, checkSucceeded).
 func CheckGitHubAppInstalled(appSlug, repo string) (bool, bool) {
+	if !validAppSlug.MatchString(appSlug) {
+		return false, false
+	}
 	parts := strings.SplitN(repo, "/", 2)
 	if len(parts) < 2 {
 		return false, false
 	}
 	owner := strings.ToLower(parts[0])
+	repoName := strings.ToLower(parts[1])
 
 	// List installations accessible to the authenticated user, filtering by
-	// the target app slug. Then check that the installation covers the repo owner.
+	// the target app slug. Return the installation ID and account login.
 	jqFilter := fmt.Sprintf(
-		`.installations[] | select(.app_slug == "%s") | .account.login`,
+		`.installations[] | select(.app_slug == "%s") | "\(.id) \(.account.login)"`,
 		appSlug,
 	)
 	out, err := exec.Command("gh", "api",
@@ -76,12 +86,44 @@ func CheckGitHubAppInstalled(appSlug, repo string) (bool, bool) {
 		return false, false
 	}
 
+	// Find the installation ID for the repo owner.
+	var installID string
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if strings.ToLower(strings.TrimSpace(line)) == owner {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) == 2 && strings.ToLower(parts[1]) == owner {
+			installID = parts[0]
+			break
+		}
+	}
+	if installID == "" {
+		return false, true // app not installed on this owner
+	}
+
+	// Verify the specific repository is accessible to this installation.
+	repoJQ := `.repositories[] | .full_name`
+	repoOut, err := exec.Command("gh", "api",
+		fmt.Sprintf("user/installations/%s/repositories", installID),
+		"--paginate",
+		"--jq", repoJQ,
+	).Output()
+	if err != nil {
+		return false, false
+	}
+
+	for _, line := range strings.Split(strings.TrimSpace(string(repoOut)), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.ToLower(line) == owner+"/"+repoName {
 			return true, true
 		}
 	}
-	return false, true
+	return false, true // installed on owner but not on this specific repo
 }
 
 // InstallCodeCanaryApp opens the browser to install the CodeCanary Review app on a repo.
