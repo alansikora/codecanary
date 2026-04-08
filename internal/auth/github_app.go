@@ -14,6 +14,7 @@ import (
 )
 
 var validAppSlug = regexp.MustCompile(`^[a-zA-Z0-9-]+$`)
+var validInstallID = regexp.MustCompile(`^[0-9]+$`)
 
 const codeCanaryAppInstallURL = "https://github.com/apps/codecanary-bot/installations/new"
 const checkInstallURL = "https://oidc.codecanary.sh/check-install"
@@ -101,6 +102,9 @@ func CheckGitHubAppInstalled(appSlug, repo string) (bool, bool) {
 	}
 	if installID == "" {
 		return false, true // app not installed on this owner
+	}
+	if !validInstallID.MatchString(installID) {
+		return false, false
 	}
 
 	// Verify the specific repository is accessible to this installation.
