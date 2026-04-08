@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/alansikora/codecanary/internal/credentials"
 )
 
 // validCLIModels is the set of allowed model values for the Claude CLI provider.
@@ -57,17 +59,44 @@ type claudeCLIProvider struct {
 	binaryPath string   // resolved Claude CLI binary path; never empty
 }
 
+// claudeOAuthEnvVar is the environment variable the Claude CLI reads for OAuth tokens.
+const claudeOAuthEnvVar = "CLAUDE_CODE_OAUTH_TOKEN"
+
 func newClaudeCLIProvider(mc *ModelConfig, env []string) ModelProvider {
 	binaryPath := mc.ClaudePath
 	if binaryPath == "" {
 		binaryPath = "claude"
 	}
+	// Map CODECANARY_PROVIDER_SECRET → CLAUDE_CODE_OAUTH_TOKEN so the Claude CLI
+	// can authenticate using the OAuth token obtained during `codecanary setup`.
+	env = injectClaudeOAuthToken(env)
 	return &claudeCLIProvider{
 		model:      mc.Model,
 		env:        env,
 		extraArgs:  mc.ClaudeArgs,
 		binaryPath: binaryPath,
 	}
+}
+
+// injectClaudeOAuthToken copies CODECANARY_PROVIDER_SECRET into
+// CLAUDE_CODE_OAUTH_TOKEN when the latter is not already set.
+func injectClaudeOAuthToken(env []string) []string {
+	var secret string
+	hasOAuth := false
+	for _, e := range env {
+		key, val, _ := strings.Cut(e, "=")
+		if key == claudeOAuthEnvVar {
+			hasOAuth = true
+			break
+		}
+		if key == credentials.EnvVar {
+			secret = val
+		}
+	}
+	if !hasOAuth && secret != "" {
+		env = append(env, claudeOAuthEnvVar+"="+secret)
+	}
+	return env
 }
 
 func (p *claudeCLIProvider) Run(ctx context.Context, prompt string, opts RunOpts) (*providerResult, error) {
