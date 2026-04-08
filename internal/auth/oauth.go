@@ -18,7 +18,9 @@ import (
 
 // OAuthToken runs the OAuth PKCE flow and returns the access token.
 // The caller provides all OAuth parameters so this function is provider-agnostic.
-func OAuthToken(clientID, authorizeURL, tokenURL, scope string) (string, error) {
+// loginHint is optional — when non-empty it is sent as the login_hint parameter
+// so the authorization server can pre-fill or suggest the given account.
+func OAuthToken(clientID, authorizeURL, tokenURL, scope, loginHint string) (string, error) {
 	// 1. Generate PKCE code verifier and challenge.
 	verifier, err := generateCodeVerifier()
 	if err != nil {
@@ -81,6 +83,9 @@ func OAuthToken(clientID, authorizeURL, tokenURL, scope string) (string, error) 
 		"code_challenge":        {challenge},
 		"code_challenge_method": {"S256"},
 		"state":                 {state},
+	}
+	if loginHint != "" {
+		params.Set("login_hint", loginHint)
 	}
 	authURL := authorizeURL + "?" + params.Encode()
 
