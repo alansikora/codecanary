@@ -389,6 +389,21 @@ func setYAMLScalar(mapping *yaml.Node, key, value string, kind yaml.Kind, tag st
 	mapping.Content = append(mapping.Content, keyNode, valNode)
 }
 
+// ConfirmYesNo displays a yes/no prompt and returns the user's choice.
+func ConfirmYesNo(title string) (bool, error) {
+	var yes bool
+	err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title(title).
+				Affirmative("Yes").
+				Negative("No").
+				Value(&yes),
+		),
+	).Run()
+	return yes, err
+}
+
 // PromptAppInstall asks the user whether to install a provider app and, if confirmed,
 // opens the install URL in the browser and waits for the user to finish.
 func PromptAppInstall(name, installURL, repo string, reader *bufio.Reader) error {

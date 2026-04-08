@@ -76,8 +76,22 @@ func RunGitHub(canary bool, version string) error {
 	// 5. Install CodeCanary GitHub App (skip if already installed).
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Fprintf(os.Stderr, "Checking CodeCanary app installation...\n")
-	if auth.CheckCodeCanaryAppInstalled(repo) {
+	installed, checkOK := auth.CheckCodeCanaryAppInstalled(repo)
+	if installed {
 		fmt.Fprintf(os.Stderr, "CodeCanary app is already installed on %s — skipping.\n\n", repo)
+	} else if !checkOK {
+		fmt.Fprintf(os.Stderr, "Could not verify app installation (network issue or token error).\n")
+		skip, err := ConfirmYesNo("Is the CodeCanary app already installed on " + repo + "?")
+		if err != nil {
+			return fmt.Errorf("confirming app installation: %w", err)
+		}
+		if !skip {
+			if err := auth.InstallCodeCanaryApp(repo, reader); err != nil {
+				return fmt.Errorf("installing CodeCanary app: %w", err)
+			}
+		} else {
+			fmt.Fprintln(os.Stderr)
+		}
 	} else {
 		if err := auth.InstallCodeCanaryApp(repo, reader); err != nil {
 			return fmt.Errorf("installing CodeCanary app: %w", err)
@@ -90,10 +104,31 @@ func RunGitHub(canary bool, version string) error {
 		return err
 	}
 
-	// 7. Install provider app if needed.
+	// 7. Install provider app if needed (skip if already installed).
 	if appReq := review.GetAppRequirement(provider); appReq != nil {
-		if err := PromptAppInstall(appReq.Name, appReq.InstallURL, repo, reader); err != nil {
-			return fmt.Errorf("installing %s app: %w", appReq.Name, err)
+		skipApp := false
+		if appReq.AppSlug != "" {
+			fmt.Fprintf(os.Stderr, "Checking %s app installation...\n", appReq.Name)
+			appInstalled, appCheckOK := auth.CheckGitHubAppInstalled(appReq.AppSlug, repo)
+			if appInstalled {
+				fmt.Fprintf(os.Stderr, "%s app is already installed on %s — skipping.\n\n", appReq.Name, repo)
+				skipApp = true
+			} else if !appCheckOK {
+				fmt.Fprintf(os.Stderr, "Could not verify %s app installation.\n", appReq.Name)
+				alreadyInstalled, confirmErr := ConfirmYesNo(fmt.Sprintf("Is the %s app already installed on %s?", appReq.Name, repo))
+				if confirmErr != nil {
+					return fmt.Errorf("confirming %s app installation: %w", appReq.Name, confirmErr)
+				}
+				if alreadyInstalled {
+					fmt.Fprintln(os.Stderr)
+					skipApp = true
+				}
+			}
+		}
+		if !skipApp {
+			if err := PromptAppInstall(appReq.Name, appReq.InstallURL, repo, reader); err != nil {
+				return fmt.Errorf("installing %s app: %w", appReq.Name, err)
+			}
 		}
 	}
 

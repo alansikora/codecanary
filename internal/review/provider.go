@@ -45,6 +45,7 @@ type MaxTokensEntry struct {
 // installed for a provider to work. Used by the setup wizard to prompt the user.
 type AppRequirement struct {
 	Name       string // Human-readable name, e.g. "Claude"
+	AppSlug    string // GitHub App slug, e.g. "claude" — used to verify installation
 	InstallURL string // URL to install the app
 }
 
