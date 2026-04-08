@@ -91,6 +91,16 @@ func CollectCredential(provider string) (string, error) {
 				huh.NewInput().
 					Title("Account email (optional)").
 					Description("Pre-fill the login page with this email. Leave blank to use your current session.").
+					Validate(func(s string) error {
+						s = strings.TrimSpace(s)
+						if s == "" {
+							return nil
+						}
+						if !strings.Contains(s, "@") {
+							return fmt.Errorf("must be a valid email address")
+						}
+						return nil
+					}).
 					Value(&loginHint),
 			),
 		).Run(); err != nil {
