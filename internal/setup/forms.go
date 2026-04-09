@@ -251,6 +251,10 @@ func writeReviewPolicy(configPath string) (bool, error) {
 #   - "vendor/**"
 #   - "**/*.generated.go"
 #   - "*.min.js"
+
+# For personal overrides (not committed to the repo), create
+# review.local.yml in this same directory and add it to .gitignore.
+# Fields in review.local.yml are appended to this file's values.
 `
 
 	if err := os.WriteFile(policyPath, []byte(content), 0644); err != nil {

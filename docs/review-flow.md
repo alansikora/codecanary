@@ -35,7 +35,7 @@ If the PR is a setup PR (only adds workflow files with no real code changes), th
 
 `prepareReview()` loads everything the review needs:
 
-- **Config**: Reads `config.yml` (provider, models, budgets, timeouts). If a `review.yml` exists alongside it, its rules/context/ignore fields override the config.
+- **Config**: Reads `config.yml` (provider, models, budgets, timeouts). If a `review.yml` exists alongside it, its rules/context/ignore fields override the config. If a `review.local.yml` also exists, its fields are appended (not replaced) on top of `review.yml`.
 - **Project docs**: Discovers CLAUDE.md files (root, `.claude/`, top-level directories). Up to 5 files, 4KB each, 12KB total.
 - **File contents**: Reads changed files from disk with size limits (default 100KB per file, 500KB total). Skips binary files, ignored patterns, and files exceeding limits.
 - **Environment**: Builds a filtered env for LLM subprocesses (only allowed prefixes like `CODECANARY_`, `GITHUB_`, plus essential vars like `PATH`). Injects keychain credentials if not already set.

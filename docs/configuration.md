@@ -174,6 +174,39 @@ ignore:
   - "*.lock"
 ```
 
+## Personal overrides: review.local.yml
+
+You can create a `.codecanary/review.local.yml` for personal review preferences that should not be committed to the repository. Its fields are **appended** to `review.yml` (not replaced), so your personal settings layer on top of the team's shared configuration.
+
+- **`context`** — concatenated after the shared context (newline-separated)
+- **`rules`** — appended after the shared rules
+- **`ignore`** — appended after the shared ignore patterns
+
+`review.local.yml` works even without a `review.yml` — the local file is loaded independently.
+
+```yaml
+# .codecanary/review.local.yml (add to .gitignore)
+context: |
+  I am working on the payments module. Pay extra attention to
+  transaction atomicity and idempotency in this area.
+
+rules:
+  - id: no-console-log
+    description: "Remove console.log statements before merging"
+    severity: nitpick
+    paths: ["**/*.ts"]
+
+ignore:
+  - "docs/**"
+```
+
+Add `review.local.yml` to your `.gitignore` so it is not committed:
+
+```
+# .gitignore
+.codecanary/review.local.yml
+```
+
 ## Project docs auto-discovery
 
 CodeCanary automatically reads `CLAUDE.md` files from your repo root, `.claude/` directory, and top-level subdirectories. These are injected into the review prompt as additional context. Per-file cap is 4KB, total cap is 12KB.

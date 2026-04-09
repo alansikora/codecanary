@@ -169,6 +169,8 @@ review_model: claude-sonnet-4-6
 triage_model: haiku
 ```
 
+You can also create a `.codecanary/review.local.yml` for personal overrides (gitignored) — its rules, context, and ignore patterns are appended to the shared `review.yml`.
+
 For the full config reference including budget controls, size limits, timeouts, evaluation context, and the `review.yml` override file, see [docs/configuration.md](docs/configuration.md).
 
 ## Credential Management

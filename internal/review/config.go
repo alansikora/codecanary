@@ -236,25 +236,25 @@ func LocalConfigPath() (string, error) {
 	return filepath.Join(home, ".codecanary", "repos", slug, "config.yml"), nil
 }
 
-// findReviewPolicy looks for review.yml in the repo. It first checks
+// findPolicyFile looks for a review policy file by name. It first checks
 // the directory of the given config path (covers the case where config
 // is in .codecanary/), then walks up from cwd looking for
-// .codecanary/review.yml (covers the case where config is in ~/.codecanary/).
-// Returns nil (no error) if no review.yml is found.
-func findReviewPolicy(configPath string) (*ReviewPolicy, error) {
+// .codecanary/<filename> (covers the case where config is in ~/.codecanary/).
+// Returns nil (no error) if the file is not found.
+func findPolicyFile(configPath, filename string) (*ReviewPolicy, error) {
 	// Try adjacent to the config file first.
-	adjacent := filepath.Join(filepath.Dir(configPath), "review.yml")
+	adjacent := filepath.Join(filepath.Dir(configPath), filename)
 	if policy, err := loadReviewPolicyFile(adjacent); policy != nil || err != nil {
 		return policy, err
 	}
 
-	// Walk up from cwd to find .codecanary/review.yml in the repo.
+	// Walk up from cwd to find .codecanary/<filename> in the repo.
 	dir, err := os.Getwd()
 	if err != nil {
 		return nil, nil
 	}
 	for {
-		policyPath := filepath.Join(dir, ".codecanary", "review.yml")
+		policyPath := filepath.Join(dir, ".codecanary", filename)
 		if policyPath != adjacent { // avoid re-checking
 			if policy, err := loadReviewPolicyFile(policyPath); policy != nil || err != nil {
 				return policy, err
@@ -267,6 +267,47 @@ func findReviewPolicy(configPath string) (*ReviewPolicy, error) {
 		dir = parent
 	}
 	return nil, nil
+}
+
+// findReviewPolicy looks for review.yml in the repo.
+// Returns nil (no error) if no review.yml is found.
+func findReviewPolicy(configPath string) (*ReviewPolicy, error) {
+	return findPolicyFile(configPath, "review.yml")
+}
+
+// mergeLocalPolicy appends the local policy fields onto the base policy.
+// Context is concatenated (newline-separated), Rules and Ignore are appended.
+// If base is nil, the local policy is used as-is and vice versa.
+func mergeLocalPolicy(base, local *ReviewPolicy) *ReviewPolicy {
+	if local == nil {
+		return base
+	}
+	if base == nil {
+		return local
+	}
+	merged := &ReviewPolicy{}
+
+	// Context: append with newline separator.
+	merged.Context = base.Context
+	if local.Context != "" {
+		if merged.Context != "" {
+			merged.Context = strings.TrimRight(merged.Context, "\n") + "\n" + local.Context
+		} else {
+			merged.Context = local.Context
+		}
+	}
+
+	// Rules: append local rules after base rules.
+	merged.Rules = make([]Rule, 0, len(base.Rules)+len(local.Rules))
+	merged.Rules = append(merged.Rules, base.Rules...)
+	merged.Rules = append(merged.Rules, local.Rules...)
+
+	// Ignore: append local ignores after base ignores.
+	merged.Ignore = make([]string, 0, len(base.Ignore)+len(local.Ignore))
+	merged.Ignore = append(merged.Ignore, base.Ignore...)
+	merged.Ignore = append(merged.Ignore, local.Ignore...)
+
+	return merged
 }
 
 func loadReviewPolicyFile(path string) (*ReviewPolicy, error) {
@@ -303,10 +344,18 @@ func LoadConfig(path string) (*ReviewConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	if policy != nil {
-		cfg.Rules = policy.Rules
-		cfg.Context = policy.Context
-		cfg.Ignore = policy.Ignore
+
+	// Merge optional review.local.yml (personal overrides, appended).
+	localPolicy, err := findPolicyFile(path, "review.local.yml")
+	if err != nil {
+		return nil, err
+	}
+
+	merged := mergeLocalPolicy(policy, localPolicy)
+	if merged != nil {
+		cfg.Rules = merged.Rules
+		cfg.Context = merged.Context
+		cfg.Ignore = merged.Ignore
 	}
 
 	if err := cfg.Validate(); err != nil {
