@@ -389,6 +389,10 @@ func Run(opts RunOptions) error {
 		return nil
 	}
 
+	if prompt != "" {
+		fmt.Fprintf(os.Stderr, "Prompt size: %d bytes\n", len(prompt))
+	}
+
 	// 7. Budget check & LLM call.
 	var findings []Finding
 	if !opts.ReplyOnly && prompt != "" {

@@ -103,7 +103,7 @@ func injectClaudeOAuthToken(env []string) []string {
 func (p *claudeCLIProvider) Run(ctx context.Context, prompt string, opts RunOpts) (*providerResult, error) {
 	timeout := opts.Timeout
 	if timeout <= 0 {
-		timeout = 5 * time.Minute
+		timeout = 10 * time.Minute
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
