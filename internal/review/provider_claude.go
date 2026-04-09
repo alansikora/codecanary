@@ -108,6 +108,9 @@ func (p *claudeCLIProvider) Run(ctx context.Context, prompt string, opts RunOpts
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	// --tools "" disables all built-in tools (Bash, Read, Edit, etc.), making
+	// the CLI a single-shot prompt-in/text-out call. See `claude --help`:
+	//   --tools: Use "" to disable all tools, "default" to use all tools
 	args := []string{"--print", "--output-format", "json", "--no-session-persistence", "--tools", ""}
 	if p.model != "" {
 		args = append(args, "--model", p.model)

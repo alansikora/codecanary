@@ -117,7 +117,9 @@ func prepareReview(pr *PRData, configPath string) (*reviewContext, error) {
 		// Preserve the unfiltered diff for finding validation (line-number
 		// checks must run against the full PR diff), then strip skipped-file
 		// hunks from the diff/files that are sent to the LLM prompt.
-		pr.FullDiff = pr.Diff
+		if pr.FullDiff == "" {
+			pr.FullDiff = pr.Diff
+		}
 
 		skippedSet := make(map[string]bool, len(skippedFiles))
 		for _, f := range skippedFiles {
