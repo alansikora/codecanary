@@ -381,6 +381,10 @@ func Run(opts RunOptions) error {
 		prompt = BuildPrompt(pr, cfg, startIndex, rctx.ProjectDocs)
 	}
 
+	if prompt != "" {
+		fmt.Fprintf(os.Stderr, "Prompt size: %d bytes\n", len(prompt))
+	}
+
 	// 6. Dry run — print prompt and return.
 	if opts.DryRun {
 		if prompt != "" {
