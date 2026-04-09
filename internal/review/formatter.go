@@ -611,9 +611,10 @@ func FormatUsageTable(tracker *UsageTracker, colors bool) string {
 	}
 
 	// PR size footer.
-	if tracker.LinesAdded > 0 || tracker.LinesRemoved > 0 {
+	prAdded, prRemoved, prFiles := tracker.PRSize()
+	if prAdded > 0 || prRemoved > 0 || prFiles > 0 {
 		fmt.Fprintf(&b, "  %s\n", applyStyle(colors, ansiDim,
-			fmt.Sprintf("PR size: +%d/-%d lines, %d files", tracker.LinesAdded, tracker.LinesRemoved, tracker.FilesChanged)))
+			fmt.Sprintf("PR size: +%d/-%d lines, %d files", prAdded, prRemoved, prFiles)))
 	}
 
 	b.WriteString("\n")

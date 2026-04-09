@@ -39,10 +39,26 @@ type UsageTracker struct {
 	mu    sync.Mutex
 	calls []CallUsage
 
-	// PR size — set once by the runner before ReportUsage.
-	LinesAdded   int
-	LinesRemoved int
-	FilesChanged int
+	// PR size — set via SetPRSize before ReportUsage.
+	linesAdded   int
+	linesRemoved int
+	filesChanged int
+}
+
+// SetPRSize records the PR's line and file counts (thread-safe).
+func (u *UsageTracker) SetPRSize(linesAdded, linesRemoved, filesChanged int) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.linesAdded = linesAdded
+	u.linesRemoved = linesRemoved
+	u.filesChanged = filesChanged
+}
+
+// PRSize returns the PR's line and file counts (thread-safe).
+func (u *UsageTracker) PRSize() (linesAdded, linesRemoved, filesChanged int) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.linesAdded, u.linesRemoved, u.filesChanged
 }
 
 // Add records a single Claude call's usage.
@@ -109,9 +125,9 @@ func (u *UsageTracker) Report(repo string, prNumber int) *UsageReport {
 	r := &UsageReport{
 		PR:           fmt.Sprintf("%s#%d", repo, prNumber),
 		Timestamp:    time.Now().UTC().Format(time.RFC3339),
-		LinesAdded:   u.LinesAdded,
-		LinesRemoved: u.LinesRemoved,
-		FilesChanged: u.FilesChanged,
+		LinesAdded:   u.linesAdded,
+		LinesRemoved: u.linesRemoved,
+		FilesChanged: u.filesChanged,
 		Calls:        u.calls,
 	}
 	for _, c := range u.calls {
