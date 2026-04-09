@@ -114,7 +114,7 @@ claude_args:
 All elements must be flags (starting with `-`). Use `--flag=value` form for flags that take a value — bare values like `"/path/to/file"` are rejected to prevent positional argument injection.
 
 The following flags are managed by codecanary and cannot appear in `claude_args`:
-`--print`, `--output-format`, `--no-session-persistence`, `--model`, `--max-budget-usd`.
+`--print`, `--output-format`, `--no-session-persistence`, `--model`, `--max-budget-usd`, `--tools`.
 
 Use `claude_path` to point to a non-default binary (e.g. a beta release):
 

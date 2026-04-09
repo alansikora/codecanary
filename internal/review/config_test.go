@@ -104,7 +104,7 @@ func TestValidate_AnyModelForAnthropic(t *testing.T) {
 }
 
 func TestValidate_ClaudeArgsBlockedReserved(t *testing.T) {
-	reserved := []string{"--print", "--output-format", "--no-session-persistence", "--model", "--max-budget-usd"}
+	reserved := []string{"--print", "--output-format", "--no-session-persistence", "--model", "--max-budget-usd", "--tools"}
 	for _, arg := range reserved {
 		cfg := &ReviewConfig{Provider: "claude", ReviewModel: "sonnet", TriageModel: "haiku", ClaudeArgs: []string{arg}}
 		if err := cfg.Validate(); err == nil {

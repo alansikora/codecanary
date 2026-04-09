@@ -113,6 +113,26 @@ func prepareReview(pr *PRData, configPath string) (*reviewContext, error) {
 	pr.FileContents = fileContents
 	if len(skippedFiles) > 0 {
 		fmt.Fprintf(os.Stderr, "Skipped %d large/ignored files: %s\n", len(skippedFiles), strings.Join(skippedFiles, ", "))
+
+		// Preserve the unfiltered diff for finding validation (line-number
+		// checks must run against the full PR diff), then strip skipped-file
+		// hunks from the diff/files that are sent to the LLM prompt.
+		pr.FullDiff = pr.Diff
+
+		skippedSet := make(map[string]bool, len(skippedFiles))
+		for _, f := range skippedFiles {
+			skippedSet[f] = true
+		}
+		allowedFiles := make(map[string]bool, len(pr.Files))
+		filtered := make([]string, 0, len(pr.Files))
+		for _, f := range pr.Files {
+			if !skippedSet[f] {
+				allowedFiles[f] = true
+				filtered = append(filtered, f)
+			}
+		}
+		pr.Files = filtered
+		pr.Diff = ScopeDiffToFiles(pr.Diff, allowedFiles)
 	}
 
 	return &reviewContext{
@@ -388,7 +408,7 @@ func Run(opts RunOptions) error {
 			Stderrf(ansiYellow, "Warning: review response was truncated — findings may be incomplete\n")
 		}
 
-		findings, err = processFindings(claudeOut.Text, pr.Files, pr.Diff, isIncremental)
+		findings, err = processFindings(claudeOut.Text, pr.Files, pr.ValidationDiff(), isIncremental)
 		if err != nil {
 			if !claudeOut.Truncated {
 				return err
@@ -396,7 +416,7 @@ func Run(opts RunOptions) error {
 			// Truncation broke the JSON — salvage any complete findings
 			// and run them through the same validation pipeline.
 			if salvaged, sErr := ParseFindingsSalvage(claudeOut.Text); sErr == nil && len(salvaged) > 0 {
-				findings = validateFindings(salvaged, pr.Files, pr.Diff)
+				findings = validateFindings(salvaged, pr.Files, pr.ValidationDiff())
 				if isIncremental {
 					for i := range findings {
 						findings[i].Status = "new"
@@ -521,10 +541,10 @@ func runTriage(
 	//     ensures fixes from earlier pushes are visible to the evaluator.
 	activityDiff := incrementalDiff
 	if diffErr != nil {
-		activityDiff = pr.Diff
+		activityDiff = pr.ValidationDiff()
 	}
 	botLogin := platform.ExcludedAuthor(reviewThreads)
-	triaged := ClassifyThreads(reviewThreads, activityDiff, pr.Diff, botLogin, pr.Files, pr.FileContents)
+	triaged := ClassifyThreads(reviewThreads, activityDiff, pr.ValidationDiff(), botLogin, pr.Files, pr.FileContents)
 
 	var fixed []fixedThread
 

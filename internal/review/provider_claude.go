@@ -108,7 +108,7 @@ func (p *claudeCLIProvider) Run(ctx context.Context, prompt string, opts RunOpts
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	args := []string{"--print", "--output-format", "json", "--no-session-persistence"}
+	args := []string{"--print", "--output-format", "json", "--no-session-persistence", "--tools", ""}
 	if p.model != "" {
 		args = append(args, "--model", p.model)
 	}

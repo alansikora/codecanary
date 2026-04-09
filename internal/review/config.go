@@ -182,6 +182,7 @@ var claudeReservedArgs = map[string]bool{
 	"--no-session-persistence": true,
 	"--model":                  true,
 	"--max-budget-usd":         true,
+	"--tools":                  true,
 }
 
 // safeSlugSegment matches valid owner/repo name characters (GitHub-compatible).

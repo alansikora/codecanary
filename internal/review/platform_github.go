@@ -225,7 +225,7 @@ func (g *GithubPlatform) Publish(result *ReviewResult, pr *PRData, threads []Rev
 
 	// Post one of: new findings, all-clear, clean review, or nothing.
 	if len(result.Findings) > 0 {
-		if err := PostReview(g.Repo, g.PRNumber, result, pr.Diff, result.SHA); err != nil {
+		if err := PostReview(g.Repo, g.PRNumber, result, pr.ValidationDiff(), result.SHA); err != nil {
 			return fmt.Errorf("posting review: %w", err)
 		}
 		Stderrf(ansiGreen, "Review posted to PR #%d\n", g.PRNumber)

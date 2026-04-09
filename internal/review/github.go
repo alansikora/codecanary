@@ -50,8 +50,19 @@ type PRData struct {
 	BaseBranch   string
 	HeadBranch   string
 	Diff         string
+	FullDiff     string            // unfiltered diff for finding validation (set by prepareReview)
 	Files        []string
 	FileContents map[string]string // path -> full file content
+}
+
+// ValidationDiff returns the unfiltered diff for finding validation. When
+// files were skipped during prepareReview, FullDiff holds the original diff
+// while Diff is filtered for the LLM prompt.
+func (pr *PRData) ValidationDiff() string {
+	if pr.FullDiff != "" {
+		return pr.FullDiff
+	}
+	return pr.Diff
 }
 
 // ghPRView is the JSON shape returned by gh pr view.
