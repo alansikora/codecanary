@@ -75,12 +75,14 @@ func (c *ReviewConfig) EffectiveMaxTotalSize() int {
 	return 500 * 1024
 }
 
-// EffectiveTimeout returns the per-invocation timeout, defaulting to 5 minutes.
+// EffectiveTimeout returns the per-invocation timeout. Returns 0 when
+// timeout_minutes is not explicitly set, letting the provider choose its own
+// default (e.g. 10m for the Claude CLI, 5m for direct API calls).
 func (c *ReviewConfig) EffectiveTimeout() time.Duration {
 	if c != nil && c.TimeoutMins > 0 {
 		return time.Duration(c.TimeoutMins) * time.Minute
 	}
-	return 5 * time.Minute
+	return 0
 }
 
 type Rule struct {

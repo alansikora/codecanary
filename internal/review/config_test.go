@@ -10,15 +10,15 @@ import (
 
 func TestEffectiveTimeout_Default(t *testing.T) {
 	cfg := &ReviewConfig{}
-	if got := cfg.EffectiveTimeout(); got != 5*time.Minute {
-		t.Errorf("EffectiveTimeout() = %v, want 5m", got)
+	if got := cfg.EffectiveTimeout(); got != 0 {
+		t.Errorf("EffectiveTimeout() = %v, want 0 (provider chooses default)", got)
 	}
 }
 
 func TestEffectiveTimeout_NilConfig(t *testing.T) {
 	var cfg *ReviewConfig
-	if got := cfg.EffectiveTimeout(); got != 5*time.Minute {
-		t.Errorf("EffectiveTimeout() on nil = %v, want 5m", got)
+	if got := cfg.EffectiveTimeout(); got != 0 {
+		t.Errorf("EffectiveTimeout() on nil = %v, want 0 (provider chooses default)", got)
 	}
 }
 
