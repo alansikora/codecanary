@@ -539,7 +539,8 @@ func stripInlineMarkdown(text string, colors bool) string {
 }
 
 // FormatUsageTable renders a usage table with per-model token counts and costs.
-func FormatUsageTable(calls []CallUsage, colors bool) string {
+func FormatUsageTable(tracker *UsageTracker, colors bool) string {
+	calls := tracker.Calls()
 	if len(calls) == 0 {
 		return ""
 	}
@@ -607,6 +608,12 @@ func FormatUsageTable(calls []CallUsage, colors bool) string {
 	if totalDuration > 0 {
 		durStr := formatDurationMS(totalDuration)
 		fmt.Fprintf(&b, "  %s\n", applyStyle(colors, ansiDim, fmt.Sprintf("Duration: %s", durStr)))
+	}
+
+	// PR size footer.
+	if tracker.LinesAdded > 0 || tracker.LinesRemoved > 0 {
+		fmt.Fprintf(&b, "  %s\n", applyStyle(colors, ansiDim,
+			fmt.Sprintf("PR size: +%d/-%d lines, %d files", tracker.LinesAdded, tracker.LinesRemoved, tracker.FilesChanged)))
 	}
 
 	b.WriteString("\n")

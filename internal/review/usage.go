@@ -25,6 +25,9 @@ type CallUsage struct {
 type UsageReport struct {
 	PR                string      `json:"pr"`
 	Timestamp         string      `json:"timestamp"`
+	LinesAdded        int         `json:"lines_added"`
+	LinesRemoved      int         `json:"lines_removed"`
+	FilesChanged      int         `json:"files_changed"`
 	Calls             []CallUsage `json:"calls"`
 	TotalInputTokens  int         `json:"total_input_tokens"`
 	TotalOutputTokens int         `json:"total_output_tokens"`
@@ -35,6 +38,11 @@ type UsageReport struct {
 type UsageTracker struct {
 	mu    sync.Mutex
 	calls []CallUsage
+
+	// PR size — set once by the runner before ReportUsage.
+	LinesAdded   int
+	LinesRemoved int
+	FilesChanged int
 }
 
 // Add records a single Claude call's usage.
@@ -99,9 +107,12 @@ func (u *UsageTracker) Report(repo string, prNumber int) *UsageReport {
 	defer u.mu.Unlock()
 
 	r := &UsageReport{
-		PR:        fmt.Sprintf("%s#%d", repo, prNumber),
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
-		Calls:     u.calls,
+		PR:           fmt.Sprintf("%s#%d", repo, prNumber),
+		Timestamp:    time.Now().UTC().Format(time.RFC3339),
+		LinesAdded:   u.LinesAdded,
+		LinesRemoved: u.LinesRemoved,
+		FilesChanged: u.FilesChanged,
+		Calls:        u.calls,
 	}
 	for _, c := range u.calls {
 		r.TotalInputTokens += c.InputTokens
@@ -141,6 +152,8 @@ func WriteUsageEnv(report *UsageReport) error {
 // PrintUsageSummary prints a human-readable table and JSON to stdout.
 func PrintUsageSummary(report *UsageReport) {
 	fmt.Printf("\n── Usage (%s) ──\n", report.PR)
+	fmt.Printf("  PR size: +%d/-%d lines across %d files\n",
+		report.LinesAdded, report.LinesRemoved, report.FilesChanged)
 	for _, c := range report.Calls {
 		fmt.Printf("  %-8s  %-25s  %6d in / %6d out  $%.4f  %dms\n",
 			c.Phase, c.Model, c.InputTokens, c.OutputTokens, c.CostUSD, c.DurationMS)

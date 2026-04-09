@@ -156,6 +156,11 @@ type ReviewEvent struct {
 	Platform      string `json:"platform"`
 	IsIncremental bool   `json:"is_incremental"`
 
+	// PR size.
+	LinesAdded   int `json:"lines_added"`
+	LinesRemoved int `json:"lines_removed"`
+	FilesChanged int `json:"files_changed"`
+
 	// Aggregate finding counts.
 	NewFindings      int            `json:"new_findings"`
 	StillOpenFindings int           `json:"still_open_findings"`

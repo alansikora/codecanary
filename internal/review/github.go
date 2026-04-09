@@ -150,6 +150,21 @@ type reviewComment struct {
 	Body string `json:"body"`
 }
 
+// countDiffLines counts the number of added and removed lines in a unified diff.
+func countDiffLines(diff string) (added, removed int) {
+	for _, line := range strings.Split(diff, "\n") {
+		if strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---") {
+			continue
+		}
+		if strings.HasPrefix(line, "+") {
+			added++
+		} else if strings.HasPrefix(line, "-") {
+			removed++
+		}
+	}
+	return
+}
+
 // diffLineMap maps each file to its sorted list of valid line numbers from the diff.
 type diffLineMap map[string][]int
 

@@ -69,6 +69,6 @@ func (l *LocalPlatform) GetIncrementalDiff(baseSHA string, prFiles []string) (st
 func (l *LocalPlatform) ReportUsage(tracker *UsageTracker) {
 	outputFormat := resolveOutputFormat(l.OutputFormat)
 	if outputFormat == "terminal" {
-		fmt.Fprint(os.Stderr, FormatUsageTable(tracker.Calls(), colorsEnabled()))
+		fmt.Fprint(os.Stderr, FormatUsageTable(tracker, colorsEnabled()))
 	}
 }

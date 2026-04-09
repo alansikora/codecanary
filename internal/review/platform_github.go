@@ -304,7 +304,7 @@ func (g *GithubPlatform) ReportUsage(tracker *UsageTracker) {
 	if !g.Post {
 		outputFormat := resolveOutputFormat(g.OutputFormat)
 		if outputFormat == "terminal" {
-			fmt.Fprint(os.Stderr, FormatUsageTable(tracker.Calls(), colorsEnabled()))
+			fmt.Fprint(os.Stderr, FormatUsageTable(tracker, colorsEnabled()))
 		}
 	}
 }
