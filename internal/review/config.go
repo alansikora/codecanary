@@ -269,12 +269,6 @@ func findPolicyFile(configPath, filename string) (*ReviewPolicy, error) {
 	return nil, nil
 }
 
-// findReviewPolicy looks for review.yml in the repo.
-// Returns nil (no error) if no review.yml is found.
-func findReviewPolicy(configPath string) (*ReviewPolicy, error) {
-	return findPolicyFile(configPath, "review.yml")
-}
-
 // mergeLocalPolicy appends the local policy fields onto the base policy.
 // Context is concatenated (newline-separated), Rules and Ignore are appended.
 // If base is nil, the local policy is used as-is and vice versa.
@@ -286,8 +280,6 @@ func mergeLocalPolicy(base, local *ReviewPolicy) *ReviewPolicy {
 		return local
 	}
 	merged := &ReviewPolicy{}
-
-	// Context: append with newline separator.
 	merged.Context = base.Context
 	if local.Context != "" {
 		if merged.Context != "" {
@@ -297,12 +289,10 @@ func mergeLocalPolicy(base, local *ReviewPolicy) *ReviewPolicy {
 		}
 	}
 
-	// Rules: append local rules after base rules.
 	merged.Rules = make([]Rule, 0, len(base.Rules)+len(local.Rules))
 	merged.Rules = append(merged.Rules, base.Rules...)
 	merged.Rules = append(merged.Rules, local.Rules...)
 
-	// Ignore: append local ignores after base ignores.
 	merged.Ignore = make([]string, 0, len(base.Ignore)+len(local.Ignore))
 	merged.Ignore = append(merged.Ignore, base.Ignore...)
 	merged.Ignore = append(merged.Ignore, local.Ignore...)
@@ -320,7 +310,7 @@ func loadReviewPolicyFile(path string) (*ReviewPolicy, error) {
 	}
 	var policy ReviewPolicy
 	if err := yaml.Unmarshal(data, &policy); err != nil {
-		return nil, fmt.Errorf("parsing review.yml: %w", err)
+		return nil, fmt.Errorf("parsing %s: %w", filepath.Base(path), err)
 	}
 	return &policy, nil
 }
@@ -339,13 +329,12 @@ func LoadConfig(path string) (*ReviewConfig, error) {
 		return nil, fmt.Errorf("parsing config file: %w", err)
 	}
 
-	// Merge optional review.yml (rules, context, ignore) from repo.
-	policy, err := findReviewPolicy(path)
+	// Merge optional review policy files (rules, context, ignore) from repo.
+	// review.local.yml fields are appended on top of review.yml.
+	policy, err := findPolicyFile(path, "review.yml")
 	if err != nil {
 		return nil, err
 	}
-
-	// Merge optional review.local.yml (personal overrides, appended).
 	localPolicy, err := findPolicyFile(path, "review.local.yml")
 	if err != nil {
 		return nil, err
