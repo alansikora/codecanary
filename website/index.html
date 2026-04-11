@@ -5,12 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>CodeCanary — AI-Powered Code Review</title>
   <meta name="description" content="AI-powered code review for GitHub pull requests. Catch bugs, security issues, and quality problems before they land in main." />
-  <meta property="og:title" content="CodeCanary — AI-Powered Code Review" />
-  <meta property="og:description" content="Catch bugs, security issues, and quality problems before they land in main." />
-  <meta property="og:type" content="website" />
-  <meta property="og:url" content="https://codecanary.sh" />
-  <meta property="og:image" content="https://codecanary.sh/og-image.png" />
-  <meta name="twitter:card" content="summary_large_image" />
   <style>
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -449,39 +443,17 @@
       margin-bottom: 16px;
     }
 
-    /* --- Skip link --- */
-    .skip-link {
-      position: fixed;
-      left: -9999px;
-      top: 0;
-      background: var(--accent);
-      color: #0a0a0a;
-      padding: 8px 16px;
-      font-size: 14px;
-      font-weight: 600;
-      z-index: 100;
-      border-radius: 0 0 8px 0;
-    }
-    .skip-link:focus {
-      left: 0;
-      text-decoration: none;
-    }
-
     /* --- Responsive --- */
     @media (max-width: 640px) {
       .hero { padding: 80px 0 60px; }
       section { padding: 60px 0; }
       .features-grid { grid-template-columns: 1fr; }
       .steps { grid-template-columns: 1fr; }
-      .providers-grid { grid-template-columns: 1fr; }
-      .provider-wide { grid-column: span 1; }
+      .providers-grid { grid-template-columns: 1fr 1fr; }
     }
   </style>
 </head>
 <body>
-
-  <a href="#main-content" class="skip-link">Skip to main content</a>
-  <main id="main-content">
 
   <!-- Hero -->
   <section class="hero">
@@ -707,8 +679,6 @@
       </div>
     </div>
   </section>
-
-  </main>
 
   <!-- Footer -->
   <footer>
