@@ -75,5 +75,6 @@ func RunLocal(version string) error {
 	}
 	fmt.Fprintf(os.Stderr, "\nSetup complete! Run `codecanary review` to review your current changes.\n")
 	fmt.Fprintf(os.Stderr, "Customize review rules and context in .codecanary/review.yml\n")
+	fmt.Fprintf(os.Stderr, "For personal overrides, create .codecanary/review.local.yml (add to .gitignore)\n")
 	return nil
 }
