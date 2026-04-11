@@ -3,14 +3,50 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CodeCanary — AI-Powered Code Review</title>
-  <meta name="description" content="AI-powered code review for GitHub pull requests. Catch bugs, security issues, and quality problems before they land in main." />
-  <meta property="og:title" content="CodeCanary — AI-Powered Code Review" />
-  <meta property="og:description" content="Catch bugs, security issues, and quality problems before they land in main." />
+  <title>CodeCanary — AI Code Review for GitHub Pull Requests</title>
+  <meta name="description" content="CodeCanary is an open-source AI code review tool for GitHub pull requests. Catch bugs, security issues, and quality problems on every push. Runs in GitHub Actions or locally from the terminal. Bring your own LLM." />
+  <link rel="canonical" href="https://codecanary.sh/" />
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="CodeCanary — AI Code Review for GitHub Pull Requests" />
+  <meta property="og:description" content="Open-source AI code review. Catch bugs, security issues, and quality problems on every push. GitHub Actions native. Bring your own LLM." />
   <meta property="og:type" content="website" />
-  <meta property="og:url" content="https://codecanary.sh" />
+  <meta property="og:url" content="https://codecanary.sh/" />
   <meta property="og:image" content="https://codecanary.sh/og-image.png" />
+  <meta property="og:image:width" content="800" />
+  <meta property="og:image:height" content="800" />
+  <meta property="og:site_name" content="CodeCanary" />
+
+  <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="CodeCanary — AI Code Review for GitHub Pull Requests" />
+  <meta name="twitter:description" content="Open-source AI code review. Catch bugs, security issues, and quality problems on every push. GitHub Actions native. Bring your own LLM." />
+  <meta name="twitter:image" content="https://codecanary.sh/og-image.png" />
+
+  <!-- Structured Data -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "CodeCanary",
+    "url": "https://codecanary.sh",
+    "description": "Open-source AI-powered code review tool for GitHub pull requests. Runs in GitHub Actions or locally from the terminal.",
+    "applicationCategory": "DeveloperApplication",
+    "operatingSystem": "Linux, macOS",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    },
+    "license": "https://opensource.org/licenses/MIT",
+    "codeRepository": "https://github.com/alansikora/codecanary",
+    "author": {
+      "@type": "Person",
+      "name": "Alan Sikora",
+      "url": "https://github.com/alansikora"
+    }
+  }
+  </script>
   <style>
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -486,10 +522,10 @@
   <!-- Hero -->
   <section class="hero">
     <div class="container">
-      <div class="hero-badge fade-up-1">AI-powered code review</div>
+      <div class="hero-badge fade-up-1">Open-source AI code review</div>
       <h1 class="fade-up-2"><span class="shimmer">CodeCanary</span></h1>
       <p class="subtitle fade-up-3">
-        Catch bugs, security issues, and quality problems before they land in main. Runs on every push or locally from the terminal.
+        AI-powered code review for GitHub pull requests. Catch bugs, security issues, and quality problems before they land in main. Runs in GitHub Actions or locally from the terminal.
       </p>
       <div class="hero-ctas fade-up-4">
         <a href="#get-started" class="btn btn-primary">Get started</a>
@@ -586,7 +622,7 @@
         <div class="feature-card">
           <span class="feature-icon">&#128187;</span>
           <h3>Local reviews</h3>
-          <p>Review your changes from the terminal before pushing. Same engine, same findings, instant feedback.</p>
+          <p>Review your changes from the terminal before pushing. Same engine, same findings, instant feedback. Works inside <a href="https://llmux.sh" target="_blank" rel="noopener">llmux</a> worktree sessions.</p>
         </div>
         <div class="feature-card">
           <span class="feature-icon">&#128196;</span>
@@ -716,9 +752,10 @@
       <div class="footer-links">
         <a href="https://github.com/alansikora/codecanary" target="_blank" rel="noopener">GitHub</a>
         <a href="https://github.com/alansikora/codecanary/blob/main/docs/configuration.md" target="_blank" rel="noopener">Docs</a>
+        <a href="https://llmux.sh" target="_blank" rel="noopener">llmux</a>
         <a href="https://github.com/alansikora/codecanary/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>
       </div>
-      <p>CodeCanary &mdash; AI-powered code review for GitHub pull requests.</p>
+      <p>CodeCanary &mdash; open-source AI code review for GitHub pull requests. Catch bugs before they ship.</p>
     </div>
   </footer>
 
