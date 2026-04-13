@@ -56,7 +56,10 @@ Track two pieces of state across iterations:
    - **Local mode**: run `codecanary review --output json`. The command
      runs the review inline; its stdout is a JSON object with a
      `findings` array in the same shape.
-3. Check the `conclusion` field in the JSON output. If it is `failure`
+3. **PR mode only** — check the `conclusion` field in the JSON output.
+   Local mode does not have a check run, so skip this step and go
+   straight to the findings-empty check below.
+   If `conclusion` is `failure`
    (or any value other than `success` / `neutral` / empty), the review
    run itself broke. Tell the operator the check failed and stop. Do
    not say the review is clean, even if `findings` is empty — an empty
@@ -107,7 +110,8 @@ Track two pieces of state across iterations:
 
 Exit the loop (and tell the operator *why*) whenever any of these hold:
 
-- The findings list comes back empty — normal success.
+- The findings list comes back empty **and** `conclusion` is healthy
+  (`success`, `neutral`, or absent) — normal success.
 - The operator chose "Skip this cycle" or "Abort".
 - The CLI errors out (network failure, no PR detected, timeout on
   `--watch`). Surface the error verbatim and stop.
