@@ -780,7 +780,7 @@
         <li>The skill calls <code>codecanary findings --watch</code>, blocks until the GitHub Actions review check completes, and parses the structured findings.</li>
         <li>You see a triage table and confirm which fixes to apply &mdash; nothing auto-applies.</li>
         <li>Approved fixes are committed and pushed; the loop watches the next review and repeats until clean.</li>
-        <li>Pass <code>--local</code> for a single pass against your dirty working tree, no git plumbing.</li>
+        <li>Ask for a local pass to skip git plumbing &mdash; the skill runs a single review against your dirty working tree and applies approved fixes without committing or pushing.</li>
       </ol>
       <a class="loop-link" href="https://github.com/alansikora/codecanary/blob/main/internal/skills/codecanary-loop/SKILL.md" target="_blank" rel="noopener">Read the full skill contract &rarr;</a>
     </div>
