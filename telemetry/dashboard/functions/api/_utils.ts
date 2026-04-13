@@ -36,12 +36,14 @@ export async function querySQL<T = Record<string, unknown>>(
   });
 
   if (!res.ok) {
-    // Log the verbose body server-side for debugging, but surface
-    // only the status to the caller. Error bodies from upstream APIs
-    // can occasionally include implementation details we don't want
-    // to forward to the client.
+    // Log a truncated preview of the body server-side for debugging
+    // (Cloudflare error bodies can occasionally include account or
+    // dataset details we don't want spilled into Worker logs in
+    // full); the caller only ever sees the status code.
     const text = await res.text().catch(() => "");
-    console.error(`AE query failed (${res.status}): ${text}`);
+    const preview = text.slice(0, 200);
+    const suffix = text.length > 200 ? ` (truncated, ${text.length} bytes total)` : "";
+    console.error(`AE query failed (${res.status}): ${preview}${suffix}`);
     throw new Error(`AE query failed with status ${res.status}`);
   }
 
@@ -112,6 +114,19 @@ export interface Filters {
 const SAFE_STRING = /^[A-Za-z0-9 ._:/@()-]{1,100}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// Defense-in-depth runtime check around every value we interpolate
+// into a SQL string literal. The AE SQL HTTP API has no parameterized
+// query mode (you POST raw SQL), so all our safety comes from
+// allowlist sanitization. This helper is the second wall: even if
+// SAFE_STRING/UUID drift to allow a quote or backslash, this throws
+// before the bad value reaches AE.
+function escapeSqlString(value: string): string {
+  if (/['"\\;]/.test(value) || value.includes("\n")) {
+    throw new Error("refusing to interpolate value with SQL meta-characters");
+  }
+  return value;
+}
+
 // Sentinels used by the breakdown/filters endpoints to label rows
 // whose model columns predate the telemetry addition. Exported so
 // buildWhere can translate them to the actual stored value (empty).
@@ -140,11 +155,16 @@ const FAMILY_PREFIX = "family:";
 //                                     plus empty if X is the historical default
 //   - HISTORICAL_REVIEW/TRIAGE_MODEL → blob = ''
 //   - anything else                  → blob = 'value' (exact)
+//
+// Returns undefined when the input would produce no meaningful clause
+// (e.g. an empty family stem after wildcard stripping). The caller
+// should treat `undefined` as "no filter selected" rather than emit
+// a zero-result predicate, which surprises users with empty dashboards.
 function modelClause(
   column: string,
   raw: string,
   historicalDefault: string,
-): string {
+): string | undefined {
   const historicalSentinel =
     column === "blob8" ? HISTORICAL_REVIEW_MODEL : HISTORICAL_TRIAGE_MODEL;
 
@@ -159,12 +179,8 @@ function modelClause(
       .slice(FAMILY_PREFIX.length)
       .toLowerCase()
       .replace(/[%_]/g, "");
-    if (!stem) {
-      // An empty/all-wildcard stem would emit LIKE '%%' and match
-      // everything — return a no-op predicate instead.
-      return "1 = 0";
-    }
-    let clause = `lower(${column}) LIKE '%${stem}%'`;
+    if (!stem) return undefined;
+    let clause = `lower(${column}) LIKE '%${escapeSqlString(stem)}%'`;
     if (stem === historicalDefault) {
       clause = `(${clause} OR ${column} = '')`;
     }
@@ -175,7 +191,7 @@ function modelClause(
     return `${column} = ''`;
   }
 
-  return `${column} = '${raw}'`;
+  return `${column} = '${escapeSqlString(raw)}'`;
 }
 
 function sanitizeString(raw: string | null): string | undefined {
@@ -200,30 +216,57 @@ export function parseFilters(url: URL): Filters {
 
 // buildWhereWithDefaults composes the user filter clauses with the
 // dashboard's automatic exclusions. Currently the only exclusion is
-// "GitHub installations with exactly one review in the window" — these
-// are almost always config failures and would otherwise inflate the
-// install count and skew the platform mix.
+// "GitHub installations with exactly one review in the window" —
+// these are almost always config failures and would otherwise
+// inflate the install count and skew the platform mix.
 //
 // AE doesn't support subqueries, so the excluded IDs are pre-fetched
 // and folded in as a NOT IN list.
+//
+// `excludedIds` may be passed in by callers that need to share the
+// list across multiple calls (e.g. overview computes the platform
+// split alongside the totals); when omitted, the IDs are fetched
+// fresh from AE.
 export async function buildWhereWithDefaults(
   env: Env,
   filters: Filters,
   days: number,
   exclude: Array<keyof Filters> = [],
+  excludedIds?: string[],
 ): Promise<string> {
+  const ids = excludedIds ?? (await resolveExcludedIds(env, days));
+  return buildWhereWith(filters, ids, exclude);
+}
+
+// buildWhereWith is the synchronous core of buildWhereWithDefaults —
+// pure function over a pre-fetched ID list. Useful when a single
+// request needs multiple WHERE variants from the same exclusion set.
+export function buildWhereWith(
+  filters: Filters,
+  excludedIds: string[],
+  exclude: Array<keyof Filters> = [],
+): string {
   let where = buildWhere(filters, exclude);
-  const ids = await resolveExcludedIds(env, days);
-  if (ids.length > 0) {
-    where += ` AND index1 NOT IN (${ids.map((id) => `'${id}'`).join(",")})`;
+  if (excludedIds.length > 0) {
+    where +=
+      " AND index1 NOT IN (" +
+      excludedIds.map((id) => `'${escapeSqlString(id)}'`).join(",") +
+      ")";
   }
   return where;
 }
 
+// Capped at 500 — the NOT IN list is interpolated into every query
+// as raw text, and AE has practical limits on query body size.
+// TODO: cache the list in Workers KV (5-min TTL) once installation
+// cardinality exceeds ~few hundred so we don't re-query on every
+// request, and so we can lift the cap.
+const EXCLUDED_IDS_LIMIT = 500;
+
 // resolveExcludedIds returns installation IDs that the dashboard
 // always hides: github installs that ran exactly one review in the
-// window. Capped at 5000 to keep the resulting NOT IN list bounded.
-async function resolveExcludedIds(
+// window.
+export async function resolveExcludedIds(
   env: Env,
   days: number,
 ): Promise<string[]> {
@@ -236,14 +279,15 @@ async function resolveExcludedIds(
        AND blob6 = 'github'
      GROUP BY id
      HAVING SUM(_sample_interval) = 1
-     LIMIT 5000`,
+     LIMIT ${EXCLUDED_IDS_LIMIT}`,
   );
   return rows.map((r) => r.id).filter((id) => UUID.test(id));
 }
 
-// buildWhere returns the additional WHERE clauses for the given filters,
-// joined by AND. The leading " AND " is included so the caller can append
-// directly to a base WHERE. Returns "" if no filters are set.
+// buildWhere returns the additional WHERE clauses for the given
+// filters, joined by AND. The leading " AND " is included so the
+// caller can append directly to a base WHERE. Returns "" if no
+// filters are set or all selected filters resolve to no-ops.
 export function buildWhere(
   filters: Filters,
   exclude: Array<keyof Filters> = [],
@@ -251,19 +295,23 @@ export function buildWhere(
   const clauses: string[] = [];
   const skip = new Set(exclude);
   if (filters.provider && !skip.has("provider")) {
-    clauses.push(`blob5 = '${filters.provider}'`);
+    clauses.push(`blob5 = '${escapeSqlString(filters.provider)}'`);
   }
   if (filters.platform && !skip.has("platform")) {
-    clauses.push(`blob6 = '${filters.platform}'`);
+    clauses.push(`blob6 = '${escapeSqlString(filters.platform)}'`);
   }
   if (filters.review_model && !skip.has("review_model")) {
-    clauses.push(modelClause("blob8", filters.review_model, "sonnet"));
+    const c = modelClause("blob8", filters.review_model, "sonnet");
+    if (c) clauses.push(c);
   }
   if (filters.triage_model && !skip.has("triage_model")) {
-    clauses.push(modelClause("blob9", filters.triage_model, "haiku"));
+    const c = modelClause("blob9", filters.triage_model, "haiku");
+    if (c) clauses.push(c);
   }
   if (filters.installation && !skip.has("installation")) {
-    clauses.push(`index1 = '${filters.installation}'`);
+    // installation is already UUID-validated in parseFilters, so
+    // escapeSqlString is purely defense-in-depth.
+    clauses.push(`index1 = '${escapeSqlString(filters.installation)}'`);
   }
   return clauses.length ? " AND " + clauses.join(" AND ") : "";
 }

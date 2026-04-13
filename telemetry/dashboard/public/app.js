@@ -561,8 +561,10 @@ function wireRange() {
       btn.setAttribute("aria-selected", "true");
       state.range = btn.dataset.range;
       // Refresh filter option counts for the new range, then render.
+      // Both calls are awaited and routed through showError so a
+      // failed fetch surfaces in the UI instead of being swallowed.
       await loadFilterOptions().catch(showError);
-      render();
+      await render().catch(showError);
     });
   });
 }

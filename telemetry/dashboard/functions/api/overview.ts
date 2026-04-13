@@ -1,5 +1,5 @@
 import {
-  buildWhereWithDefaults,
+  buildWhereWith,
   Env,
   errorResponse,
   jsonResponse,
@@ -7,6 +7,7 @@ import {
   parseFilters,
   querySQL,
   rangeDays,
+  resolveExcludedIds,
   table,
 } from "./_utils";
 
@@ -22,13 +23,17 @@ export const onRequestGet: PagesFunction<Env> = async (ctx) => {
     const days = rangeDays(url);
     const filters = parseFilters(url);
 
+    // Fetch the auto-exclusion list once and share it across both
+    // WHERE variants below — they're derived from the same data, so
+    // re-querying would just double the AE round trips.
+    const excludedIds = await resolveExcludedIds(ctx.env, days);
+
     // The platform-split query mirrors `where` but drops the platform
     // filter, so both GitHub and local buckets stay visible even when
-    // a single platform is selected. Both share the dashboard's
-    // automatic exclusion of one-shot github installs.
-    const [where, wherePlatformAgnostic] = await Promise.all([
-      buildWhereWithDefaults(ctx.env, filters, days),
-      buildWhereWithDefaults(ctx.env, filters, days, ["platform"]),
+    // a single platform is selected.
+    const where = buildWhereWith(filters, excludedIds);
+    const wherePlatformAgnostic = buildWhereWith(filters, excludedIds, [
+      "platform",
     ]);
 
     // Main aggregate query (honors all filters).

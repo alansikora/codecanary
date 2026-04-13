@@ -21,7 +21,17 @@ import {
 
 const TOP_INSTALLATIONS_PER_PLATFORM = 20;
 
-function topInstallsPerPlatform(env: Env, base: string, platform: string) {
+// Platform values are interpolated raw into the SQL below — keep
+// the type narrow so a future caller can't accidentally pass
+// arbitrary input. The runtime guard catches any drift the type
+// system misses (e.g. an `as Platform` cast at the call site).
+type Platform = "github" | "local";
+
+function topInstallsPerPlatform(env: Env, base: string, platform: Platform) {
+  if (platform !== "github" && platform !== "local") {
+    throw new Error(`invalid platform: ${platform}`);
+  }
+
   // The dashboard auto-hides github installs with exactly one review
   // (treated as config-failure noise). Mirror that filter here so the
   // dropdown doesn't list installs whose data is hidden everywhere else.
