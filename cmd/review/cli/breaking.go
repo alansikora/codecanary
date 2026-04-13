@@ -36,6 +36,8 @@ var breakingManifest = []breakingSurface{
 	{"cmd/review/cli/root.go", "CLI Flags", "CLI flag names or defaults may have changed"},
 	{"cmd/review/cli/costs.go", "CLI Costs", "`codecanary review costs` behavior may have changed"},
 	{"cmd/review/cli/findings.go", "Findings Command", "`codecanary findings` output schema or flags changed; the codecanary-loop skill may need updating"},
+	{"cmd/review/cli/install_skill.go", "Install-Skill Command", "`codecanary install-skill` behavior, destination path, or flags changed"},
+	{"internal/skills/codecanary-loop/SKILL.md", "Embedded Skill Content", "The codecanary-loop Claude skill body changed; users on older binaries will need to re-run `codecanary install-skill` to pick up the new version"},
 	{"cmd/review/cli/setup.go", "Setup Command", "`codecanary setup` behavior may have changed"},
 	{"cmd/review/cli/auth.go", "Auth Command", "`codecanary auth` behavior may have changed"},
 	{"cmd/review/cli/upgrade.go", "Upgrade Command", "`codecanary upgrade` behavior may have changed"},
