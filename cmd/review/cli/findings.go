@@ -35,21 +35,11 @@ PR number is auto-detected from the current branch when omitted. Output
 defaults to a human-readable markdown table; use --output json for
 machine consumption (e.g. the codecanary-loop Claude skill).`,
 	Args: cobra.MaximumNArgs(1),
-	PreRunE: func(cmd *cobra.Command, args []string) error {
-		sinceCommit, _ := cmd.Flags().GetString("since-commit")
-		if sinceCommit != "" && len(sinceCommit) < minSinceCommitLen {
-			return fmt.Errorf(
-				"--since-commit requires at least %d hex characters (got %q); pass a full or abbreviated SHA",
-				minSinceCommitLen, sinceCommit)
-		}
-		return nil
-	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		repoFlagSet := cmd.Flags().Changed("repo")
 		repo, _ := cmd.Flags().GetString("repo")
 		output, _ := cmd.Flags().GetString("output")
 		watch, _ := cmd.Flags().GetBool("watch")
-		sinceCommit, _ := cmd.Flags().GetString("since-commit")
 		timeoutMinutes, _ := cmd.Flags().GetInt("timeout")
 		includeResolved, _ := cmd.Flags().GetBool("include-resolved")
 
@@ -85,10 +75,6 @@ machine consumption (e.g. the codecanary-loop Claude skill).`,
 		if err != nil {
 			return err
 		}
-		if sinceCommit != "" {
-			findings = filterSinceCommit(findings, sinceCommit)
-		}
-
 		payload := findingsOutput{
 			PR:           prNumber,
 			Repo:         repo,
@@ -137,28 +123,6 @@ func resolveFindingsPR(args []string, repoFlagSet bool) (int, error) {
 		return 0, fmt.Errorf("%w (or pass the PR number as an argument)", err)
 	}
 	return n, nil
-}
-
-// minSinceCommitLen is the minimum length of a `--since-commit` value we
-// accept. 7 chars matches the abbreviated-SHA length git ships by default
-// and is long enough to be unambiguous on any PR-sized history. Shorter
-// values are rejected at flag-parse time (see findingsCmd.PreRunE) so
-// users notice immediately instead of getting silently unfiltered results.
-const minSinceCommitLen = 7
-
-// filterSinceCommit drops findings anchored on the given commit SHA.
-// Callers pass the previous HEAD after pushing a new commit to get only
-// findings on the fresh commit. Returns a freshly-allocated slice so the
-// caller's original `findings` backing array is never mutated.
-func filterSinceCommit(findings []review.PRFinding, sinceCommit string) []review.PRFinding {
-	out := make([]review.PRFinding, 0, len(findings))
-	for _, f := range findings {
-		if strings.HasPrefix(f.CommitID, sinceCommit) {
-			continue
-		}
-		out = append(out, f)
-	}
-	return out
 }
 
 func emitFindingsJSON(p findingsOutput) error {
@@ -239,8 +203,7 @@ func init() {
 	findingsCmd.Flags().StringP("repo", "r", "", "GitHub repo (owner/name); defaults to current repo")
 	findingsCmd.Flags().StringP("output", "o", "markdown", "Output format: markdown or json")
 	findingsCmd.Flags().Bool("watch", false, "Poll until the review check completes before returning")
-	findingsCmd.Flags().String("since-commit", "", "Drop findings anchored on this commit SHA (used for loop deduplication)")
-	findingsCmd.Flags().Int("timeout", 15, "Max minutes to wait when --watch is set. Use 0 or a negative value to wait indefinitely (blocks until the review check completes or the process is interrupted)")
+findingsCmd.Flags().Int("timeout", 15, "Max minutes to wait when --watch is set. Use 0 or a negative value to wait indefinitely (blocks until the review check completes or the process is interrupted)")
 	findingsCmd.Flags().Bool("include-resolved", false, "Include findings whose GitHub review thread is already marked resolved (default: skip them)")
 	rootCmd.AddCommand(findingsCmd)
 }
