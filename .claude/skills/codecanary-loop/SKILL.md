@@ -56,8 +56,16 @@ Track two pieces of state across iterations:
    - **Local mode**: run `codecanary review --output json`. The command
      runs the review inline; its stdout is a JSON object with a
      `findings` array in the same shape.
-3. If the findings list is empty, tell the operator the review is clean
-   and exit. Do not loop further.
+3. Check the `conclusion` field in the JSON output. If it is `failure`
+   (or any value other than `success` / `neutral` / empty), the review
+   run itself broke. Tell the operator the check failed and stop. Do
+   not say the review is clean, even if `findings` is empty — an empty
+   list on a failed run means findings were never published, not that
+   the code is fine. Do not count this as a cycle (roll `CYCLE` back).
+   Wait for the operator to explicitly ask you to retry before
+   starting another cycle.
+   If `conclusion` is healthy and the findings list is empty, tell the
+   operator the review is clean and exit. Do not loop further.
 4. If `CYCLE > 1`, emit this reminder to the operator verbatim, before
    the triage table:
    > This is review cycle *N*. Before applying fixes, check whether the new
