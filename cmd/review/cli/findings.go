@@ -203,7 +203,7 @@ func init() {
 	findingsCmd.Flags().StringP("repo", "r", "", "GitHub repo (owner/name); defaults to current repo")
 	findingsCmd.Flags().StringP("output", "o", "markdown", "Output format: markdown or json")
 	findingsCmd.Flags().Bool("watch", false, "Poll until the review check completes before returning")
-findingsCmd.Flags().Int("timeout", 15, "Max minutes to wait when --watch is set. Use 0 or a negative value to wait indefinitely (blocks until the review check completes or the process is interrupted)")
+	findingsCmd.Flags().Int("timeout", 15, "Max minutes to wait when --watch is set. Use 0 or a negative value to wait indefinitely (blocks until the review check completes or the process is interrupted)")
 	findingsCmd.Flags().Bool("include-resolved", false, "Include findings whose GitHub review thread is already marked resolved (default: skip them)")
 	rootCmd.AddCommand(findingsCmd)
 }
