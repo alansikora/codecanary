@@ -39,20 +39,18 @@ If you cannot tell which mode applies, ask the operator before starting.
 
 ## The loop
 
-Track two pieces of state across iterations:
+Track one piece of state across iterations:
 - `CYCLE` — integer, starts at 0, increments at the top of every iteration.
-- `LAST_COMMIT` — the commit SHA whose findings you've already triaged.
-  Starts empty.
 
 ### Iteration
 
 1. `CYCLE = CYCLE + 1`.
 2. Fetch findings:
    - **PR mode**: run
-     `codecanary findings --watch --since-commit "$LAST_COMMIT" --output json`
-     (omit `--since-commit` on the first iteration). The command blocks
-     until the review check completes; its stdout is a single JSON object.
-     Parse it.
+     `codecanary findings --watch --output json`.
+     The command blocks until the review check completes; its stdout is
+     a single JSON object. Parse it. Deduplication is handled by GitHub
+     thread resolution — resolved threads are excluded by default.
    - **Local mode**: run `codecanary review --output json`. The command
      runs the review inline; its stdout is a JSON object with a
      `findings` array in the same shape.
@@ -101,7 +99,6 @@ Track two pieces of state across iterations:
        `fix: address codecanary review on #<PR> (cycle <N>)`
        plus a brief bullet list of which findings were addressed.
      - Push the branch.
-     - Set `LAST_COMMIT` to the SHA you just pushed.
      - Go back to step 1.
    - **Local mode**: stop. Report the summary of applied fixes to the
      operator. Do not commit, do not push, do not loop — a single pass
