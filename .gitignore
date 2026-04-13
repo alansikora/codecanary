@@ -12,3 +12,6 @@ dist/
 
 # Wrangler local state
 **/.wrangler/
+
+# Claude Code local worktrees / settings
+.claude/
