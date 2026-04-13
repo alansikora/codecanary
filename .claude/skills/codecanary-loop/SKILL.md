@@ -72,8 +72,8 @@ Track one piece of state across iterations:
    explicitly ask you to retry before starting another cycle.
 4. If the findings list is empty (for either mode), tell the operator
    the review is clean and exit. Do not loop further.
-5. If `CYCLE > 1`, emit this reminder to the operator verbatim, before
-   the triage table:
+5. If `CYCLE > 1`, emit this reminder to the operator before the
+   triage table, substituting *N* with the current value of `CYCLE`:
    > This is review cycle *N*. Before applying fixes, check whether the new
    > findings are caused by your previous fixes or are genuinely different
    > issues. If the bot keeps re-flagging the same `fix_ref` across cycles,
@@ -112,8 +112,10 @@ Track one piece of state across iterations:
 
 Exit the loop (and tell the operator *why*) whenever any of these hold:
 
-- The findings list comes back empty **and** `conclusion` is healthy
-  (`success`, `neutral`, or absent) — normal success.
+- **PR mode**: the findings list comes back empty and `conclusion` is
+  healthy (`success` or `neutral`) — normal success.
+- **Local mode**: the findings list comes back empty — normal success.
+  (There is no `conclusion` field in local mode; its absence is expected.)
 - The operator chose "Skip this cycle" or "Abort".
 - The CLI errors out (network failure, no PR detected, timeout on
   `--watch`). Surface the error verbatim and stop.
