@@ -282,19 +282,27 @@ func FetchPRFindings(repo string, prNumber int, includeResolved bool) ([]PRFindi
 	if err := json.Unmarshal(out, &resp); err != nil {
 		return nil, fmt.Errorf("parsing graphql response: %w", err)
 	}
-	// GraphQL may return a partial response (http 200 with `errors` set
-	// and `data` null-or-incomplete). Treat any error message as fatal
-	// rather than silently returning zero findings.
+	// GraphQL may return a partial response: http 200 with `errors` set
+	// and `data` either null or only populated for the fields the token
+	// had access to. Fail only when the returned data is empty (nothing
+	// usable to work with); otherwise log the errors and carry on with
+	// what we got.
+	threadNodes := resp.Data.Repository.PullRequest.ReviewThreads.Nodes
 	if len(resp.Errors) > 0 {
 		msgs := make([]string, 0, len(resp.Errors))
 		for _, e := range resp.Errors {
 			msgs = append(msgs, e.Message)
 		}
-		return nil, fmt.Errorf("graphql error: %s", strings.Join(msgs, "; "))
+		joined := strings.Join(msgs, "; ")
+		if len(threadNodes) == 0 {
+			return nil, fmt.Errorf("graphql error: %s", joined)
+		}
+		_, _ = fmt.Fprintf(os.Stderr,
+			"warning: partial graphql response: %s\n", joined)
 	}
 
 	var findings []PRFinding
-	for _, thread := range resp.Data.Repository.PullRequest.ReviewThreads.Nodes {
+	for _, thread := range threadNodes {
 		if thread.IsResolved && !includeResolved {
 			continue
 		}
