@@ -5,3 +5,39 @@ compatibility_date = "2024-01-01"
 [[analytics_engine_datasets]]
 binding = "TELEMETRY"
 dataset = "codecanary_telemetry"
+
+# ---------------------------------------------------------------------
+# Analytics Engine schema (codecanary_telemetry)
+# ---------------------------------------------------------------------
+# Append-only. All columns are positional — DO NOT reorder; only
+# append new fields. The dashboard (telemetry/dashboard/) reads these
+# columns by index.
+#
+# index1   installation_id (SHA-256 hash of "owner/repo")
+#
+# blob1    event           ("review_completed" | "setup_completed")
+# blob2    version         (binary version, e.g. "v0.4.1")
+# blob3    os              (runtime.GOOS)
+# blob4    arch            (runtime.GOARCH)
+# blob5    provider        ("anthropic" | "openai" | "openrouter" | "claude")
+# blob6    platform        ("github" | "local")
+# blob7    by_severity     (JSON: {critical, bug, warning, suggestion, nitpick})
+# blob8    review_model    (e.g. "claude-sonnet-4-6"; empty for pre-2026-04 rows)
+# blob9    triage_model    (e.g. "claude-haiku-4-5"; empty for pre-2026-04 rows)
+#
+# double1  new_findings
+# double2  still_open_findings
+# double3  input_tokens
+# double4  output_tokens
+# double5  cache_read_tokens
+# double6  cost_usd
+# double7  duration_ms
+# double8  is_incremental  (0 | 1)
+# double9  severity_critical
+# double10 severity_bug
+# double11 severity_warning
+# double12 severity_suggestion
+# double13 severity_nitpick
+# double14 lines_added
+# double15 lines_removed
+# double16 files_changed

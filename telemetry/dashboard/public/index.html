@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="/styles.css" />
     <script
       src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"
+      integrity="sha384-vsrfeLOOY6KuIYKDlmVH5UiBmgIdB1oEf7p01YgWHuqmOHfZr374+odEv96n9tNC"
       crossorigin="anonymous"
     ></script>
   </head>
@@ -164,10 +165,11 @@
       </section>
 
       <p class="footnote">
-        Anonymous aggregate data from opt-in telemetry. All repo identifiers
-        are SHA-256 hashed before ingestion. Analytics Engine retention is
-        capped at 90 days. GitHub installs with a single review in the
-        window are excluded as likely config failures.
+        Anonymous aggregate data from opt-out telemetry (disable with
+        <code>DO_NOT_TRACK=1</code> or <code>CODECANARY_NO_TELEMETRY=1</code>).
+        All repo identifiers are SHA-256 hashed before ingestion. Analytics
+        Engine retention is capped at 90 days. GitHub installs with a single
+        review in the window are excluded as likely config failures.
       </p>
     </main>
 

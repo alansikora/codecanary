@@ -172,13 +172,30 @@ function clearError() {
   document.getElementById("error").hidden = true;
 }
 
+// setCard updates a card's main value and optional sub-line.
+// `sub` is an array of segments — { text, strong? } — built into
+// real DOM nodes so we never assign HTML strings to innerHTML.
 function setCard(key, value, sub = null) {
   const card = document.querySelector(`[data-card="${key}"]`);
   if (!card) return;
   const valueEl = card.querySelector(".card-value");
   if (valueEl) valueEl.textContent = value;
   const subEl = card.querySelector("[data-sub]");
-  if (subEl) subEl.innerHTML = sub ?? "&nbsp;";
+  if (!subEl) return;
+  while (subEl.firstChild) subEl.removeChild(subEl.firstChild);
+  if (!sub || !sub.length) {
+    subEl.appendChild(document.createTextNode("\u00a0")); // nbsp filler
+    return;
+  }
+  for (const seg of sub) {
+    if (seg.strong) {
+      const strong = document.createElement("strong");
+      strong.textContent = seg.text;
+      subEl.appendChild(strong);
+    } else {
+      subEl.appendChild(document.createTextNode(seg.text));
+    }
+  }
 }
 
 // ---------------------------------------------------------------------
@@ -348,7 +365,12 @@ async function loadOverview() {
   // or when there's nothing to split.
   const showSplit = !state.filters.platform && installsTotal > 0;
   const sub = showSplit
-    ? `<strong>${numberFmt.format(gh)}</strong> GHA · <strong>${numberFmt.format(lo)}</strong> local`
+    ? [
+        { text: numberFmt.format(gh), strong: true },
+        { text: " GHA · " },
+        { text: numberFmt.format(lo), strong: true },
+        { text: " local" },
+      ]
     : null;
   setCard("installations", numberFmt.format(installsTotal), sub);
 

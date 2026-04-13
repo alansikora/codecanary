@@ -36,8 +36,13 @@ export async function querySQL<T = Record<string, unknown>>(
   });
 
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`AE query failed (${res.status}): ${text}`);
+    // Log the verbose body server-side for debugging, but surface
+    // only the status to the caller. Error bodies from upstream APIs
+    // can occasionally include implementation details we don't want
+    // to forward to the client.
+    const text = await res.text().catch(() => "");
+    console.error(`AE query failed (${res.status}): ${text}`);
+    throw new Error(`AE query failed with status ${res.status}`);
   }
 
   const body = (await res.json()) as AEResponse;
@@ -144,7 +149,21 @@ function modelClause(
     column === "blob8" ? HISTORICAL_REVIEW_MODEL : HISTORICAL_TRIAGE_MODEL;
 
   if (raw.startsWith(FAMILY_PREFIX)) {
-    const stem = raw.slice(FAMILY_PREFIX.length).toLowerCase();
+    // Strip LIKE wildcards from the stem. SAFE_STRING already blocks
+    // `%` (terminator-style injection) but allows `_`, which is a
+    // single-char wildcard in LIKE. Removing both keeps family
+    // matches purely substring-based and prevents accidental
+    // over-matching like `family:s_nnet` matching anything ending
+    // in "nnet".
+    const stem = raw
+      .slice(FAMILY_PREFIX.length)
+      .toLowerCase()
+      .replace(/[%_]/g, "");
+    if (!stem) {
+      // An empty/all-wildcard stem would emit LIKE '%%' and match
+      // everything — return a no-op predicate instead.
+      return "1 = 0";
+    }
     let clause = `lower(${column}) LIKE '%${stem}%'`;
     if (stem === historicalDefault) {
       clause = `(${clause} OR ${column} = '')`;
