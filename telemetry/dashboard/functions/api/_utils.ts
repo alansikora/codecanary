@@ -114,17 +114,44 @@ export interface Filters {
 const SAFE_STRING = /^[A-Za-z0-9 ._:/@()-]{1,100}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// ValidationError flags input-derived failures so handlers can
+// answer with a generic 400 instead of leaking the internal reason
+// (which could hint at injection surface to a probe). Infrastructure
+// errors should remain plain Error and surface as 500.
+export class ValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ValidationError";
+  }
+}
+
 // Defense-in-depth runtime check around every value we interpolate
 // into a SQL string literal. The AE SQL HTTP API has no parameterized
 // query mode (you POST raw SQL), so all our safety comes from
 // allowlist sanitization. This helper is the second wall: even if
 // SAFE_STRING/UUID drift to allow a quote or backslash, this throws
-// before the bad value reaches AE.
+// a ValidationError before the bad value reaches AE.
 function escapeSqlString(value: string): string {
   if (/['"\\;]/.test(value) || value.includes("\n")) {
-    throw new Error("refusing to interpolate value with SQL meta-characters");
+    throw new ValidationError(
+      "refusing to interpolate value with SQL meta-characters",
+    );
   }
   return value;
+}
+
+// handleError centralizes the catch-block response shape so every
+// API endpoint surfaces validation issues as 400 with a fixed
+// message and infrastructure issues as 500. Real error details are
+// always written to console.error for operator debugging.
+export function handleError(err: unknown): Response {
+  if (err instanceof ValidationError) {
+    console.error(`validation error: ${err.message}`);
+    return errorResponse("invalid request", 400);
+  }
+  const message = err instanceof Error ? err.message : "unknown error";
+  console.error(`internal error: ${message}`);
+  return errorResponse("internal error", 500);
 }
 
 // Sentinels used by the breakdown/filters endpoints to label rows
@@ -281,6 +308,14 @@ export async function resolveExcludedIds(
      HAVING SUM(_sample_interval) = 1
      LIMIT ${EXCLUDED_IDS_LIMIT}`,
   );
+  if (rows.length === EXCLUDED_IDS_LIMIT) {
+    // Cap is hit — IDs beyond the limit silently leak back into the
+    // dashboard. Loud signal so operators know it's time to wire up
+    // the KV cache (see TODO above).
+    console.warn(
+      `resolveExcludedIds: hit cap of ${EXCLUDED_IDS_LIMIT} for range=${days}d; some one-shot installs may not be filtered`,
+    );
+  }
   return rows.map((r) => r.id).filter((id) => UUID.test(id));
 }
 

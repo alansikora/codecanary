@@ -1,7 +1,7 @@
 import {
   buildWhereWithDefaults,
   Env,
-  errorResponse,
+  handleError,
   jsonResponse,
   num,
   parseFilters,
@@ -62,7 +62,6 @@ export const onRequestGet: PagesFunction<Env> = async (ctx) => {
 
     return jsonResponse({ metric, range_days: days, filters, points });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "unknown error";
-    return errorResponse(message, 500);
+    return handleError(err);
   }
 };

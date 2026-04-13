@@ -1,6 +1,6 @@
 import {
   Env,
-  errorResponse,
+  handleError,
   HISTORICAL_REVIEW_MODEL,
   HISTORICAL_TRIAGE_MODEL,
   jsonResponse,
@@ -158,7 +158,6 @@ export const onRequestGet: PagesFunction<Env> = async (ctx) => {
         .filter((b) => b.key && b.count > 0),
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "unknown error";
-    return errorResponse(message, 500);
+    return handleError(err);
   }
 };
