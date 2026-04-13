@@ -55,6 +55,8 @@ export default {
           str("provider"), // blob5
           str("platform"), // blob6
           JSON.stringify(bySeverity), // blob7
+          str("review_model"), // blob8
+          str("triage_model"), // blob9
         ],
         doubles: [
           num("new_findings"), // double1
@@ -70,6 +72,9 @@ export default {
           sev("warning"), // double11
           sev("suggestion"), // double12
           sev("nitpick"), // double13
+          num("lines_added"), // double14
+          num("lines_removed"), // double15
+          num("files_changed"), // double16
         ],
       });
 

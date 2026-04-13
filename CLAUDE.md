@@ -49,7 +49,11 @@ internal/
     local.go       # RunLocal() — local setup flow
     github.go      # RunGitHub() — GitHub Actions setup flow
   auth/            # OAuth PKCE flow, GitHub App installation
-worker/            # Cloudflare Worker — OIDC token proxy (TypeScript)
+telemetry/         # Telemetry domain (anonymous usage analytics)
+  worker/          # Cloudflare Worker — telemetry ingestion (TypeScript)
+  dashboard/       # Cloudflare Pages — internal analytics dashboard (vanilla JS + Chart.js)
+oidc/              # OIDC domain
+  worker/          # Cloudflare Worker — OIDC token exchange proxy (TypeScript)
 action.yml         # GitHub Action definition (composite action)
 install.sh         # Downloads and installs codecanary binary permanently
 ```
@@ -125,7 +129,9 @@ There is a **single `Run()` function** — not separate paths for GitHub vs. loc
 - **Incremental reviews**: on re-push, triage existing threads (Go-driven classifier in `triage.go`), evaluate changed threads via provider (triage model), then review only new code
 - **Dual marker detection**: reads both `codecanary:review` and legacy `clanopy:review` HTML markers for backward compatibility
 - **Anti-hallucination**: explicit file allowlist, line validation against diff, max finding distance threshold
-- **Worker** (`worker/`): OIDC token exchange proxy at `oidc.codecanary.sh` — verifies GitHub Actions OIDC token, returns GitHub App installation token
+- **OIDC worker** (`oidc/worker/`): OIDC token exchange proxy at `oidc.codecanary.sh` — verifies GitHub Actions OIDC token, returns GitHub App installation token
+- **Telemetry worker** (`telemetry/worker/`): anonymous usage ingest at `telemetry.codecanary.sh` — writes to a Cloudflare Analytics Engine dataset
+- **Telemetry dashboard** (`telemetry/dashboard/`): internal analytics view at `dashboard.codecanary.sh` — Cloudflare Pages + Pages Functions, gated by Cloudflare Access. Reads the AE dataset via the SQL HTTP API with a read-only API token (no AE binding, so writes are platform-impossible)
 - **Setup** is a subcommand (`codecanary setup`) using `charmbracelet/huh` forms, with `local` and `github` sub-flows
 - **Credentials** use a single env var `CODECANARY_PROVIDER_SECRET` for all providers. Stored via `go-keyring` (OS keychain) with a file-based fallback (`~/.codecanary/credentials.json`, mode `0600`). `resolveEnv()` in `runner.go` injects the stored credential into the filtered env when not already set.
 

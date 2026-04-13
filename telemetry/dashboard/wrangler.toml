@@ -1,0 +1,15 @@
+name = "codecanary-dashboard"
+compatibility_date = "2024-09-23"
+pages_build_output_dir = "public"
+
+# No Analytics Engine binding here — reads go through the SQL HTTP API
+# with a CF_API_TOKEN scoped to "Account Analytics: Read". Without a
+# binding, these Functions have no API surface to write data points.
+#
+# Required Pages secrets (set via `wrangler pages secret put <name>`):
+#   CF_ACCOUNT_ID  — Cloudflare account ID that owns the AE dataset
+#   CF_API_TOKEN   — API token scoped to Account Analytics: Read
+#
+# The dataset name is not secret; keep it as a var for easy overrides.
+[vars]
+AE_DATASET = "codecanary_telemetry"

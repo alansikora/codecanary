@@ -34,7 +34,7 @@ rules:
   - id: worker-input-validation
     description: "The Cloudflare Worker must validate and sanitize all incoming request data (OIDC tokens, headers, query parameters) before processing. Reject malformed or unexpected input early."
     severity: critical
-    paths: ["workers/**/*.ts"]
+    paths: ["**/worker/**/*.ts"]
 
   - id: config-parsing-robustness
     description: "YAML config parsing should handle missing optional fields gracefully with documented defaults. Validate field values (e.g., severity must be one of the known values, version must be 1) and return clear error messages."
@@ -57,8 +57,8 @@ rules:
     paths: ["internal/review/**/*.go"]
 
 ignore:
-  - "workers/*/node_modules/**"
-  - "workers/*/.wrangler/**"
+  - "**/node_modules/**"
+  - "**/.wrangler/**"
   - "*.lock"
   - "go.sum"
   - "*.exe"

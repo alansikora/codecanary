@@ -501,6 +501,8 @@ func Run(opts RunOptions) error {
 			Repo:              opts.Repo,
 			Version:           opts.Version,
 			Provider:          cfg.Provider,
+			ReviewModel:       cfg.ReviewModel,
+			TriageModel:       cfg.TriageModel,
 			Platform:          platformName,
 			IsIncremental:     isIncremental,
 			LinesAdded:        linesAdded,

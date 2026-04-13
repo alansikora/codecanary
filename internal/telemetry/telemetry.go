@@ -153,6 +153,8 @@ type ReviewEvent struct {
 
 	// Review context (no PII).
 	Provider      string `json:"provider"`
+	ReviewModel   string `json:"review_model"`
+	TriageModel   string `json:"triage_model"`
 	Platform      string `json:"platform"`
 	IsIncremental bool   `json:"is_incremental"`
 

@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex,nofollow" />
+    <title>CodeCanary Analytics</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script
+      src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"
+      crossorigin="anonymous"
+    ></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="dot" aria-hidden="true"></span>
+        <h1>CodeCanary Analytics</h1>
+      </div>
+      <nav class="range" role="tablist" aria-label="Time range">
+        <button type="button" data-range="7d" role="tab">7d</button>
+        <button type="button" data-range="30d" role="tab" aria-selected="true">
+          30d
+        </button>
+        <button type="button" data-range="90d" role="tab">90d</button>
+      </nav>
+    </header>
+
+    <section class="filterbar" aria-label="Filters">
+      <label class="filter">
+        <span>Platform</span>
+        <select data-filter="platform">
+          <option value="">All</option>
+        </select>
+      </label>
+      <label class="filter">
+        <span>Provider</span>
+        <select data-filter="provider">
+          <option value="">All</option>
+        </select>
+      </label>
+      <label class="filter">
+        <span>Review model</span>
+        <select data-filter="review_model">
+          <option value="">All</option>
+        </select>
+      </label>
+      <label class="filter">
+        <span>Triage model</span>
+        <select data-filter="triage_model">
+          <option value="">All</option>
+        </select>
+      </label>
+      <label class="filter">
+        <span>Installation</span>
+        <select data-filter="installation">
+          <option value="">All</option>
+        </select>
+      </label>
+      <button type="button" id="filter-reset" class="reset" disabled>
+        Reset filters
+      </button>
+    </section>
+
+    <main>
+      <section class="cards" aria-label="Overview">
+        <article class="card" data-card="reviews">
+          <span class="card-label">Reviews</span>
+          <span class="card-value">—</span>
+        </article>
+        <article class="card" data-card="installations">
+          <span class="card-label">Installations</span>
+          <span class="card-value">—</span>
+          <span class="card-sub" data-sub="installations">&nbsp;</span>
+        </article>
+        <article class="card" data-card="cost">
+          <span class="card-label">Cost (USD)</span>
+          <span class="card-value">—</span>
+        </article>
+        <article class="card" data-card="findings">
+          <span class="card-label">Findings</span>
+          <span class="card-value">—</span>
+        </article>
+        <article class="card" data-card="avg_cost">
+          <span class="card-label">Avg cost / review</span>
+          <span class="card-value">—</span>
+        </article>
+        <article class="card" data-card="avg_duration">
+          <span class="card-label">Avg duration</span>
+          <span class="card-value">—</span>
+        </article>
+      </section>
+
+      <section class="panel">
+        <h2>Reviews per day</h2>
+        <div class="chart-wrap">
+          <canvas id="chart-reviews"></canvas>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Cost per day (USD)</h2>
+        <div class="chart-wrap">
+          <canvas id="chart-cost"></canvas>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Avg review duration per day (seconds)</h2>
+        <div class="chart-wrap">
+          <canvas id="chart-duration"></canvas>
+        </div>
+      </section>
+
+      <section class="grid-2">
+        <div class="panel">
+          <h2>Provider</h2>
+          <div class="chart-wrap short">
+            <canvas id="chart-provider"></canvas>
+          </div>
+        </div>
+        <div class="panel">
+          <h2>Platform</h2>
+          <div class="chart-wrap short">
+            <canvas id="chart-platform"></canvas>
+          </div>
+        </div>
+        <div class="panel">
+          <h2>Review model</h2>
+          <div class="chart-wrap short">
+            <canvas id="chart-review-model"></canvas>
+          </div>
+        </div>
+        <div class="panel">
+          <h2>Triage model</h2>
+          <div class="chart-wrap short">
+            <canvas id="chart-triage-model"></canvas>
+          </div>
+        </div>
+        <div class="panel">
+          <h2>Findings by severity</h2>
+          <div class="chart-wrap short">
+            <canvas id="chart-severity"></canvas>
+          </div>
+        </div>
+        <div class="panel">
+          <h2>Operating system</h2>
+          <div class="chart-wrap short">
+            <canvas id="chart-os"></canvas>
+          </div>
+        </div>
+        <div class="panel">
+          <h2>Incremental vs full</h2>
+          <div class="chart-wrap short">
+            <canvas id="chart-incremental"></canvas>
+          </div>
+        </div>
+        <div class="panel">
+          <h2>Binary version</h2>
+          <div class="chart-wrap short">
+            <canvas id="chart-version"></canvas>
+          </div>
+        </div>
+      </section>
+
+      <p class="footnote">
+        Anonymous aggregate data from opt-in telemetry. All repo identifiers
+        are SHA-256 hashed before ingestion. Analytics Engine retention is
+        capped at 90 days. GitHub installs with a single review in the
+        window are excluded as likely config failures.
+      </p>
+    </main>
+
+    <div id="error" class="error" role="alert" hidden></div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

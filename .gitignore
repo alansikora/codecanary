@@ -7,5 +7,8 @@ dist/
 # CodeCanary state (fallback path if ~/.codecanary is unavailable)
 .codecanary/state/
 
-# Dependencies
-worker/node_modules/
+# Dependencies (covers telemetry/worker, telemetry/dashboard, oidc/worker, etc.)
+**/node_modules/
+
+# Wrangler local state
+**/.wrangler/
