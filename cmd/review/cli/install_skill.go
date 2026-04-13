@@ -25,9 +25,18 @@ overwrite an existing file.
 The skill content is embedded in the codecanary binary; re-run this
 command after upgrading codecanary to pick up any updates.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		dest, _ := cmd.Flags().GetString("dest")
-		printOnly, _ := cmd.Flags().GetBool("print")
-		force, _ := cmd.Flags().GetBool("force")
+		dest, err := cmd.Flags().GetString("dest")
+		if err != nil {
+			return fmt.Errorf("flag --dest: %w", err)
+		}
+		printOnly, err := cmd.Flags().GetBool("print")
+		if err != nil {
+			return fmt.Errorf("flag --print: %w", err)
+		}
+		force, err := cmd.Flags().GetBool("force")
+		if err != nil {
+			return fmt.Errorf("flag --force: %w", err)
+		}
 
 		content := skills.CodecanaryLoop()
 
@@ -44,9 +53,17 @@ command after upgrading codecanary to pick up any updates.`,
 			dest = filepath.Join(home, ".claude", "skills", "codecanary-loop", "SKILL.md")
 		}
 
-		if _, err := os.Stat(dest); err == nil && !force {
-			return fmt.Errorf(
-				"file already exists at %s — pass --force to overwrite", dest)
+		// Distinguish "file exists" from other Stat errors (e.g.
+		// permission denied on the parent) so we don't silently fall
+		// through to writing in a genuinely inaccessible directory.
+		switch _, statErr := os.Stat(dest); {
+		case statErr == nil:
+			if !force {
+				return fmt.Errorf(
+					"file already exists at %s — pass --force to overwrite", dest)
+			}
+		case !os.IsNotExist(statErr):
+			return fmt.Errorf("checking destination %s: %w", dest, statErr)
 		}
 
 		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
