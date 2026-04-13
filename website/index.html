@@ -375,6 +375,72 @@
     .config-body .val { color: var(--text); }
     .config-body .comment { color: var(--text-dim); }
 
+    /* --- Loop --- */
+    .loop-section { border-top: 1px solid var(--border); }
+    .loop-heading {
+      text-align: center;
+      margin-bottom: 40px;
+    }
+    .loop-heading h2 {
+      font-size: 1.6rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 8px;
+    }
+    .loop-heading p {
+      color: var(--text-muted);
+      font-size: 15px;
+      max-width: 580px;
+      margin: 0 auto;
+    }
+    .loop-block {
+      background: var(--bg-raised);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      max-width: 640px;
+      margin: 0 auto 24px;
+    }
+    .loop-bar {
+      display: flex;
+      align-items: center;
+      padding: 12px 16px;
+      background: #0d0d0d;
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+    .loop-body {
+      padding: 20px 24px;
+      font-size: 14px;
+      line-height: 1.8;
+    }
+    .loop-body .prompt { color: var(--text-dim); }
+    .loop-body .cmd { color: var(--text); }
+    .loop-body .comment { color: var(--text-dim); }
+    .loop-steps {
+      max-width: 640px;
+      margin: 0 auto;
+      font-size: 14px;
+      color: var(--text-muted);
+      line-height: 1.7;
+    }
+    .loop-steps li { margin-bottom: 8px; }
+    .loop-steps code {
+      background: var(--bg-raised);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 6px;
+      font-size: 12px;
+      color: var(--text);
+    }
+    .loop-link {
+      display: block;
+      text-align: center;
+      margin-top: 24px;
+      font-size: 13px;
+    }
+
     /* --- Providers --- */
     .providers-section { border-top: 1px solid var(--border); }
     .providers-heading {
@@ -625,9 +691,9 @@
           <p>Review your changes from the terminal before pushing. Same engine, same findings, instant feedback. Works inside <a href="https://llmux.sh" target="_blank" rel="noopener">llmux</a> worktree sessions.</p>
         </div>
         <div class="feature-card">
-          <span class="feature-icon">&#128196;</span>
-          <h3>Configuration-as-code</h3>
-          <p>Project-specific rules, severity levels, ignore patterns, and context. Checked into your repo alongside the code.</p>
+          <span class="feature-icon">&#129302;</span>
+          <h3>Agentic review loop</h3>
+          <p>Pairs with Claude Code via the bundled <code>codecanary-loop</code> skill. Reviews, triages, fixes, and pushes — confirming every change with you before it lands.</p>
         </div>
       </div>
     </div>
@@ -692,6 +758,31 @@
   - <span class="val">"*.lock"</span></pre>
         </div>
       </div>
+    </div>
+  </section>
+
+  <!-- Agentic loop -->
+  <section class="loop-section">
+    <div class="container">
+      <div class="loop-heading">
+        <h2>Close the loop with Claude Code</h2>
+        <p>The bundled <code>codecanary-loop</code> skill drives review &rarr; triage &rarr; fix &rarr; push until your PR is clean &mdash; with you in the loop on every change.</p>
+      </div>
+      <div class="loop-block">
+        <div class="loop-bar">install once</div>
+        <div class="loop-body">
+          <div><span class="prompt">$</span> <span class="cmd">codecanary install-skill</span></div>
+          <div><span class="comment">&nbsp;&nbsp;&#10003; installed codecanary-loop skill to ~/.claude/skills/codecanary-loop/SKILL.md</span></div>
+        </div>
+      </div>
+      <ol class="loop-steps">
+        <li>In Claude Code, ask it to handle the codecanary review on your PR &mdash; the skill is auto-discovered and matched to your request.</li>
+        <li>The skill calls <code>codecanary findings --watch</code>, blocks until the GitHub Actions review check completes, and parses the structured findings.</li>
+        <li>You see a triage table and confirm which fixes to apply &mdash; nothing auto-applies.</li>
+        <li>Approved fixes are committed and pushed; the loop watches the next review and repeats until clean.</li>
+        <li>Ask for a local pass to skip git plumbing &mdash; the skill runs a single review against your dirty working tree and applies approved fixes without committing or pushing.</li>
+      </ol>
+      <a class="loop-link" href="https://github.com/alansikora/codecanary/blob/main/internal/skills/codecanary-loop/SKILL.md" target="_blank" rel="noopener">Read the full skill contract &rarr;</a>
     </div>
   </section>
 
