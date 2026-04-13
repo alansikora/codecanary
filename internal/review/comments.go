@@ -191,6 +191,10 @@ func FetchReviewStatus(repo string, prNumber int) (ReviewStatus, error) {
 // graphQLFindingsResponse is the JSON shape of the reviewThreads query
 // used by FetchPRFindings. It carries enough per-comment metadata to
 // build a PRFinding without a second REST round-trip.
+//
+// Errors is populated on partial GraphQL failures (insufficient scope,
+// resource not found, etc.); when `data` is null or incomplete, those
+// errors are the only signal of what went wrong.
 type graphQLFindingsResponse struct {
 	Data struct {
 		Repository struct {
@@ -220,6 +224,11 @@ type graphQLFindingsResponse struct {
 			} `json:"pullRequest"`
 		} `json:"repository"`
 	} `json:"data"`
+	Errors []struct {
+		Message string `json:"message"`
+		Path    []any  `json:"path,omitempty"`
+		Type    string `json:"type,omitempty"`
+	} `json:"errors"`
 }
 
 // FetchPRFindings returns the findings posted by the codecanary bot on
@@ -272,6 +281,16 @@ func FetchPRFindings(repo string, prNumber int, includeResolved bool) ([]PRFindi
 	var resp graphQLFindingsResponse
 	if err := json.Unmarshal(out, &resp); err != nil {
 		return nil, fmt.Errorf("parsing graphql response: %w", err)
+	}
+	// GraphQL may return a partial response (http 200 with `errors` set
+	// and `data` null-or-incomplete). Treat any error message as fatal
+	// rather than silently returning zero findings.
+	if len(resp.Errors) > 0 {
+		msgs := make([]string, 0, len(resp.Errors))
+		for _, e := range resp.Errors {
+			msgs = append(msgs, e.Message)
+		}
+		return nil, fmt.Errorf("graphql error: %s", strings.Join(msgs, "; "))
 	}
 
 	var findings []PRFinding
