@@ -45,11 +45,18 @@ machine consumption (e.g. the codecanary-loop Claude skill).`,
 		return nil
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
+		repoFlagSet := cmd.Flags().Changed("repo")
 		repo, _ := cmd.Flags().GetString("repo")
 		output, _ := cmd.Flags().GetString("output")
 		watch, _ := cmd.Flags().GetBool("watch")
 		sinceCommit, _ := cmd.Flags().GetString("since-commit")
 		timeoutMinutes, _ := cmd.Flags().GetInt("timeout")
+		includeResolved, _ := cmd.Flags().GetBool("include-resolved")
+
+		prNumber, err := resolveFindingsPR(args, repoFlagSet)
+		if err != nil {
+			return err
+		}
 
 		if repo == "" {
 			detected, err := review.DetectRepo()
@@ -57,11 +64,6 @@ machine consumption (e.g. the codecanary-loop Claude skill).`,
 				return fmt.Errorf("could not detect repo (pass --repo owner/name): %w", err)
 			}
 			repo = detected
-		}
-
-		prNumber, err := resolveFindingsPR(args, repo)
-		if err != nil {
-			return err
 		}
 
 		var status review.ReviewStatus
@@ -75,12 +77,14 @@ machine consumption (e.g. the codecanary-loop Claude skill).`,
 			return err
 		}
 
-		comments, err := review.FetchPRComments(repo, prNumber)
+		// Fetch via GraphQL reviewThreads so we can honour GitHub's
+		// thread resolution state. The REST comments endpoint doesn't
+		// expose isResolved, which meant earlier iterations of this
+		// command re-reported findings the bot had already closed.
+		findings, err := review.FetchPRFindings(repo, prNumber, includeResolved)
 		if err != nil {
 			return err
 		}
-
-		findings := review.ParseFindingMarkers(comments)
 		if sinceCommit != "" {
 			findings = filterSinceCommit(findings, sinceCommit)
 		}
@@ -106,17 +110,27 @@ machine consumption (e.g. the codecanary-loop Claude skill).`,
 // resolveFindingsPR returns the PR number from the positional arg or by
 // auto-detecting from the current branch via gh.
 //
-// Note: `gh pr view --repo X` requires an explicit PR number, so we always
-// call DetectPRNumber with an empty repo (which lets gh auto-detect from
-// the current remote + branch). The repo argument to this function is
-// unused but kept in the signature for clarity at the call site.
-func resolveFindingsPR(args []string, _ string) (int, error) {
+// `gh pr view --repo X` requires an explicit PR number — it can't
+// auto-detect when scoped to a different repo. When --repo is set and
+// no PR number is given, fail loudly instead of silently falling back
+// to current-branch detection in the local repo (which almost
+// certainly isn't what the user meant).
+//
+// `repoFlagSet` tells us whether the user passed --repo explicitly,
+// since we auto-detect the repo via DetectRepo() for other purposes
+// and a non-empty repo alone doesn't distinguish the two cases.
+func resolveFindingsPR(args []string, repoFlagSet bool) (int, error) {
 	if len(args) > 0 {
 		n, err := strconv.Atoi(args[0])
 		if err != nil {
 			return 0, fmt.Errorf("invalid PR number %q: %w", args[0], err)
 		}
 		return n, nil
+	}
+	if repoFlagSet {
+		return 0, fmt.Errorf(
+			"--repo requires an explicit PR number argument; " +
+				"omit --repo to auto-detect from the current branch")
 	}
 	n, err := review.DetectPRNumber("")
 	if err != nil {
@@ -227,5 +241,6 @@ func init() {
 	findingsCmd.Flags().Bool("watch", false, "Poll until the review check completes before returning")
 	findingsCmd.Flags().String("since-commit", "", "Drop findings anchored on this commit SHA (used for loop deduplication)")
 	findingsCmd.Flags().Int("timeout", 15, "Max minutes to wait when --watch is set. Use 0 or a negative value to wait indefinitely (blocks until the review check completes or the process is interrupted)")
+	findingsCmd.Flags().Bool("include-resolved", false, "Include findings whose GitHub review thread is already marked resolved (default: skip them)")
 	rootCmd.AddCommand(findingsCmd)
 }

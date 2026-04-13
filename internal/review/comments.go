@@ -29,10 +29,21 @@ func runGhJSON(args ...string) ([]byte, error) {
 	return out, nil
 }
 
-// BotLogin is the GitHub login of the codecanary review bot that posts
-// findings on PRs. Comments from any other author are ignored when
-// collecting findings.
+// BotLogin is the REST-API form of the codecanary review bot's login
+// (includes the `[bot]` suffix). GraphQL returns the same principal as
+// plain `codecanary-bot` — use isBotAuthor to compare against either.
 const BotLogin = "codecanary-bot[bot]"
+
+// botLoginPrefix matches both the REST (`codecanary-bot[bot]`) and
+// GraphQL (`codecanary-bot`) author forms returned by the GitHub API
+// for the review bot.
+const botLoginPrefix = "codecanary-bot"
+
+// isBotAuthor reports whether the given login refers to the codecanary
+// review bot, normalising over the REST/GraphQL spelling difference.
+func isBotAuthor(login string) bool {
+	return login == botLoginPrefix || login == BotLogin
+}
 
 // reviewCheckName is the name of the GitHub check emitted by the codecanary
 // action. WaitForReview polls for this check to reach COMPLETED.
@@ -62,6 +73,10 @@ type PRFinding struct {
 	CommentURL string `json:"comment_url,omitempty"`
 	CommitID   string `json:"commit_id,omitempty"`
 	CreatedAt  string `json:"created_at,omitempty"`
+	// Resolved reports whether the enclosing GitHub review thread has
+	// been marked resolved (by the bot's own triage or by a human).
+	// FetchPRFindings omits resolved findings by default.
+	Resolved bool `json:"resolved,omitempty"`
 }
 
 // FetchPRComments returns all line-anchored review comments on the given
@@ -100,7 +115,7 @@ func FetchPRComments(repo string, prNumber int) ([]PRReviewComment, error) {
 func ParseFindingMarkers(comments []PRReviewComment) []PRFinding {
 	var out []PRFinding
 	for _, c := range comments {
-		if c.User.Login != BotLogin {
+		if !isBotAuthor(c.User.Login) {
 			continue
 		}
 		idx := strings.Index(c.Body, findingMarkerPrefix)
@@ -171,6 +186,138 @@ func FetchReviewStatus(repo string, prNumber int) (ReviewStatus, error) {
 		}
 	}
 	return rs, nil
+}
+
+// graphQLFindingsResponse is the JSON shape of the reviewThreads query
+// used by FetchPRFindings. It carries enough per-comment metadata to
+// build a PRFinding without a second REST round-trip.
+type graphQLFindingsResponse struct {
+	Data struct {
+		Repository struct {
+			PullRequest struct {
+				ReviewThreads struct {
+					Nodes []struct {
+						IsResolved bool `json:"isResolved"`
+						IsOutdated bool `json:"isOutdated"`
+						Comments   struct {
+							Nodes []struct {
+								Body         string `json:"body"`
+								Path         string `json:"path"`
+								Line         int    `json:"line"`
+								OriginalLine int    `json:"originalLine"`
+								URL          string `json:"url"`
+								CreatedAt    string `json:"createdAt"`
+								Commit       struct {
+									Oid string `json:"oid"`
+								} `json:"commit"`
+								Author struct {
+									Login string `json:"login"`
+								} `json:"author"`
+							} `json:"nodes"`
+						} `json:"comments"`
+					} `json:"nodes"`
+				} `json:"reviewThreads"`
+			} `json:"pullRequest"`
+		} `json:"repository"`
+	} `json:"data"`
+}
+
+// FetchPRFindings returns the findings posted by the codecanary bot on
+// the given PR, keyed off GitHub's reviewThreads GraphQL endpoint so we
+// can honour per-thread resolution state. Resolved threads are omitted
+// by default; pass includeResolved=true to keep them.
+//
+// Uses GraphQL (not the REST comments endpoint) because isResolved
+// isn't exposed via REST. That's what caused the first iteration of
+// this command to re-report findings the bot had already closed.
+func FetchPRFindings(repo string, prNumber int, includeResolved bool) ([]PRFinding, error) {
+	owner, name, err := parseRepoSlug(repo)
+	if err != nil {
+		return nil, err
+	}
+	// Note: first:100 for both threads and comments is the GitHub page
+	// size. A PR with more than 100 review threads would be truncated
+	// — fine for now, revisit with cursor-based pagination if the cap
+	// is ever hit in practice.
+	query := `query($owner:String!,$name:String!,$pr:Int!){
+  repository(owner:$owner,name:$name){
+    pullRequest(number:$pr){
+      reviewThreads(first:100){
+        nodes{
+          isResolved
+          isOutdated
+          comments(first:100){
+            nodes{
+              body path line originalLine url createdAt
+              commit{oid}
+              author{login}
+            }
+          }
+        }
+      }
+    }
+  }
+}`
+
+	out, err := runGhJSON("api", "graphql",
+		"-f", "query="+query,
+		"-f", "owner="+owner,
+		"-f", "name="+name,
+		"-F", fmt.Sprintf("pr=%d", prNumber),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("gh api graphql (reviewThreads): %w", err)
+	}
+
+	var resp graphQLFindingsResponse
+	if err := json.Unmarshal(out, &resp); err != nil {
+		return nil, fmt.Errorf("parsing graphql response: %w", err)
+	}
+
+	var findings []PRFinding
+	for _, thread := range resp.Data.Repository.PullRequest.ReviewThreads.Nodes {
+		if thread.IsResolved && !includeResolved {
+			continue
+		}
+		if len(thread.Comments.Nodes) == 0 {
+			continue
+		}
+		head := thread.Comments.Nodes[0]
+		if !isBotAuthor(head.Author.Login) {
+			continue
+		}
+		// Extract the finding marker from the body.
+		idx := strings.Index(head.Body, findingMarkerPrefix)
+		if idx < 0 {
+			continue
+		}
+		start := idx + len(findingMarkerPrefix)
+		endIdx := strings.Index(head.Body[start:], reviewMarkerSuffix)
+		if endIdx < 0 {
+			continue
+		}
+		var f Finding
+		if err := json.Unmarshal([]byte(head.Body[start:start+endIdx]), &f); err != nil {
+			continue
+		}
+		// Prefer the live line; fall back to originalLine if the thread
+		// has become outdated (code shifted out from under the anchor).
+		if f.Line == 0 {
+			if head.Line > 0 {
+				f.Line = head.Line
+			} else {
+				f.Line = head.OriginalLine
+			}
+		}
+		findings = append(findings, PRFinding{
+			Finding:    f,
+			CommentURL: head.URL,
+			CommitID:   head.Commit.Oid,
+			CreatedAt:  head.CreatedAt,
+			Resolved:   thread.IsResolved,
+		})
+	}
+	return findings, nil
 }
 
 // WaitForReview polls until the `review` check reaches the COMPLETED state
