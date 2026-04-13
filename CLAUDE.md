@@ -11,6 +11,7 @@ cmd/
     cli/           # Cobra commands
       root.go      # Root "codecanary" command
       review.go    # codecanary review <pr>
+      findings.go  # codecanary findings <pr> — fetch bot findings for the loop skill
       setup.go     # codecanary setup [local|github]
       auth.go      # codecanary auth [status|delete]
 internal/
@@ -36,6 +37,7 @@ internal/
     formatter.go         # JSON/Markdown/Terminal output formatting
     usage.go             # Token tracking, budget checking
     github.go            # GitHub API calls (fetch threads, post reviews)
+    comments.go          # PR review comment fetch + finding marker parser + review-check watcher
     local.go             # Local diff & git operations
     state.go             # Local state persistence
     docs.go              # Project doc discovery
@@ -56,6 +58,9 @@ oidc/              # OIDC domain
   worker/          # Cloudflare Worker — OIDC token exchange proxy (TypeScript)
 action.yml         # GitHub Action definition (composite action)
 install.sh         # Downloads and installs codecanary binary permanently
+.claude/
+  skills/
+    codecanary-loop/ # Claude Code skill — drives review→fix→push loop using `codecanary findings`
 ```
 
 ## Binary

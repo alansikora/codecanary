@@ -35,6 +35,7 @@ var breakingManifest = []breakingSurface{
 	{"cmd/review/cli/review.go", "CLI Flags", "CLI flag names or defaults may have changed"},
 	{"cmd/review/cli/root.go", "CLI Flags", "CLI flag names or defaults may have changed"},
 	{"cmd/review/cli/costs.go", "CLI Costs", "`codecanary review costs` behavior may have changed"},
+	{"cmd/review/cli/findings.go", "Findings Command", "`codecanary findings` output schema or flags changed; the codecanary-loop skill may need updating"},
 	{"cmd/review/cli/setup.go", "Setup Command", "`codecanary setup` behavior may have changed"},
 	{"cmd/review/cli/auth.go", "Auth Command", "`codecanary auth` behavior may have changed"},
 	{"cmd/review/cli/upgrade.go", "Upgrade Command", "`codecanary upgrade` behavior may have changed"},

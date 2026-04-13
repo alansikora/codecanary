@@ -13,5 +13,7 @@ dist/
 # Wrangler local state
 **/.wrangler/
 
-# Claude Code local worktrees / settings
-.claude/
+# Claude Code local worktrees / settings — ignore everything under .claude/
+# EXCEPT the checked-in skills directory (intentional shared tooling).
+.claude/*
+!.claude/skills/
