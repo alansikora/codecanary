@@ -15,5 +15,8 @@ dist/
 
 # Claude Code local worktrees / settings — ignore everything under .claude/
 # EXCEPT the checked-in skills directory (intentional shared tooling).
+# Both the directory itself AND its contents need explicit negation, since
+# Git's ignore-then-re-include rules apply per pathname component.
 .claude/*
 !.claude/skills/
+!.claude/skills/**

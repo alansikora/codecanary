@@ -1,7 +1,9 @@
 package review
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -9,6 +11,23 @@ import (
 	"strings"
 	"time"
 )
+
+// runGhJSON runs `gh <args...>` capturing stdout and — on failure —
+// surfacing gh's stderr in the returned error. Plain `exec.Output()`
+// drops stderr, making gh auth / rate-limit failures opaque.
+func runGhJSON(args ...string) ([]byte, error) {
+	cmd := exec.Command("gh", args...)
+	out, err := cmd.Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
+			return nil, fmt.Errorf("%w: %s",
+				err, strings.TrimSpace(string(exitErr.Stderr)))
+		}
+		return nil, err
+	}
+	return out, nil
+}
 
 // BotLogin is the GitHub login of the codecanary review bot that posts
 // findings on PRs. Comments from any other author are ignored when
@@ -46,26 +65,33 @@ type PRFinding struct {
 }
 
 // FetchPRComments returns all line-anchored review comments on the given
-// PR, oldest first. Uses gh API pagination (`--paginate`) so large PRs
-// return every page in a single JSON array.
+// PR, oldest first. Uses gh API pagination (`--paginate`) which emits one
+// JSON array per page concatenated back-to-back; we decode them as a
+// stream rather than string-splicing, so comment bodies that legitimately
+// contain a "][" sequence survive unscathed.
 func FetchPRComments(repo string, prNumber int) ([]PRReviewComment, error) {
 	owner, name, err := parseRepoSlug(repo)
 	if err != nil {
 		return nil, err
 	}
 	apiPath := fmt.Sprintf("repos/%s/%s/pulls/%d/comments", owner, name, prNumber)
-	out, err := exec.Command("gh", "api", "--paginate", apiPath).Output()
+	out, err := runGhJSON("api", "--paginate", apiPath)
 	if err != nil {
 		return nil, fmt.Errorf("fetching PR comments: %w", err)
 	}
-	// `gh api --paginate` concatenates JSON arrays as `][` between pages.
-	// Normalize to a single array before unmarshaling.
-	normalized := strings.ReplaceAll(string(out), "][", ",")
-	var comments []PRReviewComment
-	if err := json.Unmarshal([]byte(normalized), &comments); err != nil {
-		return nil, fmt.Errorf("parsing PR comments: %w", err)
+	dec := json.NewDecoder(bytes.NewReader(out))
+	var all []PRReviewComment
+	for {
+		var page []PRReviewComment
+		if err := dec.Decode(&page); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return nil, fmt.Errorf("parsing PR comments page: %w", err)
+		}
+		all = append(all, page...)
 	}
-	return comments, nil
+	return all, nil
 }
 
 // ParseFindingMarkers filters to bot-authored comments and extracts the
@@ -128,7 +154,7 @@ func FetchReviewStatus(repo string, prNumber int) (ReviewStatus, error) {
 	if repo != "" {
 		args = append(args, "--repo", repo)
 	}
-	out, err := exec.Command("gh", args...).Output()
+	out, err := runGhJSON(args...)
 	if err != nil {
 		return ReviewStatus{}, fmt.Errorf("gh pr view: %w", err)
 	}
