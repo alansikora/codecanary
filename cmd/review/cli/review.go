@@ -30,6 +30,9 @@ var reviewCmd = &cobra.Command{
 			if err != nil {
 				return fmt.Errorf("invalid PR number %q: %w", args[0], err)
 			}
+			if baseBranch != "" {
+				review.Stderrf(review.ColorYellow, "Warning: --base ignored in PR mode\n")
+			}
 			return review.Run(review.RunOptions{
 				Repo:       repo,
 				PRNumber:   prNumber,
@@ -53,6 +56,9 @@ var reviewCmd = &cobra.Command{
 		// Try auto-detecting PR from current branch.
 		if prNumber, err := review.DetectPRNumber(repo); err == nil {
 			review.Stderrf(review.ColorCyan, "Auto-detected PR #%d from current branch\n", prNumber)
+			if baseBranch != "" {
+				review.Stderrf(review.ColorYellow, "Warning: --base ignored in PR mode\n")
+			}
 			return review.Run(review.RunOptions{
 				Repo:       repo,
 				PRNumber:   prNumber,
