@@ -3,10 +3,10 @@ name: codecanary-loop
 description: |
   Drive a codecanary review → triage → fix → push feedback loop to convergence.
   Defaults to PR mode (watches the codecanary GitHub action, fetches findings,
-  applies approved fixes, commits, pushes, and re-watches). Pass `--local` to
-  run a local review against uncommitted changes instead, skipping all git
-  plumbing. Always confirms every finding with the user before applying —
-  never auto-applies.
+  applies approved fixes, commits, pushes, and re-watches). Falls back to
+  local mode automatically when no PR is detected, reviewing uncommitted
+  changes and skipping all git plumbing. Always confirms every finding with
+  the user before applying — never auto-applies.
 ---
 
 # codecanary-loop
@@ -31,8 +31,8 @@ is spent on triage judgment and fix application, not on watching CI.
 
 - **PR mode (default)**: fixes land as commits on the current branch and
   are pushed. Used when an open PR exists for the branch.
-- **Local mode** — invoked when the operator passes `--local` as an argument
-  to this skill: `codecanary review --output json` runs a review on the
+- **Local mode** — activated automatically when no PR is detected for the
+  current branch: `codecanary review --output json` runs a review on the
   current dirty working tree; fixes are applied but not committed or pushed.
 
 If you cannot tell which mode applies, ask the operator before starting.

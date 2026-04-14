@@ -22,12 +22,16 @@ var reviewCmd = &cobra.Command{
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		replyOnly, _ := cmd.Flags().GetBool("reply-only")
 		claudePath, _ := cmd.Flags().GetString("claude-path")
+		baseBranch, _ := cmd.Flags().GetString("base")
 
 		// Explicit PR number — GitHub mode.
 		if len(args) > 0 {
 			prNumber, err := strconv.Atoi(args[0])
 			if err != nil {
 				return fmt.Errorf("invalid PR number %q: %w", args[0], err)
+			}
+			if baseBranch != "" {
+				review.Stderrf(review.ColorYellow, "Warning: --base ignored in PR mode\n")
 			}
 			return review.Run(review.RunOptions{
 				Repo:       repo,
@@ -52,6 +56,9 @@ var reviewCmd = &cobra.Command{
 		// Try auto-detecting PR from current branch.
 		if prNumber, err := review.DetectPRNumber(repo); err == nil {
 			review.Stderrf(review.ColorCyan, "Auto-detected PR #%d from current branch\n", prNumber)
+			if baseBranch != "" {
+				review.Stderrf(review.ColorYellow, "Warning: --base ignored in PR mode\n")
+			}
 			return review.Run(review.RunOptions{
 				Repo:       repo,
 				PRNumber:   prNumber,
@@ -73,7 +80,7 @@ var reviewCmd = &cobra.Command{
 		}
 
 		// No PR — local mode.
-		pr, err := review.FetchLocalDiff()
+		pr, err := review.FetchLocalDiff(baseBranch)
 		if err != nil {
 			return fmt.Errorf("no PR found and local diff failed: %w", err)
 		}
@@ -112,6 +119,7 @@ func init() {
 	reviewCmd.Flags().StringP("config", "c", "", "Path to review config (auto-detected if empty)")
 	reviewCmd.Flags().Bool("reply-only", false, "Evaluate thread replies only, skip new findings")
 	reviewCmd.Flags().String("claude-path", "", "Path to the Claude CLI binary (overrides config claude_path)")
+	reviewCmd.Flags().StringP("base", "b", "", "Base branch for local review (auto-detected if empty)")
 	reviewCmd.PersistentFlags().Bool("dry-run", false, "Show prompt without running Claude")
 	rootCmd.AddCommand(reviewCmd)
 }
