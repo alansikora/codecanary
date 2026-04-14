@@ -101,12 +101,10 @@ func validateOpenAI(apiKey string) error {
 }
 
 func validateGrokKey(apiKey string) error {
-	body := `{"model":"grok-4-1-fast-non-reasoning","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}`
-	req, err := http.NewRequest("POST", "https://api.x.ai/v1/chat/completions", strings.NewReader(body))
+	req, err := http.NewRequest("GET", "https://api.x.ai/v1/models", nil)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 
 	resp, err := doValidationRequest(req)
@@ -115,6 +113,9 @@ func validateGrokKey(apiKey string) error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	if resp.StatusCode == 403 {
+		return fmt.Errorf("API key does not have permission (403 Forbidden)")
+	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 500 {
 		return nil
 	}
