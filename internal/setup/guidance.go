@@ -11,6 +11,8 @@ func ProviderGuidance(provider string) string {
 		return "Get your API key at console.anthropic.com"
 	case "openai":
 		return "Get your API key at platform.openai.com"
+	case "grok":
+		return "Get your API key at console.x.ai"
 	case "openrouter":
 		return "Get your API key at openrouter.ai"
 	case "claude":

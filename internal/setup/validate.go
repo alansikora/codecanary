@@ -16,6 +16,8 @@ func ValidateAPIKey(provider, apiKey string) error {
 		return validateAnthropic(apiKey)
 	case "openai":
 		return validateOpenAI(apiKey)
+	case "grok":
+		return validateGrokKey(apiKey)
 	case "openrouter":
 		return validateOpenRouter(apiKey)
 	case "claude":
@@ -96,6 +98,27 @@ func validateOpenAI(apiKey string) error {
 		return nil
 	}
 	return fmt.Errorf("unexpected status %d from OpenAI API", resp.StatusCode)
+}
+
+func validateGrokKey(apiKey string) error {
+	body := `{"model":"grok-4-1-fast-non-reasoning","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}`
+	req, err := http.NewRequest("POST", "https://api.x.ai/v1/chat/completions", strings.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := doValidationRequest(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 500 {
+		return nil
+	}
+	return fmt.Errorf("unexpected status %d from xAI API", resp.StatusCode)
 }
 
 func validateOpenRouter(apiKey string) error {
