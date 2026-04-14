@@ -42,6 +42,7 @@ func SelectProvider() (string, error) {
 				Options(
 					huh.NewOption("Anthropic", "anthropic"),
 					huh.NewOption("OpenAI", "openai"),
+					huh.NewOption("Grok (xAI)", "grok"),
 					huh.NewOption("OpenRouter", "openrouter"),
 					huh.NewOption("Claude CLI", "claude"),
 				).
@@ -446,6 +447,13 @@ func triageModelOptions(provider string) []huh.Option[string] {
 			huh.NewOption("gpt-5.4-mini", "gpt-5.4-mini"),
 			huh.NewOption("gpt-5.4", "gpt-5.4"),
 		}
+	case "grok":
+		return []huh.Option[string]{
+			huh.NewOption("grok-4-1-fast-non-reasoning", "grok-4-1-fast-non-reasoning"),
+			huh.NewOption("grok-4-1-fast-reasoning", "grok-4-1-fast-reasoning"),
+			huh.NewOption("grok-4.20-0309-non-reasoning", "grok-4.20-0309-non-reasoning"),
+			huh.NewOption("grok-4.20-0309-reasoning", "grok-4.20-0309-reasoning"),
+		}
 	case "openrouter":
 		return []huh.Option[string]{
 			huh.NewOption("anthropic/claude-haiku-4-5-20251001", "anthropic/claude-haiku-4-5-20251001"),
@@ -476,6 +484,13 @@ func modelOptions(provider string) []huh.Option[string] {
 		return []huh.Option[string]{
 			huh.NewOption("gpt-5.4", "gpt-5.4"),
 			huh.NewOption("gpt-5.4-mini", "gpt-5.4-mini"),
+		}
+	case "grok":
+		return []huh.Option[string]{
+			huh.NewOption("grok-4.20-0309-non-reasoning", "grok-4.20-0309-non-reasoning"),
+			huh.NewOption("grok-4.20-0309-reasoning", "grok-4.20-0309-reasoning"),
+			huh.NewOption("grok-4-1-fast-non-reasoning", "grok-4-1-fast-non-reasoning"),
+			huh.NewOption("grok-4-1-fast-reasoning", "grok-4-1-fast-reasoning"),
 		}
 	case "openrouter":
 		return []huh.Option[string]{

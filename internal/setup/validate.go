@@ -16,6 +16,8 @@ func ValidateAPIKey(provider, apiKey string) error {
 		return validateAnthropic(apiKey)
 	case "openai":
 		return validateOpenAI(apiKey)
+	case "grok":
+		return validateGrokKey(apiKey)
 	case "openrouter":
 		return validateOpenRouter(apiKey)
 	case "claude":
@@ -96,6 +98,28 @@ func validateOpenAI(apiKey string) error {
 		return nil
 	}
 	return fmt.Errorf("unexpected status %d from OpenAI API", resp.StatusCode)
+}
+
+func validateGrokKey(apiKey string) error {
+	req, err := http.NewRequest("GET", "https://api.x.ai/v1/models", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := doValidationRequest(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == 403 {
+		return fmt.Errorf("API key does not have permission (403 Forbidden)")
+	}
+	if resp.StatusCode >= 200 && resp.StatusCode < 500 {
+		return nil
+	}
+	return fmt.Errorf("unexpected status %d from xAI API", resp.StatusCode)
 }
 
 func validateOpenRouter(apiKey string) error {
