@@ -239,7 +239,7 @@ This writes the embedded skill to `~/.claude/skills/codecanary-loop/SKILL.md`, w
 Then in Claude Code, ask it to handle the codecanary review on your PR — the skill is auto-discovered and matched to your request via its frontmatter description. Two modes:
 
 - **PR mode** (default) — watches the GitHub Actions review check via `codecanary findings --watch`, renders a triage table, asks you to confirm which fixes to apply, commits and pushes, then loops on the next review.
-- **Local mode** — ask for a local pass (or mention `--local`). Single pass against your dirty working tree. Applies approved fixes without committing or pushing.
+- **Local mode** — triggered automatically when no PR is detected for the current branch. Single pass against your dirty working tree. Applies approved fixes without committing or pushing.
 
 The full skill contract lives at [internal/skills/codecanary-loop/SKILL.md](internal/skills/codecanary-loop/SKILL.md).
 

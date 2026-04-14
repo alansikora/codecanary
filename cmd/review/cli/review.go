@@ -22,6 +22,7 @@ var reviewCmd = &cobra.Command{
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		replyOnly, _ := cmd.Flags().GetBool("reply-only")
 		claudePath, _ := cmd.Flags().GetString("claude-path")
+		baseBranch, _ := cmd.Flags().GetString("base")
 
 		// Explicit PR number — GitHub mode.
 		if len(args) > 0 {
@@ -73,7 +74,7 @@ var reviewCmd = &cobra.Command{
 		}
 
 		// No PR — local mode.
-		pr, err := review.FetchLocalDiff()
+		pr, err := review.FetchLocalDiff(baseBranch)
 		if err != nil {
 			return fmt.Errorf("no PR found and local diff failed: %w", err)
 		}
@@ -112,6 +113,7 @@ func init() {
 	reviewCmd.Flags().StringP("config", "c", "", "Path to review config (auto-detected if empty)")
 	reviewCmd.Flags().Bool("reply-only", false, "Evaluate thread replies only, skip new findings")
 	reviewCmd.Flags().String("claude-path", "", "Path to the Claude CLI binary (overrides config claude_path)")
+	reviewCmd.Flags().StringP("base", "b", "", "Base branch for local review (auto-detected if empty)")
 	reviewCmd.PersistentFlags().Bool("dry-run", false, "Show prompt without running Claude")
 	rootCmd.AddCommand(reviewCmd)
 }
