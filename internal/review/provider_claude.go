@@ -1,6 +1,7 @@
 package review
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -132,6 +133,14 @@ func (p *claudeCLIProvider) Run(ctx context.Context, prompt string, opts RunOpts
 			return nil, fmt.Errorf("claude failed: %s\n%s", string(exitErr.Stderr), string(output))
 		}
 		return nil, fmt.Errorf("running claude: %w", err)
+	}
+
+	// The Claude CLI may print non-JSON status lines (e.g. status-line UI) to
+	// stdout before the JSON envelope. Strip any leading lines that don't start
+	// the JSON object so json.Unmarshal sees only the JSON payload.
+	jsonStart := bytes.IndexByte(output, '{')
+	if jsonStart > 0 {
+		output = output[jsonStart:]
 	}
 
 	var resp claudeJSONResponse
