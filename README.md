@@ -15,7 +15,7 @@ That's it. CodeCanary diffs your branch against main and reviews the changes loc
 ## Why CodeCanary?
 
 - **Fully automated** — runs as a GitHub Action on every push, or locally from the terminal.
-- **Multi-provider** — bring your own LLM: Anthropic, OpenAI, OpenRouter, or Claude CLI. No vendor lock-in.
+- **Multi-provider** — bring your own LLM: Anthropic, OpenAI, OpenRouter, Grok (xAI), or Claude CLI. No vendor lock-in.
 - **Incremental reviews** — on re-push, Go-driven triage classifies existing threads at zero LLM cost. Only changed code gets re-evaluated.
 - **Conversational** — when authors reply to a finding, CodeCanary re-evaluates in context. It distinguishes code fixes, dismissals, acknowledgments, and rebuttals.
 - **Native PR integration** — posts inline comments on exact diff lines, auto-resolves threads when code is fixed, and minimizes stale reviews.
@@ -164,6 +164,14 @@ review_model: anthropic/claude-sonnet-4-6
 triage_model: anthropic/claude-haiku-4-5-20251001
 ```
 
+**Grok (xAI)**:
+```yaml
+version: 1
+provider: grok
+review_model: grok-4.20-0309-non-reasoning
+triage_model: grok-4-1-fast-non-reasoning
+```
+
 **Claude CLI** (uses your logged-in `claude` session, no API key needed):
 ```yaml
 version: 1
@@ -191,6 +199,7 @@ Keys are stored in your system keychain (macOS Keychain, GNOME Keyring, KDE Wall
 | Anthropic | API key | [console.anthropic.com](https://console.anthropic.com) |
 | OpenAI | API key | [platform.openai.com](https://platform.openai.com) |
 | OpenRouter | API key | [openrouter.ai](https://openrouter.ai) |
+| Grok (xAI) | API key | [console.x.ai](https://console.x.ai) |
 | Claude CLI | Logged-in `claude` binary | Run `claude` and complete the login flow |
 
 ## How It Works
