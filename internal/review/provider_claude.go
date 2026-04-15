@@ -136,16 +136,18 @@ func (p *claudeCLIProvider) Run(ctx context.Context, prompt string, opts RunOpts
 	}
 
 	// The Claude CLI may print non-JSON status lines (e.g. status-line UI) to
-	// stdout before the JSON envelope. Strip any leading lines that don't start
-	// the JSON object so json.Unmarshal sees only the JSON payload.
-	jsonStart := bytes.IndexByte(output, '{')
-	if jsonStart > 0 {
-		output = output[jsonStart:]
+	// stdout before or after the JSON envelope. Seek to the first '{' to skip
+	// any leading noise, then use a json.Decoder which stops after the first
+	// complete value — tolerating any trailing noise as well.
+	// Preserve the original output for the plain-text fallback.
+	jsonOutput := output
+	if i := bytes.IndexByte(output, '{'); i > 0 {
+		jsonOutput = output[i:]
 	}
 
 	var resp claudeJSONResponse
-	if err := json.Unmarshal(output, &resp); err != nil {
-		// Fallback: treat entire output as plain text (e.g. older CLI version).
+	if err := json.NewDecoder(bytes.NewReader(jsonOutput)).Decode(&resp); err != nil {
+		// Fallback: treat entire original output as plain text (e.g. older CLI version).
 		return &providerResult{Text: string(output)}, nil
 	}
 
