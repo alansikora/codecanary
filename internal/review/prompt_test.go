@@ -111,7 +111,7 @@ func TestFilterRulesForFiles_PathsAndExcludePaths_AllMatchExcluded(t *testing.T)
 func TestFilterRulesForFiles_EmptyFiles_ReturnsAll(t *testing.T) {
 	rules := []Rule{
 		{ID: "rule-a", Paths: []string{"internal/**"}, Severity: "warning"},
-		{ID: "rule-b", ExcludePaths: []string{"**_test.go"}, Severity: "bug"},
+		{ID: "rule-b", ExcludePaths: []string{"**/*_test.go"}, Severity: "bug"},
 		{ID: "rule-c", Severity: "nitpick"},
 	}
 	got := filterRulesForFiles(rules, []string{})
