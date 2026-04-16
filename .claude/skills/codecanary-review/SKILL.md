@@ -1,25 +1,33 @@
 ---
-name: codecanary-loop
+name: codecanary-review
 description: |
   Drive a codecanary review → triage → fix → push feedback loop to convergence.
-  Defaults to PR mode (watches the codecanary GitHub action, fetches findings,
-  applies approved fixes, commits, pushes, and re-watches). Falls back to
-  local mode automatically when no PR is detected, reviewing uncommitted
-  changes and skipping all git plumbing. Always confirms every finding with
-  the user before applying — never auto-applies.
+  Use this whenever the operator says "handle codecanary", "handle codecanary
+  reviews", or invokes /codecanary-review. Defaults to PR mode (watches the
+  codecanary GitHub action, fetches findings, applies approved fixes, commits,
+  pushes, and re-watches). Falls back to local mode automatically when no PR
+  is detected, reviewing uncommitted changes and skipping all git plumbing.
+  Always confirms every finding with the user before applying — never
+  auto-applies. Every skipped finding gets a reply posted on its review
+  thread explaining the rationale.
 ---
 
-# codecanary-loop
+# codecanary-review
 
 You are driving the CodeCanary review-fix loop. The operator runs this skill
 when they want you to iterate against CodeCanary's findings until the review
 is clean. Stay disciplined: you are the glue between the CLI and the
 operator's decisions, not the reviewer.
 
+Trigger phrases: pick this skill up automatically when the operator says
+"handle codecanary", "handle codecanary reviews", "run codecanary", or
+invokes it explicitly as /codecanary-review.
+
 ## Heavy lifting lives in the CLI
 
 All polling, fetching, parsing, and PR/repo autodetection happens in
-`codecanary findings` and `codecanary review`. You never shell out to `gh`
+`codecanary findings` and `codecanary review`. Posting replies on review
+threads happens via `codecanary reply`. You never shell out to `gh`
 directly from this skill. You never parse HTML comment markers. You never
 poll for CI status. The CLI emits structured JSON; you consume it.
 
@@ -96,17 +104,42 @@ Track one piece of state across iterations:
    - If the suggestion in the finding is an exact code snippet and fits
      the context, prefer it verbatim; otherwise adapt it to the codebase
      conventions (existing imports, types, error-handling style).
-9. Finalize the cycle:
-   - **PR mode**:
-     - Run `go build ./...` and `go test ./...` if any Go files changed.
-     - Commit with a message like:
-       `fix: address codecanary review on #<PR> (cycle <N>)`
-       plus a brief bullet list of which findings were addressed.
-     - Push the branch.
-     - Go back to step 1.
-   - **Local mode**: stop. Report the summary of applied fixes to the
-     operator. Do not commit, do not push, do not loop — a single pass
-     is the contract for local mode.
+9. **Post replies on every skipped finding** (PR mode only — local mode
+   has no thread to reply to). A skipped finding is any finding not
+   applied this cycle — that covers both "Skip this cycle" (all
+   skipped) and "Apply some" (the unselected ones). For each skipped
+   finding, run:
+
+   ```sh
+   codecanary reply --url "<comment_url>" --body "<rationale>"
+   ```
+
+   where `<comment_url>` is the finding's `comment_url` field from the
+   findings JSON, and `<rationale>` is a concise 1–2 sentence summary
+   of *why* you're deferring this finding (your own analysis, not
+   just "operator skipped"). Examples:
+   - "Deferring: the bot's suggested rename conflicts with the public
+     API exported in `pkg/foo`. Revisit after the v2 cutover."
+   - "Skipping: the flagged line is dead code slated for removal in
+     the next PR (#154)."
+   - "Skipping: dot notation in the README is deliberate — matches
+     upstream xAI naming. Fix is to update the bot's context, not
+     the README."
+
+   Post one reply per skipped finding, sequentially. If a reply fails
+   (e.g. thread already resolved), surface the error to the operator
+   and continue with the remaining skips.
+10. Finalize the cycle:
+    - **PR mode**:
+      - Run `go build ./...` and `go test ./...` if any Go files changed.
+      - Commit with a message like:
+        `fix: address codecanary review on #<PR> (cycle <N>)`
+        plus a brief bullet list of which findings were addressed.
+      - Push the branch.
+      - Go back to step 1.
+    - **Local mode**: stop. Report the summary of applied fixes to the
+      operator. Do not commit, do not push, do not loop — a single pass
+      is the contract for local mode.
 
 ## Stopping conditions
 
@@ -116,7 +149,8 @@ Exit the loop (and tell the operator *why*) whenever any of these hold:
   healthy (`success` or `neutral`) — normal success.
 - **Local mode**: the findings list comes back empty — normal success.
   (There is no `conclusion` field in local mode; its absence is expected.)
-- The operator chose "Skip this cycle" or "Abort".
+- The operator chose "Skip this cycle" or "Abort". (In "Skip this cycle"
+  mode, still post the skip replies from step 9 before exiting.)
 - The CLI errors out (network failure, no PR detected, timeout on
   `--watch`). Surface the error verbatim and stop.
 - You detect you're in a stable disagreement loop: the same `fix_ref`
@@ -129,9 +163,14 @@ Exit the loop (and tell the operator *why*) whenever any of these hold:
 
 - Don't iterate without operator confirmation.
 - Don't auto-apply nitpicks or "obvious" fixes.
+- Don't skip a finding silently — every skip gets a `codecanary reply`
+  with the rationale (step 9). The only exception is local mode, which
+  has no review thread to reply to.
 - Don't write your own logic to parse `<!-- codecanary:finding ... -->`
   markers — the CLI already returns structured Findings.
-- Don't `gh api` or `gh pr view` yourself — the CLI handles that.
+- Don't `gh api` or `gh pr view` yourself — the CLI handles that
+  (`codecanary findings` for reads, `codecanary reply` for thread
+  replies).
 - Don't attempt concurrent PR work. One branch at a time.
 - Don't commit to `main` or an unrelated branch; always stay on the PR's
   feature branch.
@@ -140,9 +179,10 @@ Exit the loop (and tell the operator *why*) whenever any of these hold:
 ## Example operator turn
 
 ```
-user: Run codecanary-loop on this PR
+user: handle codecanary on this PR
 
-assistant: (invokes `codecanary findings --watch --output json`,
+A: (invokes `codecanary findings --watch --output json`,
             parses JSON, renders triage table, asks for confirmation,
-            applies approved fixes, commits, pushes, loops)
+            applies approved fixes, runs `codecanary reply` on each
+            skipped finding with a rationale, commits, pushes, loops)
 ```

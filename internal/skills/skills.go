@@ -6,12 +6,12 @@
 //
 // Source-of-truth layout:
 //
-//	internal/skills/codecanary-loop/SKILL.md   ← canonical (embedded)
-//	.claude/skills/codecanary-loop/SKILL.md    ← identical copy, for
-//	                                             project-local Claude
-//	                                             Code discovery when
-//	                                             the repo itself is the
-//	                                             working directory.
+//	internal/skills/codecanary-review/SKILL.md   ← canonical (embedded)
+//	.claude/skills/codecanary-review/SKILL.md    ← identical copy, for
+//	                                               project-local Claude
+//	                                               Code discovery when
+//	                                               the repo itself is the
+//	                                               working directory.
 //
 // Go's //go:embed can't use ".." in patterns, so it cannot reach up to
 // the repo-level .claude/skills/ directory. The duplicate is kept in
@@ -22,9 +22,9 @@ package skills
 
 import _ "embed"
 
-//go:embed codecanary-loop/SKILL.md
-var codecanaryLoopSkill string
+//go:embed codecanary-review/SKILL.md
+var codecanaryReviewSkill string
 
-// CodecanaryLoop returns the body of the codecanary-loop SKILL.md file
+// CodecanaryReview returns the body of the codecanary:review SKILL.md file
 // embedded at build time.
-func CodecanaryLoop() string { return codecanaryLoopSkill }
+func CodecanaryReview() string { return codecanaryReviewSkill }

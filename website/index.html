@@ -693,7 +693,7 @@
         <div class="feature-card">
           <span class="feature-icon">&#129302;</span>
           <h3>Agentic review loop</h3>
-          <p>Pairs with Claude Code via the bundled <code>codecanary-loop</code> skill. Reviews, triages, fixes, and pushes — confirming every change with you before it lands.</p>
+          <p>Pairs with Claude Code via the bundled <code>codecanary-review</code> skill. Reviews, triages, fixes, and pushes — confirming every change with you before it lands.</p>
         </div>
       </div>
     </div>
@@ -766,23 +766,23 @@
     <div class="container">
       <div class="loop-heading">
         <h2>Close the loop with Claude Code</h2>
-        <p>The bundled <code>codecanary-loop</code> skill drives review &rarr; triage &rarr; fix &rarr; push until your PR is clean &mdash; with you in the loop on every change.</p>
+        <p>The bundled <code>codecanary-review</code> skill drives review &rarr; triage &rarr; fix &rarr; push until your PR is clean &mdash; with you in the loop on every change.</p>
       </div>
       <div class="loop-block">
         <div class="loop-bar">install once</div>
         <div class="loop-body">
           <div><span class="prompt">$</span> <span class="cmd">codecanary install-skill</span></div>
-          <div><span class="comment">&nbsp;&nbsp;&#10003; installed codecanary-loop skill to ~/.claude/skills/codecanary-loop/SKILL.md</span></div>
+          <div><span class="comment">&nbsp;&nbsp;&#10003; installed codecanary-review skill to ~/.claude/skills/codecanary-review/SKILL.md</span></div>
         </div>
       </div>
       <ol class="loop-steps">
-        <li>In Claude Code, ask it to handle the codecanary review on your PR &mdash; the skill is auto-discovered and matched to your request.</li>
+        <li>In Claude Code, say <em>&ldquo;handle codecanary&rdquo;</em> on your PR (or invoke <code>/codecanary-review</code> directly) &mdash; the skill is auto-discovered and matched to your request.</li>
         <li>The skill calls <code>codecanary findings --watch</code>, blocks until the GitHub Actions review check completes, and parses the structured findings.</li>
         <li>You see a triage table and confirm which fixes to apply &mdash; nothing auto-applies.</li>
-        <li>Approved fixes are committed and pushed; the loop watches the next review and repeats until clean.</li>
+        <li>Approved fixes are committed and pushed; the loop watches the next review and repeats until clean. Any finding you defer gets a reply posted on its review thread explaining why.</li>
         <li>Ask for a local pass to skip git plumbing &mdash; the skill runs a single review against your dirty working tree and applies approved fixes without committing or pushing.</li>
       </ol>
-      <a class="loop-link" href="https://github.com/alansikora/codecanary/blob/main/internal/skills/codecanary-loop/SKILL.md" target="_blank" rel="noopener">Read the full skill contract &rarr;</a>
+      <a class="loop-link" href="https://github.com/alansikora/codecanary/blob/main/internal/skills/codecanary-review/SKILL.md" target="_blank" rel="noopener">Read the full skill contract &rarr;</a>
     </div>
   </section>
 
