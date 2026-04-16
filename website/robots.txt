@@ -1,4 +1,5 @@
 User-agent: *
 Allow: /
+Disallow: /install
 
 Sitemap: https://codecanary.sh/sitemap.xml
