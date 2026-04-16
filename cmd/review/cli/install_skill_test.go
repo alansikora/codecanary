@@ -8,7 +8,7 @@ import (
 
 // TestRemoveLegacyLoopSkill exercises the migration cleanup that runs on
 // every default `install-skill` — users who installed before the
-// codecanary-loop → codecanary-review rename would otherwise end up with
+// codecanary-loop → codecanary-fix rename would otherwise end up with
 // both skills registered in Claude Code. The real function consults
 // os.UserHomeDir(); we point HOME at t.TempDir() so the cleanup acts on
 // a sandbox instead of the developer's actual ~/.claude/skills/.

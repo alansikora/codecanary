@@ -11,12 +11,12 @@ import (
 
 var installSkillCmd = &cobra.Command{
 	Use:   "install-skill",
-	Short: "Install the codecanary-review Claude Code skill onto your machine",
-	Long: `Writes the embedded codecanary-review skill to disk so Claude Code can
+	Short: "Install the codecanary-fix Claude Code skill onto your machine",
+	Long: `Writes the embedded codecanary-fix skill to disk so Claude Code can
 discover and invoke it. The skill drives a review → triage → fix → push
 feedback loop against a PR and converges to zero findings.
 
-Default destination is ~/.claude/skills/codecanary-review/SKILL.md, which
+Default destination is ~/.claude/skills/codecanary-fix/SKILL.md, which
 makes the skill available in every Claude Code session regardless of
 working directory. Use --dest for a custom path (e.g. project-local),
 --print to dump the content to stdout without writing, or --force to
@@ -43,7 +43,7 @@ command after upgrading codecanary to pick up any updates.`,
 			return fmt.Errorf("flag --force: %w", err)
 		}
 
-		content := skills.CodecanaryReview()
+		content := skills.CodecanaryFix()
 
 		if printOnly {
 			_, err := fmt.Print(content)
@@ -62,7 +62,7 @@ command after upgrading codecanary to pick up any updates.`,
 			if err != nil {
 				return fmt.Errorf("locating home directory: %w", err)
 			}
-			dest = filepath.Join(home, ".claude", "skills", "codecanary-review", "SKILL.md")
+			dest = filepath.Join(home, ".claude", "skills", "codecanary-fix", "SKILL.md")
 		}
 
 		// Distinguish "file exists" from other Stat errors (e.g.
@@ -85,7 +85,7 @@ command after upgrading codecanary to pick up any updates.`,
 			return fmt.Errorf("writing skill file: %w", err)
 		}
 
-		fmt.Fprintf(os.Stderr, "✓ installed codecanary-review skill to %s\n", dest)
+		fmt.Fprintf(os.Stderr, "✓ installed codecanary-fix skill to %s\n", dest)
 
 		if usingDefaultDest {
 			removeLegacyLoopSkill()
@@ -136,7 +136,7 @@ func removeLegacyLoopSkill() {
 
 func init() {
 	installSkillCmd.Flags().String("dest", "",
-		"Destination file path (default: ~/.claude/skills/codecanary-review/SKILL.md)")
+		"Destination file path (default: ~/.claude/skills/codecanary-fix/SKILL.md)")
 	installSkillCmd.Flags().Bool("print", false,
 		"Print the skill content to stdout instead of writing to disk")
 	installSkillCmd.Flags().Bool("force", false,

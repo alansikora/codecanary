@@ -13,7 +13,7 @@ import (
 )
 
 // replyCmd posts a reply on an existing PR review-comment thread. The
-// codecanary-review skill uses this to record a rationale on every finding
+// codecanary-fix skill uses this to record a rationale on every finding
 // it skips, so the deferral shows up inline on the PR alongside the
 // original bot comment instead of vanishing silently.
 //
@@ -24,7 +24,7 @@ var replyCmd = &cobra.Command{
 	Use:   "reply",
 	Short: "Post a reply on a codecanary review comment thread",
 	Long: `Post a reply on an existing review comment thread. Used by the
-codecanary-review skill to record why a finding was skipped — the skill
+codecanary-fix skill to record why a finding was skipped — the skill
 passes the comment_url straight from the findings JSON, which is all the
 context needed to address the right thread.
 

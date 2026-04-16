@@ -6,8 +6,8 @@
 //
 // Source-of-truth layout:
 //
-//	internal/skills/codecanary-review/SKILL.md   ← canonical (embedded)
-//	.claude/skills/codecanary-review/SKILL.md    ← identical copy, for
+//	internal/skills/codecanary-fix/SKILL.md   ← canonical (embedded)
+//	.claude/skills/codecanary-fix/SKILL.md    ← identical copy, for
 //	                                               project-local Claude
 //	                                               Code discovery when
 //	                                               the repo itself is the
@@ -22,9 +22,9 @@ package skills
 
 import _ "embed"
 
-//go:embed codecanary-review/SKILL.md
-var codecanaryReviewSkill string
+//go:embed codecanary-fix/SKILL.md
+var codecanaryFixSkill string
 
-// CodecanaryReview returns the body of the codecanary:review SKILL.md file
+// CodecanaryFix returns the body of the codecanary:review SKILL.md file
 // embedded at build time.
-func CodecanaryReview() string { return codecanaryReviewSkill }
+func CodecanaryFix() string { return codecanaryFixSkill }

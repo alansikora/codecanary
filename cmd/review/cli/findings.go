@@ -13,7 +13,7 @@ import (
 )
 
 // findingsOutput is the JSON envelope emitted by `codecanary findings --output json`.
-// Keeps the shape stable across CLI versions so the codecanary-review skill
+// Keeps the shape stable across CLI versions so the codecanary-fix skill
 // (and any other automation) can rely on it.
 type findingsOutput struct {
 	PR           int                `json:"pr"`
@@ -33,7 +33,7 @@ completes before returning.
 
 PR number is auto-detected from the current branch when omitted. Output
 defaults to a human-readable markdown table; use --output json for
-machine consumption (e.g. the codecanary-review Claude skill).`,
+machine consumption (e.g. the codecanary-fix Claude skill).`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		repoFlagSet := cmd.Flags().Changed("repo")

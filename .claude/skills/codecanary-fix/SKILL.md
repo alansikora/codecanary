@@ -1,9 +1,9 @@
 ---
-name: codecanary-review
+name: codecanary-fix
 description: |
   Drive a codecanary review → triage → fix → push feedback loop to convergence.
   Use this whenever the operator says "handle codecanary", "handle codecanary
-  reviews", or invokes /codecanary-review. Defaults to PR mode (watches the
+  reviews", or invokes /codecanary-fix. Defaults to PR mode (watches the
   codecanary GitHub action, fetches findings, applies approved fixes, commits,
   pushes, and re-watches). Falls back to local mode automatically when no PR
   is detected, reviewing uncommitted changes and skipping all git plumbing.
@@ -12,7 +12,7 @@ description: |
   thread explaining the rationale.
 ---
 
-# codecanary-review
+# codecanary-fix
 
 You are driving the CodeCanary review-fix loop. The operator runs this skill
 when they want you to iterate against CodeCanary's findings until the review
@@ -21,7 +21,7 @@ operator's decisions, not the reviewer.
 
 Trigger phrases: pick this skill up automatically when the operator says
 "handle codecanary", "handle codecanary reviews", "run codecanary", or
-invokes it explicitly as /codecanary-review.
+invokes it explicitly as /codecanary-fix.
 
 ## Heavy lifting lives in the CLI
 

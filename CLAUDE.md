@@ -46,8 +46,8 @@ internal/
   credentials/     # Credential storage (keychain with file fallback)
     keyring.go     # Store/Retrieve/Delete — keychain first, ~/.codecanary/credentials.json fallback
   skills/          # Claude Code skills embedded in the binary via //go:embed
-    skills.go      # Exports CodecanaryReview() returning the skill body
-    codecanary-review/SKILL.md  # Canonical skill source (duplicated at .claude/skills/codecanary-review/SKILL.md; parity enforced by skills_test.go)
+    skills.go      # Exports CodecanaryFix() returning the skill body
+    codecanary-fix/SKILL.md  # Canonical skill source (duplicated at .claude/skills/codecanary-fix/SKILL.md; parity enforced by skills_test.go)
   setup/           # Setup wizard logic (huh forms)
     forms.go       # Shared huh form components
     validate.go    # API key validation via test calls
@@ -65,7 +65,7 @@ action.yml         # GitHub Action definition (composite action)
 install.sh         # Downloads and installs codecanary binary permanently
 .claude/
   skills/
-    codecanary-review/ # Claude Code skill — drives review→fix→push loop using `codecanary findings` + `codecanary reply`
+    codecanary-fix/ # Claude Code skill — drives review→fix→push loop using `codecanary findings` + `codecanary reply`
 ```
 
 ## Binary
@@ -156,6 +156,6 @@ There is a **single `Run()` function** — not separate paths for GitHub vs. loc
 - **Canonical provider registration points.** Provider names live in the factory map in `provider.go`. All providers use `CODECANARY_PROVIDER_SECRET` for credentials (defined in `internal/credentials/keyring.go`). When adding a new provider, register a `ProviderFactory` in `provider.go` and add config validation in `config.go`.
 - **Minimize shell code.** `install.sh` and the GitHub Action (`action.yml`) should be kept as thin as possible. All logic must live in Go.
 - **Workflow template is embedded.** `internal/setup/codecanary.yml` is the single source of truth for the GitHub Actions workflow, embedded via `//go:embed`. `.github/workflows/codecanary.yml` must be identical — `go test ./internal/setup/` enforces this. When changing the workflow, edit either file and copy to the other.
-- **Claude skills are embedded.** `internal/skills/codecanary-review/SKILL.md` is the single source of truth for the codecanary-review skill, embedded via `//go:embed` and materialized by `codecanary install-skill`. `.claude/skills/codecanary-review/SKILL.md` must be identical so Claude Code's project-mode discovery finds it when working in this repo — `go test ./internal/skills/` enforces this. When changing the skill, edit either file and copy to the other.
+- **Claude skills are embedded.** `internal/skills/codecanary-fix/SKILL.md` is the single source of truth for the codecanary-fix skill, embedded via `//go:embed` and materialized by `codecanary install-skill`. `.claude/skills/codecanary-fix/SKILL.md` must be identical so Claude Code's project-mode discovery finds it when working in this repo — `go test ./internal/skills/` enforces this. When changing the skill, edit either file and copy to the other.
 - **Keep `docs/review-flow.md` in sync.** This document describes the full review pipeline — every step, the triage flow, platform differences, and key design decisions. When changing `runner.go`, `triage.go`, `prompt.go`, `findings.go`, `github.go`, `local.go`, `platform.go`, or the `ReviewPlatform` implementations, update the doc to reflect the new behavior.
 - Tests exist for config, findings, formatting, and triage. Be careful with refactors — run `go test ./...` and `go vet ./...`.

@@ -22,7 +22,7 @@ That's it. CodeCanary diffs your branch against main and reviews the changes loc
 - **Anti-hallucination** — explicit file allowlists, line validation against the diff, and distance thresholds prevent fabricated findings.
 - **Cost-efficient** — uses a fast triage model for thread re-evaluation and a full model for review. Tracks per-invocation usage so you see what you spend.
 - **Configuration-as-code** — project-specific rules, severity levels, ignore patterns, and context in `.codecanary/config.yml`.
-- **Agentic loop** — pairs with Claude Code via the bundled `codecanary-review` skill to review, triage, fix, and push until the PR is clean.
+- **Agentic loop** — pairs with Claude Code via the bundled `codecanary-fix` skill to review, triage, fix, and push until the PR is clean.
 
 ## Installation
 
@@ -86,7 +86,7 @@ Once merged, CodeCanary reviews every PR on open and push. Draft PRs are skipped
 | `codecanary review [pr-number]` | Review a PR or local diff |
 | `codecanary findings [pr-number]` | Fetch bot findings for a PR (markdown or JSON) |
 | `codecanary reply --url <URL> --body <text>` | Post a reply on a review-comment thread (used by the skill when skipping) |
-| `codecanary install-skill` | Install the `codecanary-review` Claude Code skill |
+| `codecanary install-skill` | Install the `codecanary-fix` Claude Code skill |
 | `codecanary setup [local\|github]` | Interactive setup wizard |
 | `codecanary auth status` | Show stored credential info |
 | `codecanary auth delete` | Remove a stored API key |
@@ -229,7 +229,7 @@ Keys are stored in your system keychain (macOS Keychain, GNOME Keyring, KDE Wall
 
 ## Agentic review loop
 
-CodeCanary ships with a [Claude Code](https://docs.claude.com/en/docs/claude-code) skill, `codecanary-review`, that drives a review → triage → fix → push cycle until the PR is clean. You stay in the loop — every fix is confirmed before it's applied — but the polling, fetching, and CI watching is handled by the CLI.
+CodeCanary ships with a [Claude Code](https://docs.claude.com/en/docs/claude-code) skill, `codecanary-fix`, that drives a review → triage → fix → push cycle until the PR is clean. You stay in the loop — every fix is confirmed before it's applied — but the polling, fetching, and CI watching is handled by the CLI.
 
 Install the skill once:
 
@@ -237,14 +237,14 @@ Install the skill once:
 codecanary install-skill
 ```
 
-This writes the embedded skill to `~/.claude/skills/codecanary-review/SKILL.md`, where Claude Code discovers it in every session. Re-run the command after `codecanary upgrade` to pick up new versions.
+This writes the embedded skill to `~/.claude/skills/codecanary-fix/SKILL.md`, where Claude Code discovers it in every session. Re-run the command after `codecanary upgrade` to pick up new versions.
 
-Then in Claude Code, ask it to `handle codecanary` on your PR (or invoke `/codecanary-review` directly) — the skill is auto-discovered and matched to your request via its frontmatter description. Two modes:
+Then in Claude Code, ask it to `handle codecanary` on your PR (or invoke `/codecanary-fix` directly) — the skill is auto-discovered and matched to your request via its frontmatter description. Two modes:
 
 - **PR mode** (default) — watches the GitHub Actions review check via `codecanary findings --watch`, renders a triage table, asks you to confirm which fixes to apply, commits and pushes, then loops on the next review. Every finding you defer gets a reply posted on its review thread explaining why, via `codecanary reply`.
 - **Local mode** — triggered automatically when no PR is detected for the current branch. Single pass against your dirty working tree. Applies approved fixes without committing or pushing.
 
-The full skill contract lives at [internal/skills/codecanary-review/SKILL.md](internal/skills/codecanary-review/SKILL.md).
+The full skill contract lives at [internal/skills/codecanary-fix/SKILL.md](internal/skills/codecanary-fix/SKILL.md).
 
 ## Contributing
 
