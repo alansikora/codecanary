@@ -5,7 +5,66 @@ import (
 	"maps"
 	"slices"
 	"strings"
+
+	"github.com/bmatcuk/doublestar/v4"
 )
+
+// filterRulesForFiles returns only the rules that apply to the given file list.
+// A rule applies when:
+//   - It has no Paths and no ExcludePaths (always applies).
+//   - It has Paths: at least one file matches at least one Paths pattern AND is
+//     not excluded by all ExcludePaths patterns (i.e. at least one matching file
+//     survives exclusion).
+//   - It has only ExcludePaths (no Paths): at least one file is NOT matched by
+//     any ExcludePaths pattern.
+//
+// When files is empty, all rules are returned (no file list to filter against).
+// Match errors from doublestar.Match are treated as no match.
+func filterRulesForFiles(rules []Rule, files []string) []Rule {
+	if len(files) == 0 {
+		return rules
+	}
+
+	out := make([]Rule, 0, len(rules))
+	for _, r := range rules {
+		if len(r.Paths) == 0 && len(r.ExcludePaths) == 0 {
+			out = append(out, r)
+			continue
+		}
+
+		if len(r.Paths) == 0 {
+			// Only ExcludePaths: include if at least one file is not excluded.
+			for _, f := range files {
+				if !matchesAny(f, r.ExcludePaths) {
+					out = append(out, r)
+					break
+				}
+			}
+			continue
+		}
+
+		// Has Paths (and possibly ExcludePaths): include if at least one file
+		// matches Paths and is not excluded.
+		for _, f := range files {
+			if matchesAny(f, r.Paths) && !matchesAny(f, r.ExcludePaths) {
+				out = append(out, r)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// matchesAny reports whether file matches any of the given glob patterns.
+// Errors from doublestar.Match are treated as no match.
+func matchesAny(file string, patterns []string) bool {
+	for _, pat := range patterns {
+		if matched, _ := doublestar.Match(pat, file); matched {
+			return true
+		}
+	}
+	return false
+}
 
 // escapePromptTag neutralises any XML-like tag matching tagName in content,
 // preventing adversarial repos from injecting fake prompt sections.
@@ -76,12 +135,17 @@ func BuildPrompt(pr *PRData, cfg *ReviewConfig, startIndex int, projectDocs map[
 
 	// Review rules.
 	if cfg != nil && len(cfg.Rules) > 0 {
-		b.WriteString("## Review Rules\n")
-		b.WriteString("Apply the following rules when reviewing:\n\n")
-		for _, rule := range cfg.Rules {
-			fmt.Fprintf(&b, "- **%s** (severity: %s): %s\n", rule.ID, rule.Severity, rule.Description)
+		rules := filterRulesForFiles(cfg.Rules, pr.Files)
+		if len(rules) > 0 {
+			b.WriteString("## Review Rules\n")
+			b.WriteString("Apply the following rules when reviewing:\n\n")
+			for _, rule := range rules {
+				fmt.Fprintf(&b, "- **%s** (severity: %s): %s\n", rule.ID, rule.Severity, rule.Description)
+			}
+			b.WriteString("\n")
+		} else {
+			b.WriteString("## Review Rules\nNo specific rules are defined. Perform a general code review covering correctness, security, performance, and maintainability.\n\n")
 		}
-		b.WriteString("\n")
 	} else {
 		b.WriteString("## Review Rules\nNo specific rules are defined. Perform a general code review covering correctness, security, performance, and maintainability.\n\n")
 	}
@@ -154,49 +218,6 @@ type ResolvedContext struct {
 	Reason string // "code_change", "dismissed", "acknowledged", "rebutted"
 }
 
-// Deprecated: BuildReevaluatePrompt is replaced by per-thread evaluation in triage.go.
-// Kept temporarily for reference; will be removed in a future release.
-func BuildReevaluatePrompt(threads []ReviewThread, incrementalDiff string) string {
-	var b strings.Builder
-
-	b.WriteString("You are a code reviewer. You previously left findings on a pull request. The author has pushed new changes.\n\n")
-	b.WriteString("## Previous Findings\n")
-	b.WriteString("Here are the unresolved findings from previous reviews:\n\n")
-
-	for i, t := range threads {
-		fmt.Fprintf(&b, "- **thread-%d** at `%s:%d`\n", i, t.Path, t.Line)
-		// Extract the first line of the body as the severity+rule summary.
-		firstLine := t.Body
-		if idx := strings.Index(t.Body, "\n"); idx >= 0 {
-			firstLine = t.Body[:idx]
-		}
-		fmt.Fprintf(&b, "  %s\n", firstLine)
-		for _, r := range t.Replies {
-			normalizedBody := strings.ReplaceAll(r.Body, "\n", " ")
-			fmt.Fprintf(&b, "  > **@%s** replied: %s\n", r.Author, normalizedBody)
-		}
-	}
-
-	b.WriteString("\n## Changes Since Last Review\n")
-	writeFencedBlock(&b, "diff", incrementalDiff)
-	b.WriteString("\n")
-
-	b.WriteString("## Task\n")
-	b.WriteString("Determine which of the previous findings should be resolved.\n\n")
-	b.WriteString("A finding should be resolved if ANY of the following apply:\n")
-	b.WriteString("1. **Fixed by code changes** — the new diff addresses the issue.\n")
-	b.WriteString("2. **Dismissed by the author** — a human reply explicitly asks the reviewer to dismiss, ignore, or skip the finding (e.g. \"dismiss this\", \"you can safely dismiss\", \"please ignore\", \"skip this one\"). The author is exercising their authority to close the thread.\n")
-	b.WriteString("3. **Acknowledged by the author** — a human reply indicates the finding is intentional, accepted as-is, or will be addressed separately (e.g. \"that's fine\", \"intentional\", \"will fix in a future PR\", \"tracked in issue #N\").\n")
-	b.WriteString("4. **Rebutted by the author** — a human reply provides a concrete technical explanation showing the finding is not applicable, the concern is mitigated, or the tradeoff is justified in this context (e.g. the behaviour cannot occur due to framework semantics, the impact is negligible because of how the system is configured, or a project convention makes the approach intentional). A vague disagreement like \"I don't think so\" does NOT qualify — the reply must cite specific technical details, framework behaviour, or project constraints.\n\n")
-	b.WriteString("A reply that merely asks a question or expresses disagreement without substantive technical reasoning should NOT count.\n\n")
-	b.WriteString("Return a JSON array of objects for findings that should be resolved inside a ```json code fence.\n")
-	b.WriteString("Each object must have `thread` (the thread ID) and `reason` (one of `code_change`, `dismissed`, `acknowledged`, or `rebutted`).\n")
-	b.WriteString("If none should be resolved, return an empty array: `[]`.\n\n")
-	b.WriteString("Example:\n```json\n[{\"thread\": \"thread-0\", \"reason\": \"code_change\"}, {\"thread\": \"thread-1\", \"reason\": \"dismissed\"}, {\"thread\": \"thread-2\", \"reason\": \"rebutted\"}]\n```\n")
-
-	return b.String()
-}
-
 // BuildIncrementalPrompt reviews only new code, avoiding duplicate reports.
 // startIndex is the number of existing findings so fix_ref numbering continues.
 // resolved provides context about recently resolved findings to prevent ping-ponging.
@@ -227,12 +248,17 @@ func BuildIncrementalPrompt(diff string, cfg *ReviewConfig, knownIssues []Review
 
 	// Review rules.
 	if cfg != nil && len(cfg.Rules) > 0 {
-		b.WriteString("## Review Rules\n")
-		b.WriteString("Apply the following rules when reviewing:\n\n")
-		for _, rule := range cfg.Rules {
-			fmt.Fprintf(&b, "- **%s** (severity: %s): %s\n", rule.ID, rule.Severity, rule.Description)
+		rules := filterRulesForFiles(cfg.Rules, files)
+		if len(rules) > 0 {
+			b.WriteString("## Review Rules\n")
+			b.WriteString("Apply the following rules when reviewing:\n\n")
+			for _, rule := range rules {
+				fmt.Fprintf(&b, "- **%s** (severity: %s): %s\n", rule.ID, rule.Severity, rule.Description)
+			}
+			b.WriteString("\n")
+		} else {
+			b.WriteString("## Review Rules\nNo specific rules are defined. Perform a general code review covering correctness, security, performance, and maintainability.\n\n")
 		}
-		b.WriteString("\n")
 	} else {
 		b.WriteString("## Review Rules\nNo specific rules are defined. Perform a general code review covering correctness, security, performance, and maintainability.\n\n")
 	}
@@ -251,7 +277,15 @@ func BuildIncrementalPrompt(diff string, cfg *ReviewConfig, knownIssues []Review
 		b.WriteString("## Known Issues (DO NOT DUPLICATE)\n")
 		b.WriteString("These issues are already reported and unresolved. Do NOT report them again:\n\n")
 		for _, t := range knownIssues {
-			fmt.Fprintf(&b, "- `%s:%d`\n", t.Path, t.Line)
+			sev := severityFromThreadBody(t.Body)
+			id := FindingIDFromThread(t.Body)
+			title := titleFromThreadBody(t.Body)
+			if id != "" && title != "" {
+				icon := severityIcon(sev)
+				fmt.Fprintf(&b, "- `%s:%d` \u2014 %s %s \u2014 %s: %s\n", t.Path, t.Line, icon, sev, id, escapeAllTags(title))
+			} else {
+				fmt.Fprintf(&b, "- `%s:%d`\n", t.Path, t.Line)
+			}
 		}
 		b.WriteString("\n")
 	}

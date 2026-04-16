@@ -22,6 +22,17 @@ func threadLabel(t ReviewThread) string {
 	return fmt.Sprintf("%s:%d", t.Path, t.Line)
 }
 
+// titleFromThreadBody extracts the finding title from a thread body.
+// It tries the embedded JSON first (lossless roundtrip), then falls back to
+// deriving the title from the parsed markdown body.
+func titleFromThreadBody(body string) string {
+	if f, ok := findingFromEmbeddedJSON(body); ok && f.Title != "" {
+		return f.Title
+	}
+	desc, _ := parseThreadBody(body)
+	return firstSentence(desc)
+}
+
 // severityIcon returns the emoji icon for a severity level.
 func severityIcon(severity string) string {
 	switch strings.ToLower(severity) {
@@ -39,6 +50,10 @@ func severityIcon(severity string) string {
 		return "\U0001F535" // 🔵
 	}
 }
+
+// ValidSeverities lists the accepted severity values in order from most to least severe.
+// Used for CLI validation and runner threshold checks.
+var ValidSeverities = []string{"critical", "bug", "warning", "suggestion", "nitpick"}
 
 // severityOrder returns a sort rank for a severity level (lower = more severe).
 func severityOrder(severity string) int {
