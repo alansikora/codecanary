@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/alansikora/codecanary/internal/review"
 	"github.com/spf13/cobra"
@@ -25,18 +26,17 @@ var reviewCmd = &cobra.Command{
 		baseBranch, _ := cmd.Flags().GetString("base")
 		failOn, _ := cmd.Flags().GetString("fail-on")
 
-		// Validate --fail-on value.
+		// Validate --fail-on value against the canonical severity list.
 		if failOn != "" {
-			validSeverities := []string{"critical", "bug", "warning", "suggestion", "nitpick"}
 			valid := false
-			for _, s := range validSeverities {
+			for _, s := range review.ValidSeverities {
 				if failOn == s {
 					valid = true
 					break
 				}
 			}
 			if !valid {
-				return fmt.Errorf("invalid --fail-on value %q: must be one of: critical, bug, warning, suggestion, nitpick", failOn)
+				return fmt.Errorf("invalid --fail-on value %q: must be one of: %s", failOn, strings.Join(review.ValidSeverities, ", "))
 			}
 		}
 
