@@ -51,6 +51,10 @@ func severityIcon(severity string) string {
 	}
 }
 
+// ValidSeverities lists the accepted severity values in order from most to least severe.
+// Used for CLI validation and runner threshold checks.
+var ValidSeverities = []string{"critical", "bug", "warning", "suggestion", "nitpick"}
+
 // severityOrder returns a sort rank for a severity level (lower = more severe).
 func severityOrder(severity string) int {
 	switch strings.ToLower(severity) {

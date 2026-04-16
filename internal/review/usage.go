@@ -171,17 +171,18 @@ func WriteUsageEnv(report *UsageReport) error {
 }
 
 // formatInt formats an integer with thousands separators (e.g. 1234567 -> "1,234,567").
+// Iterates by byte index since fmt.Sprintf("%d", n) produces ASCII-only output.
 func formatInt(n int) string {
 	s := fmt.Sprintf("%d", n)
 	if n < 0 {
 		s = s[1:]
 	}
 	var result []byte
-	for i, c := range s {
+	for i := 0; i < len(s); i++ {
 		if i > 0 && (len(s)-i)%3 == 0 {
 			result = append(result, ',')
 		}
-		result = append(result, byte(c))
+		result = append(result, s[i])
 	}
 	if n < 0 {
 		return "-" + string(result)
