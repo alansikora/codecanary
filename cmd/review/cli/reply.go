@@ -51,7 +51,7 @@ Any URL with a ?trailing=param or #discussion_r<id> fragment is accepted.`,
 		// Use -X POST explicitly rather than relying on gh's body-implies-POST
 		// heuristic so a body that happens to be empty-looking doesn't flip
 		// the verb underneath us.
-		c := exec.Command("gh", "api", "-X", "POST", apiPath, "-f", "body="+body)
+		c := exec.Command("gh", "api", "-X", "POST", apiPath, "-F", "body="+body)
 		out, err := c.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("posting reply via gh api: %w\n%s",
@@ -77,7 +77,7 @@ func parseReviewCommentURL(raw string) (owner, name string, pr int, commentID in
 	if err != nil {
 		return "", "", 0, 0, fmt.Errorf("parsing URL %q: %w", raw, err)
 	}
-	if u.Host != "github.com" && !strings.HasSuffix(u.Host, ".github.com") {
+	if u.Host != "github.com" {
 		return "", "", 0, 0, fmt.Errorf("URL host %q is not github.com: %s", u.Host, raw)
 	}
 	segs := strings.Split(strings.Trim(u.Path, "/"), "/")

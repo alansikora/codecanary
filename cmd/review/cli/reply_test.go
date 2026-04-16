@@ -23,6 +23,7 @@ func TestParseReviewCommentURL(t *testing.T) {
 		url  string
 	}{
 		{"non-github host", "https://gitlab.com/alan/repo/pull/1#discussion_r1"},
+		{"github subdomain", "https://api.github.com/alan/repo/pull/1#discussion_r1"},
 		{"missing pull segment", "https://github.com/alan/repo/issues/1#discussion_r1"},
 		{"no comment fragment", "https://github.com/alan/repo/pull/1"},
 		{"malformed PR number", "https://github.com/alan/repo/pull/notanumber#discussion_r1"},
