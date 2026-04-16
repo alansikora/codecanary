@@ -282,7 +282,7 @@ func BuildIncrementalPrompt(diff string, cfg *ReviewConfig, knownIssues []Review
 			title := titleFromThreadBody(t.Body)
 			if id != "" && title != "" {
 				icon := severityIcon(sev)
-				fmt.Fprintf(&b, "- `%s:%d` \u2014 %s %s \u2014 %s: %s\n", t.Path, t.Line, icon, sev, id, title)
+				fmt.Fprintf(&b, "- `%s:%d` \u2014 %s %s \u2014 %s: %s\n", t.Path, t.Line, icon, sev, id, escapeAllTags(title))
 			} else {
 				fmt.Fprintf(&b, "- `%s:%d`\n", t.Path, t.Line)
 			}
