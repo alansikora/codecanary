@@ -491,7 +491,9 @@ func Run(opts RunOptions) error {
 	tracker.SetPRSize(linesAdded, linesRemoved, filesChanged)
 	platform.ReportUsage(tracker)
 
-	// 11b. --fail-on: non-zero exit when new findings meet the severity threshold.
+	// 11b. --fail-on: compute whether findings meet the severity threshold.
+	// Deferred until after telemetry so that failing runs still emit usage data.
+	var failOnErr error
 	if opts.FailOnSeverity != "" {
 		threshold := severityOrder(opts.FailOnSeverity)
 		var count int
@@ -501,7 +503,7 @@ func Run(opts RunOptions) error {
 			}
 		}
 		if count > 0 {
-			return &FailOnSeverityError{Severity: opts.FailOnSeverity, Count: count}
+			failOnErr = &FailOnSeverityError{Severity: opts.FailOnSeverity, Count: count}
 		}
 	}
 
@@ -546,7 +548,7 @@ func Run(opts RunOptions) error {
 		})
 	}
 
-	return nil
+	return failOnErr
 }
 
 // runTriage handles the incremental review: classify previous threads, evaluate
