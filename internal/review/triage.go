@@ -36,10 +36,11 @@ type TriagedThread struct {
 
 // ThreadResolution is the result of a per-thread Claude evaluation.
 type ThreadResolution struct {
-	Index    int
-	Resolved bool
-	Reason   string // "code_change", "acknowledged", "rebutted", "dismissed"
-	Error    error
+	Index     int
+	Resolved  bool
+	Reason    string // "code_change", "acknowledged", "rebutted", "dismissed"
+	Rationale string // one-sentence narrative from the evaluator, surfaced in the incremental review to prevent ping-ponging
+	Error     error
 }
 
 // ExtractFileDiff extracts all diff hunks for a specific file from a unified diff.
@@ -640,7 +641,7 @@ func writeReplies(b *strings.Builder, t ReviewThread, botLogin string) {
 // Used for prompts where author replies are present (TriageHasReply, TriageCodeChangedReply).
 func writeResolutionFormat(b *strings.Builder) {
 	b.WriteString("Return a JSON object inside a ```json code fence:\n")
-	b.WriteString("- If resolved: `{\"resolved\": true, \"reason\": \"code_change\"}` or `{\"resolved\": true, \"reason\": \"dismissed\"}` or `{\"resolved\": true, \"reason\": \"acknowledged\"}` or `{\"resolved\": true, \"reason\": \"rebutted\"}`\n")
+	b.WriteString("- If resolved: `{\"resolved\": true, \"reason\": \"<reason>\", \"rationale\": \"<one sentence>\"}` — `reason` is one of `\"code_change\"`, `\"dismissed\"`, `\"acknowledged\"`, `\"rebutted\"`. `rationale` must be a single sentence naming the specific change, reply, or reasoning that resolved the finding (e.g. \"Removed the three `original_error_*` fields from the service logger\").\n")
 	b.WriteString("- If NOT resolved: `{\"resolved\": false}`\n")
 }
 
@@ -649,7 +650,7 @@ func writeResolutionFormat(b *strings.Builder) {
 // as a resolution reason since there is no author reply to acknowledge/dismiss/rebut.
 func writeCodeChangeResolutionFormat(b *strings.Builder) {
 	b.WriteString("Return a JSON object inside a ```json code fence:\n")
-	b.WriteString("- If resolved: `{\"resolved\": true, \"reason\": \"code_change\"}`\n")
+	b.WriteString("- If resolved: `{\"resolved\": true, \"reason\": \"code_change\", \"rationale\": \"<one sentence>\"}` — `rationale` must be a single sentence naming the specific change that resolved the finding (e.g. \"Removed the three `original_error_*` fields from the service logger\").\n")
 	b.WriteString("- If NOT resolved: `{\"resolved\": false}`\n")
 }
 
@@ -738,16 +739,18 @@ func parseThreadResolution(output string, index int) ThreadResolution {
 		raw := matches[1]
 
 		var resp struct {
-			Resolved bool   `json:"resolved"`
-			Reason   string `json:"reason"`
+			Resolved  bool   `json:"resolved"`
+			Reason    string `json:"reason"`
+			Rationale string `json:"rationale"`
 		}
 		if err := json.Unmarshal([]byte(raw), &resp); err != nil {
 			continue
 		}
 		return ThreadResolution{
-			Index:    index,
-			Resolved: resp.Resolved,
-			Reason:   resp.Reason,
+			Index:     index,
+			Resolved:  resp.Resolved,
+			Reason:    resp.Reason,
+			Rationale: strings.TrimSpace(resp.Rationale),
 		}
 	}
 
@@ -854,7 +857,7 @@ func toFixedThreads(resolutions []ThreadResolution) []fixedThread {
 	var result []fixedThread
 	for _, r := range resolutions {
 		if r.Resolved {
-			result = append(result, fixedThread{Index: r.Index, Reason: r.Reason})
+			result = append(result, fixedThread{Index: r.Index, Reason: r.Reason, Rationale: r.Rationale})
 		}
 	}
 	return result

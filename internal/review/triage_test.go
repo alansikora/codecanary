@@ -407,3 +407,51 @@ func TestValidateResolutionReason_RejectsInvalidReasonForCodeChangeOnly(t *testi
 		}
 	}
 }
+
+func TestParseThreadResolution_CapturesRationale(t *testing.T) {
+	output := "```json\n{\"resolved\": true, \"reason\": \"code_change\", \"rationale\": \"  Removed the three original_error_* fields  \"}\n```"
+	parsed := parseThreadResolution(output, 7)
+
+	if !parsed.Resolved || parsed.Reason != "code_change" {
+		t.Fatalf("expected resolved code_change, got %+v", parsed)
+	}
+	if parsed.Rationale != "Removed the three original_error_* fields" {
+		t.Errorf("rationale should be trimmed, got %q", parsed.Rationale)
+	}
+	if parsed.Index != 7 {
+		t.Errorf("index should be preserved, got %d", parsed.Index)
+	}
+}
+
+func TestToFixedThreads_PropagatesRationale(t *testing.T) {
+	resolutions := []ThreadResolution{
+		{Index: 0, Resolved: true, Reason: "code_change", Rationale: "dropped dead fields"},
+		{Index: 1, Resolved: false},
+		{Index: 2, Resolved: true, Reason: "dismissed"},
+	}
+	fixed := toFixedThreads(resolutions)
+
+	if len(fixed) != 2 {
+		t.Fatalf("expected 2 fixed threads, got %d", len(fixed))
+	}
+	if fixed[0].Rationale != "dropped dead fields" {
+		t.Errorf("first rationale should carry over, got %q", fixed[0].Rationale)
+	}
+	if fixed[1].Rationale != "" {
+		t.Errorf("empty rationale should stay empty, got %q", fixed[1].Rationale)
+	}
+}
+
+func TestResolutionFormat_RequestsRationale(t *testing.T) {
+	for _, fn := range map[string]func(*strings.Builder){
+		"writeResolutionFormat":           writeResolutionFormat,
+		"writeCodeChangeResolutionFormat": writeCodeChangeResolutionFormat,
+	} {
+		var b strings.Builder
+		fn(&b)
+		out := b.String()
+		if !strings.Contains(out, `"rationale"`) {
+			t.Errorf("prompt format should request a rationale field, got:\n%s", out)
+		}
+	}
+}

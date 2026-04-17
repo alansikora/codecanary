@@ -147,11 +147,20 @@ func BuildPrompt(pr *PRData, cfg *ReviewConfig, startIndex int, projectDocs map[
 
 // ResolvedContext describes a finding that was resolved during triage, used to
 // prevent the incremental review from re-raising the same or similar issues.
+//
+// Description and Suggestion carry the full narrative of the original finding so
+// the incremental reviewer can recognize cascading implementations of the fix
+// (e.g. test updates that drop assertions for code that was just removed).
+// Rationale is the evaluator's one-sentence explanation of why the finding was
+// resolved, which links the prior guidance to the current diff.
 type ResolvedContext struct {
-	Path   string
-	Line   int
-	Title  string // first line of the finding body
-	Reason string // "code_change", "dismissed", "acknowledged", "rebutted"
+	Path        string
+	Line        int
+	Title       string
+	Description string
+	Suggestion  string
+	Reason      string // "code_change", "dismissed", "acknowledged", "rebutted"
+	Rationale   string
 }
 
 // Deprecated: BuildReevaluatePrompt is replaced by per-thread evaluation in triage.go.
@@ -259,7 +268,12 @@ func BuildIncrementalPrompt(diff string, cfg *ReviewConfig, knownIssues []Review
 	// Recently resolved issues — anti-ping-pong context.
 	if len(resolved) > 0 {
 		b.WriteString("## Recently Resolved Issues\n")
-		b.WriteString("These issues from previous reviews were addressed in this push. Do NOT re-raise them or similar variants.\nIf you find a genuinely new issue in the same area, explain why it is distinct.\n\n")
+		b.WriteString("These findings from previous reviews were addressed in this push. The entries below include the original description, the suggestion you gave, and the evaluator's rationale for marking it resolved.\n\n")
+		b.WriteString("**Ping-pong guard — READ CAREFULLY:**\n")
+		b.WriteString("- Do NOT re-raise these findings or close variants of them.\n")
+		b.WriteString("- If a change in the incremental diff appears to *implement* the suggestion of a resolved finding (for example: removing code the previous cycle asked you to remove, dropping fields that were flagged as redundant, deleting assertions for behavior that was intentionally removed), do NOT flag it — doing so contradicts your own prior guidance.\n")
+		b.WriteString("- Cascading changes count: a resolved finding in a source file often requires matching edits in tests, callers, documentation, or cleanup of now-dead code. Treat those edits as part of the same fix even when they land in files or lines the original finding did not point at.\n")
+		b.WriteString("- Only flag a new issue in the same area if it is genuinely distinct — and when you do, open your `description` by explaining why it is NOT the resolved finding resurfacing.\n\n")
 		for _, r := range resolved {
 			reasonLabel := r.Reason
 			switch r.Reason {
@@ -272,13 +286,23 @@ func BuildIncrementalPrompt(diff string, cfg *ReviewConfig, knownIssues []Review
 			case "rebutted":
 				reasonLabel = "rebutted by author"
 			}
-			if r.Title != "" {
-				fmt.Fprintf(&b, "- `%s:%d` (%s) — %s\n", r.Path, r.Line, r.Title, reasonLabel)
-			} else {
-				fmt.Fprintf(&b, "- `%s:%d` — %s\n", r.Path, r.Line, reasonLabel)
+			title := r.Title
+			if title == "" {
+				title = "(no title)"
 			}
+			fmt.Fprintf(&b, "### `%s:%d` — %s\n", r.Path, r.Line, title)
+			fmt.Fprintf(&b, "**Status:** %s\n", reasonLabel)
+			if r.Rationale != "" {
+				fmt.Fprintf(&b, "**Evaluator rationale:** %s\n", r.Rationale)
+			}
+			if r.Description != "" {
+				fmt.Fprintf(&b, "\n**Original description:**\n%s\n", r.Description)
+			}
+			if r.Suggestion != "" {
+				fmt.Fprintf(&b, "\n**Suggestion you gave:**\n%s\n", r.Suggestion)
+			}
+			b.WriteString("\n")
 		}
-		b.WriteString("\n")
 	}
 
 	// Changed file contents for full context.
