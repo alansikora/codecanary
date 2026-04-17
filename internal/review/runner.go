@@ -82,8 +82,9 @@ type providerResult struct {
 
 // fixedThread holds the index and resolution reason for a fixed thread.
 type fixedThread struct {
-	Index  int
-	Reason string // "code_change", "dismissed", "acknowledged", "rebutted", or "" for unknown
+	Index     int
+	Reason    string // "code_change", "dismissed", "acknowledged", "rebutted", or "" for unknown
+	Rationale string // one-sentence narrative from the evaluator; empty for Go-driven resolutions like "file_removed"
 }
 
 // ── Shared review pipeline ──
@@ -104,7 +105,7 @@ func prepareReview(pr *PRData, configPath string) (*reviewContext, error) {
 		return nil, err
 	}
 
-	projectDocs := ReadProjectDocs()
+	projectDocs := ReadProjectDocs(pr.Files)
 	if len(projectDocs) > 0 {
 		fmt.Fprintf(os.Stderr, "Loaded %d project doc(s) for review context\n", len(projectDocs))
 	}
@@ -650,23 +651,52 @@ func runTriage(
 	}
 
 	// Build resolved context for the incremental review prompt (anti-ping-pong).
-	// Only include code_change resolutions — file_removed threads reference
-	// files no longer in the PR and would confuse the model.
+	// Only include code_change resolutions here. Other resolution kinds are
+	// deliberately omitted:
+	//   - file_removed: the finding's file is no longer in pr.Files, so the
+	//     incremental prompt's file allowlist already prevents the reviewer
+	//     from anchoring a finding back to that path. There is no surface
+	//     left to ping-pong against.
+	//   - dismissed / acknowledged / rebutted: not considered truly resolved
+	//     (see fixedSet construction above) — those threads stay in
+	//     `unresolved` and are surfaced via "Known Issues" instead.
+	//
+	// Full description + suggestion are surfaced so the incremental reviewer
+	// recognizes cascading implementations (e.g. test updates reflecting a
+	// removal the previous cycle requested). For local mode the saved Finding
+	// preserves those fields losslessly; for GitHub mode FindingFromThread
+	// recovers them from the embedded JSON marker.
 	var resolvedCtx []ResolvedContext
 	for _, f := range fixed {
-		if f.Index >= 0 && f.Index < len(reviewThreads) && f.Reason == "code_change" {
-			t := reviewThreads[f.Index]
-			title := t.Body
+		if f.Index < 0 || f.Index >= len(reviewThreads) || f.Reason != "code_change" {
+			continue
+		}
+		t := reviewThreads[f.Index]
+		var finding Finding
+		if lp, ok := platform.(*LocalPlatform); ok {
+			if saved, ok := lp.SavedFinding(f.Index); ok {
+				finding = saved
+			}
+		}
+		if finding.Title == "" && finding.Description == "" {
+			finding = FindingFromThread(t)
+		}
+		title := finding.Title
+		if title == "" {
+			title = t.Body
 			if nl := strings.Index(title, "\n"); nl >= 0 {
 				title = title[:nl]
 			}
-			resolvedCtx = append(resolvedCtx, ResolvedContext{
-				Path:   t.Path,
-				Line:   t.Line,
-				Title:  title,
-				Reason: f.Reason,
-			})
 		}
+		resolvedCtx = append(resolvedCtx, ResolvedContext{
+			Path:        t.Path,
+			Line:        t.Line,
+			Title:       title,
+			Description: finding.Description,
+			Suggestion:  finding.Suggestion,
+			Reason:      f.Reason,
+			Rationale:   f.Rationale,
+		})
 	}
 
 	resolved := len(fixedSet)

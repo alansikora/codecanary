@@ -36,7 +36,7 @@ If the PR is a setup PR (only adds workflow files with no real code changes), th
 `prepareReview()` loads everything the review needs:
 
 - **Config**: Reads `config.yml` (provider, models, budgets, timeouts). If a `review.yml` exists alongside it, its rules/context/ignore fields override the config. If a `review.local.yml` also exists, its fields are appended (not replaced) on top of `review.yml`.
-- **Project docs**: Discovers CLAUDE.md files (root, `.claude/`, top-level directories). Up to 5 files, 4KB each, 12KB total.
+- **Project docs**: Discovers CLAUDE.md files at the repo root and in every ancestor directory of a changed PR file. Skips `vendor/`, `node_modules/`, hidden dirs, and other build artifacts. Up to 10 files, 16 KB each, 48 KB total. Monorepos commonly keep per-app conventions (e.g. `apps/exchange-api/CLAUDE.md`) — those load automatically when a PR touches files under that directory, so the reviewer sees the conventions specific to the code being changed rather than only the repo-root overview.
 - **File contents**: Reads changed files from disk with size limits (default 100KB per file, 500KB total). Skips binary files, ignored patterns, and files exceeding limits. When files are skipped, the diff is also filtered to remove their hunks (via `ScopeDiffToFiles`) and they are removed from the file list. The original unfiltered diff is preserved in `FullDiff` for finding validation.
 - **Environment**: Builds a filtered env for LLM subprocesses (only allowed prefixes like `CODECANARY_`, `GITHUB_`, plus essential vars like `PATH`). Injects keychain credentials if not already set.
 
