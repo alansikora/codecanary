@@ -43,6 +43,28 @@ jobs:
         run: |
           echo "skip=true" >> "$GITHUB_ENV"
 
+      - name: Skip on merge conflicts
+        if: env.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.url || github.event.comment.pull_request_url }}
+        run: |
+          # GitHub computes .mergeable asynchronously; poll until it resolves.
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            MERGEABLE=$(gh api "$PR_URL" --jq '.mergeable')
+            if [ "$MERGEABLE" != "null" ]; then
+              break
+            fi
+            echo "mergeable not yet computed (attempt $i), waiting 3s..."
+            sleep 3
+          done
+          if [ "$MERGEABLE" = "false" ]; then
+            echo "Skipping: PR has merge conflicts"
+            echo "skip=true" >> "$GITHUB_ENV"
+          elif [ "$MERGEABLE" = "null" ]; then
+            echo "mergeable still null after polling; proceeding"
+          fi
+
       - uses: actions/checkout@v6
         if: env.skip != 'true'
         with:
