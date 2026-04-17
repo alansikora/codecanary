@@ -69,6 +69,9 @@ func readProjectDocsFrom(root string, prFiles []string) map[string]string {
 			content = content[:maxDocBytes] + "\n... (truncated)"
 		}
 		if totalBytes+len(content) > maxTotalDocBytes {
+			// `continue`, not `break`: a later, smaller doc may still fit in
+			// the remaining budget. Stopping on the first overflow would
+			// leave more bytes on the table than skipping this one file.
 			continue
 		}
 		docs[relPath] = content
