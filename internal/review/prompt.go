@@ -286,20 +286,26 @@ func BuildIncrementalPrompt(diff string, cfg *ReviewConfig, knownIssues []Review
 			case "rebutted":
 				reasonLabel = "rebutted by author"
 			}
+			// All four narrative fields below originate from prior LLM output
+			// (stored findings or embedded JSON in PR comments) and must be
+			// treated as untrusted — an earlier cycle could have emitted text
+			// containing XML-like tags or markdown headers that would otherwise
+			// corrupt the structure of this prompt. Neutralize with
+			// escapeAllTags, matching the handling of other untrusted strings.
 			title := r.Title
 			if title == "" {
 				title = "(no title)"
 			}
-			fmt.Fprintf(&b, "### `%s:%d` — %s\n", r.Path, r.Line, title)
+			fmt.Fprintf(&b, "### `%s:%d` — %s\n", r.Path, r.Line, escapeAllTags(title))
 			fmt.Fprintf(&b, "**Status:** %s\n", reasonLabel)
 			if r.Rationale != "" {
-				fmt.Fprintf(&b, "**Evaluator rationale:** %s\n", r.Rationale)
+				fmt.Fprintf(&b, "**Evaluator rationale:** %s\n", escapeAllTags(r.Rationale))
 			}
 			if r.Description != "" {
-				fmt.Fprintf(&b, "\n**Original description:**\n%s\n", r.Description)
+				fmt.Fprintf(&b, "\n**Original description:**\n%s\n", escapeAllTags(r.Description))
 			}
 			if r.Suggestion != "" {
-				fmt.Fprintf(&b, "\n**Suggestion you gave:**\n%s\n", r.Suggestion)
+				fmt.Fprintf(&b, "\n**Suggestion you gave:**\n%s\n", escapeAllTags(r.Suggestion))
 			}
 			b.WriteString("\n")
 		}

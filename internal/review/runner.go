@@ -651,8 +651,15 @@ func runTriage(
 	}
 
 	// Build resolved context for the incremental review prompt (anti-ping-pong).
-	// Only include code_change resolutions — file_removed threads reference
-	// files no longer in the PR and would confuse the model.
+	// Only include code_change resolutions here. Other resolution kinds are
+	// deliberately omitted:
+	//   - file_removed: the finding's file is no longer in pr.Files, so the
+	//     incremental prompt's file allowlist already prevents the reviewer
+	//     from anchoring a finding back to that path. There is no surface
+	//     left to ping-pong against.
+	//   - dismissed / acknowledged / rebutted: not considered truly resolved
+	//     (see fixedSet construction above) — those threads stay in
+	//     `unresolved` and are surfaced via "Known Issues" instead.
 	//
 	// Full description + suggestion are surfaced so the incremental reviewer
 	// recognizes cascading implementations (e.g. test updates reflecting a
