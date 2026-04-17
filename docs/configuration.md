@@ -168,7 +168,7 @@ Because checks happen _between_ calls, a single call can push spending over the 
 | Level | Use for |
 |-------|---------|
 | `critical` | Security vulnerabilities, data loss, crashes |
-| `bug` | Logic errors, incorrect behavior |
+| `bug` | Logic errors that cause incorrect runtime behavior for real inputs (not test-coverage gaps or speculative edge cases) |
 | `warning` | Potential issues, performance problems, code smells |
 | `suggestion` | Better patterns, readability improvements |
 | `nitpick` | Minor style, naming, formatting |
