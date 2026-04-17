@@ -51,7 +51,10 @@ jobs:
         run: |
           # GitHub computes .mergeable asynchronously; poll until it resolves.
           for i in 1 2 3 4 5 6 7 8 9 10; do
-            MERGEABLE=$(gh api "$PR_URL" --jq '.mergeable')
+            MERGEABLE=$(gh api "$PR_URL" --jq '.mergeable' 2>&1) || {
+              echo "gh api failed (attempt $i): $MERGEABLE"
+              MERGEABLE="null"
+            }
             if [ "$MERGEABLE" != "null" ]; then
               break
             fi
@@ -63,6 +66,8 @@ jobs:
             echo "skip=true" >> "$GITHUB_ENV"
           elif [ "$MERGEABLE" = "null" ]; then
             echo "mergeable still null after polling; proceeding"
+          else
+            echo "mergeable=$MERGEABLE; proceeding"
           fi
 
       - uses: actions/checkout@v6
