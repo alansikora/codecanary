@@ -574,10 +574,13 @@ func TestRuleAppliesToFiles(t *testing.T) {
 			want:  true,
 		},
 		{
-			name:  "empty files list means rule still applies",
+			// Matches FilterRules's defensive behavior: when the file set
+			// is unknown, keep path-scoped rules rather than silently
+			// dropping them.
+			name:  "empty files list keeps path-scoped rule (defensive)",
 			rule:  Rule{ID: "r", Paths: []string{"apps/**/*.rb"}},
 			files: nil,
-			want:  false, // no files match, so rule is not relevant
+			want:  true,
 		},
 	}
 	for _, tt := range tests {

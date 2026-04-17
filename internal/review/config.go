@@ -102,8 +102,15 @@ type Rule struct {
 // file, so the cost is O(files × patterns) in the worst case and usually
 // much less. Returns true only when at least one included file survives the
 // exclude filter.
+//
+// An empty file list is treated as "unknown" and returns true — matching the
+// defensive behavior of FilterRules. Silently dropping path-scoped rules in
+// the unknown case could cause a soft-fail that's hard to debug.
 func (r Rule) AppliesToFiles(files []string) bool {
 	if len(r.Paths) == 0 {
+		return true
+	}
+	if len(files) == 0 {
 		return true
 	}
 	for _, f := range files {
@@ -133,16 +140,18 @@ func FilterRules(rules []Rule, files []string) []Rule {
 	return out
 }
 
-// matchesAny reports whether path matches any of the glob patterns. Mirrors
-// matchesIgnore (github.go) but lives here because it's also used for rule
-// path-scoping; keeping one implementation close to Rule avoids a duplicate
-// helper drifting from the ignore-pattern matcher.
+// matchesAny reports whether path matches any of the glob patterns.
+// Patterns must be written in full-path form using doublestar globs — e.g.
+// `**/*.rb` to match any `.rb` file at any depth, or `app/**/*.rb` to scope
+// to a subtree. Bare-filename patterns like `*.rb` only match files at the
+// repo root; users who want "any .rb file" should write `**/*.rb`.
+//
+// Intentionally stricter than matchesIgnore (github.go): rule path-scoping
+// demands unambiguous matching, since a basename fallback can silently
+// expand a path-scoped pattern to unrelated directories.
 func matchesAny(path string, patterns []string) bool {
 	for _, pat := range patterns {
 		if matched, _ := doublestar.Match(pat, path); matched {
-			return true
-		}
-		if matched, _ := doublestar.Match(pat, filepath.Base(path)); matched {
 			return true
 		}
 	}
