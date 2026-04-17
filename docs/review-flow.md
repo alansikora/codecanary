@@ -71,7 +71,7 @@ Calls `BuildPrompt()` to assemble the full review prompt. The prompt includes (i
 2. PR metadata (number, title, author, description)
 3. Additional context from config
 4. Project documentation (CLAUDE.md files in `<project-doc>` tags)
-5. Review rules (from config) or general review instruction
+5. Review rules (from config) — filtered to rules whose `paths:` / `exclude_paths:` globs match at least one PR file. Rules scoped to file types not in the diff (e.g. CSS rules on a Ruby-only change) are omitted to keep LLM attention focused. Falls back to a general review instruction when no rules apply.
 6. Ignore patterns
 7. Explicit file allowlist (anti-hallucination)
 8. Full contents of changed files with line numbers

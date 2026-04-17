@@ -74,17 +74,10 @@ func BuildPrompt(pr *PRData, cfg *ReviewConfig, startIndex int, projectDocs map[
 	// Project documentation (CLAUDE.md files).
 	writeProjectDocs(&b, projectDocs)
 
-	// Review rules.
-	if cfg != nil && len(cfg.Rules) > 0 {
-		b.WriteString("## Review Rules\n")
-		b.WriteString("Apply the following rules when reviewing:\n\n")
-		for _, rule := range cfg.Rules {
-			fmt.Fprintf(&b, "- **%s** (severity: %s): %s\n", rule.ID, rule.Severity, rule.Description)
-		}
-		b.WriteString("\n")
-	} else {
-		b.WriteString("## Review Rules\nNo specific rules are defined. Perform a general code review covering correctness, security, performance, and maintainability.\n\n")
-	}
+	// Review rules — filter to rules whose path scope matches at least one
+	// PR file. Emitting irrelevant rules dilutes LLM attention and wastes
+	// context (see `review.yml` rules scoped to paths not in this diff).
+	writeRulesSection(&b, cfg, pr.Files)
 
 	// Ignore patterns.
 	if cfg != nil && len(cfg.Ignore) > 0 {
@@ -225,17 +218,9 @@ func BuildIncrementalPrompt(diff string, cfg *ReviewConfig, knownIssues []Review
 	// Project documentation (CLAUDE.md files).
 	writeProjectDocs(&b, projectDocs)
 
-	// Review rules.
-	if cfg != nil && len(cfg.Rules) > 0 {
-		b.WriteString("## Review Rules\n")
-		b.WriteString("Apply the following rules when reviewing:\n\n")
-		for _, rule := range cfg.Rules {
-			fmt.Fprintf(&b, "- **%s** (severity: %s): %s\n", rule.ID, rule.Severity, rule.Description)
-		}
-		b.WriteString("\n")
-	} else {
-		b.WriteString("## Review Rules\nNo specific rules are defined. Perform a general code review covering correctness, security, performance, and maintainability.\n\n")
-	}
+	// Review rules — filter to rules whose path scope matches at least one
+	// incremental-diff file, for the same reason as BuildPrompt.
+	writeRulesSection(&b, cfg, files)
 
 	// Ignore patterns.
 	if cfg != nil && len(cfg.Ignore) > 0 {
@@ -319,6 +304,31 @@ func BuildIncrementalPrompt(diff string, cfg *ReviewConfig, knownIssues []Review
 	fmt.Fprintf(&b, "    \"fix_ref\": \"%s-%d\",\n    \"actionable\": true\n  }\n]\n```\n", fixRefPrefix, first)
 
 	return b.String()
+}
+
+// writeRulesSection renders the "## Review Rules" block, scoped to rules
+// applicable to the given file set. Centralised so BuildPrompt and
+// BuildIncrementalPrompt stay in lockstep on rule scoping and on the
+// fallback message when no rules apply.
+func writeRulesSection(b *strings.Builder, cfg *ReviewConfig, files []string) {
+	var rules []Rule
+	if cfg != nil {
+		rules = FilterRules(cfg.Rules, files)
+	}
+	switch {
+	case len(rules) > 0:
+		b.WriteString("## Review Rules\n")
+		b.WriteString("Apply the following rules when reviewing:\n\n")
+		for _, rule := range rules {
+			fmt.Fprintf(b, "- **%s** (severity: %s): %s\n", rule.ID, rule.Severity, rule.Description)
+		}
+		b.WriteString("\n")
+	case cfg != nil && len(cfg.Rules) > 0:
+		// Rules are configured, but none match the files in this diff.
+		b.WriteString("## Review Rules\nNo rules from the project configuration apply to the files in this diff. Perform a general code review covering correctness, security, performance, and maintainability.\n\n")
+	default:
+		b.WriteString("## Review Rules\nNo specific rules are defined. Perform a general code review covering correctness, security, performance, and maintainability.\n\n")
+	}
 }
 
 // writeProjectDocs adds a "Project Documentation" section to the prompt builder

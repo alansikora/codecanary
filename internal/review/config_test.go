@@ -3,6 +3,7 @@ package review
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -533,4 +534,92 @@ func TestMergeLocalPolicy(t *testing.T) {
 			t.Errorf("expected merged ignore [base-ignore, local-ignore], got %v", got.Ignore)
 		}
 	})
+}
+
+func TestRuleAppliesToFiles(t *testing.T) {
+	tests := []struct {
+		name  string
+		rule  Rule
+		files []string
+		want  bool
+	}{
+		{
+			name:  "no paths means applies to anything",
+			rule:  Rule{ID: "r"},
+			files: []string{"anything.go"},
+			want:  true,
+		},
+		{
+			name:  "paths match one file",
+			rule:  Rule{ID: "r", Paths: []string{"apps/**/*.rb"}},
+			files: []string{"apps/exchange-api/app/services/foo.rb"},
+			want:  true,
+		},
+		{
+			name:  "paths do not match any file",
+			rule:  Rule{ID: "r", Paths: []string{"**/*.css"}},
+			files: []string{"apps/exchange-api/app/services/foo.rb"},
+			want:  false,
+		},
+		{
+			name:  "exclude path wins over include",
+			rule:  Rule{ID: "r", Paths: []string{"apps/**/*.rb"}, ExcludePaths: []string{"**/test/**"}},
+			files: []string{"apps/exchange-api/test/services/foo.rb"},
+			want:  false,
+		},
+		{
+			name:  "excludes filter per file; one surviving file is enough",
+			rule:  Rule{ID: "r", Paths: []string{"apps/**/*.rb"}, ExcludePaths: []string{"**/test/**"}},
+			files: []string{"apps/exchange-api/test/services/foo.rb", "apps/exchange-api/app/services/foo.rb"},
+			want:  true,
+		},
+		{
+			name:  "empty files list means rule still applies",
+			rule:  Rule{ID: "r", Paths: []string{"apps/**/*.rb"}},
+			files: nil,
+			want:  false, // no files match, so rule is not relevant
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.rule.AppliesToFiles(tt.files); got != tt.want {
+				t.Errorf("AppliesToFiles(%v) = %v, want %v", tt.files, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFilterRulesPreservesOrder(t *testing.T) {
+	rules := []Rule{
+		{ID: "a", Paths: []string{"apps/**/*.rb"}},
+		{ID: "b", Paths: []string{"**/*.css"}},
+		{ID: "c"}, // no paths — applies to anything
+		{ID: "d", Paths: []string{"apps/**/*.rb"}, ExcludePaths: []string{"**/test/**"}},
+	}
+	files := []string{"apps/exchange-api/app/services/foo.rb"}
+
+	got := FilterRules(rules, files)
+	gotIDs := make([]string, len(got))
+	for i, r := range got {
+		gotIDs[i] = r.ID
+	}
+	want := []string{"a", "c", "d"}
+	if !reflect.DeepEqual(gotIDs, want) {
+		t.Errorf("FilterRules order = %v, want %v", gotIDs, want)
+	}
+}
+
+func TestFilterRulesNoFilesReturnsAll(t *testing.T) {
+	// Defensive: when the file list is empty, FilterRules returns the
+	// input unchanged. The caller is in an unknown state (e.g. very
+	// early pipeline), and silently dropping all path-scoped rules
+	// could cause a soft-fail that's hard to debug.
+	rules := []Rule{
+		{ID: "a", Paths: []string{"apps/**/*.rb"}},
+		{ID: "b"},
+	}
+	got := FilterRules(rules, nil)
+	if len(got) != 2 {
+		t.Errorf("FilterRules(_, nil) dropped rules: got %v, want input unchanged", got)
+	}
 }

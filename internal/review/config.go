@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bmatcuk/doublestar/v4"
 	"gopkg.in/yaml.v3"
 )
 
@@ -91,6 +92,61 @@ type Rule struct {
 	Severity     string   `yaml:"severity"` // One of: critical, bug, warning, suggestion, nitpick
 	Paths        []string `yaml:"paths"`
 	ExcludePaths []string `yaml:"exclude_paths"`
+}
+
+// AppliesToFiles reports whether the rule should be enforced on a review
+// covering the given file set. A rule with no Paths applies to any file. A
+// rule with Paths applies when at least one file matches any include glob
+// and no file-narrowing is needed — ExcludePaths only filter out files that
+// would otherwise match. The check short-circuits on the first matching
+// file, so the cost is O(files × patterns) in the worst case and usually
+// much less. Returns true only when at least one included file survives the
+// exclude filter.
+func (r Rule) AppliesToFiles(files []string) bool {
+	if len(r.Paths) == 0 {
+		return true
+	}
+	for _, f := range files {
+		if !matchesAny(f, r.Paths) {
+			continue
+		}
+		if matchesAny(f, r.ExcludePaths) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// FilterRules returns the rules applicable to the given file set. Preserves
+// input order so severity-sorted configs render predictably.
+func FilterRules(rules []Rule, files []string) []Rule {
+	if len(files) == 0 {
+		return rules
+	}
+	out := make([]Rule, 0, len(rules))
+	for _, r := range rules {
+		if r.AppliesToFiles(files) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// matchesAny reports whether path matches any of the glob patterns. Mirrors
+// matchesIgnore (github.go) but lives here because it's also used for rule
+// path-scoping; keeping one implementation close to Rule avoids a duplicate
+// helper drifting from the ignore-pattern matcher.
+func matchesAny(path string, patterns []string) bool {
+	for _, pat := range patterns {
+		if matched, _ := doublestar.Match(pat, path); matched {
+			return true
+		}
+		if matched, _ := doublestar.Match(pat, filepath.Base(path)); matched {
+			return true
+		}
+	}
+	return false
 }
 
 // validSeverities is the set of allowed severity values for rules,
