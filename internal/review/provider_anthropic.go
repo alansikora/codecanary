@@ -18,6 +18,8 @@ func init() {
 		New:      newAnthropicProvider,
 		Validate: validateAnthropic,
 		Pricing: []PricingEntry{
+			// Opus 4.7
+			{"claude-opus-4-7", modelPricing{15, 75, 18.75, 1.50}},
 			// Opus 4.6 / 4.5
 			{"claude-opus-4-6", modelPricing{5, 25, 6.25, 0.50}},
 			{"claude-opus-4-5", modelPricing{5, 25, 6.25, 0.50}},
@@ -34,7 +36,8 @@ func init() {
 			{"claude-haiku-3", modelPricing{0.25, 1.25, 0.30, 0.03}},
 		},
 		MaxOutputTokens: []MaxTokensEntry{
-			// Opus 4.6 / 4.5: 128k output
+			// Opus 4.7 / 4.6 / 4.5: 128k output
+			{"claude-opus-4-7", 128_000},
 			{"claude-opus-4-6", 128_000},
 			{"claude-opus-4-5", 128_000},
 			// Opus 4.1 / 4: 32k output
@@ -61,12 +64,17 @@ func validateAnthropic(mc *ModelConfig) error {
 	return nil
 }
 
+// anthropicAPIURL is the Messages endpoint. Exposed as a variable so tests
+// can point the provider at an httptest server.
+var anthropicAPIURL = "https://api.anthropic.com/v1/messages"
+
 // anthropicProvider implements ModelProvider using the native Anthropic Messages API.
 // Supports prompt caching for significant cost savings on repeated calls.
 type anthropicProvider struct {
-	model  string   // model to use for every call
-	keyEnv string   // env var name holding the API key
-	env    []string // filtered environment
+	model        string   // executor model used for every call
+	advisorModel string   // optional advisor model — enables the server-side advisor tool when non-empty
+	keyEnv       string   // env var name holding the API key
+	env          []string // filtered environment
 }
 
 func newAnthropicProvider(mc *ModelConfig, env []string) ModelProvider {
@@ -74,7 +82,7 @@ func newAnthropicProvider(mc *ModelConfig, env []string) ModelProvider {
 	if mc.APIKeyEnv != "" {
 		keyEnv = mc.APIKeyEnv
 	}
-	return &anthropicProvider{model: mc.Model, keyEnv: keyEnv, env: env}
+	return &anthropicProvider{model: mc.Model, advisorModel: mc.AdvisorModel, keyEnv: keyEnv, env: env}
 }
 
 // anthropicRequest is the Anthropic /v1/messages request format.
@@ -83,6 +91,7 @@ type anthropicRequest struct {
 	MaxTokens int                     `json:"max_tokens"`
 	System    []anthropicContentBlock `json:"system,omitempty"`
 	Messages  []anthropicMessage      `json:"messages"`
+	Tools     []anthropicTool         `json:"tools,omitempty"`
 }
 
 type anthropicMessage struct {
@@ -100,27 +109,54 @@ type anthropicCacheControl struct {
 	Type string `json:"type"` // "ephemeral"
 }
 
+// anthropicTool represents a tool entry in the request's tools array. Only the
+// advisor server-side tool is populated today; fields are kept optional so we
+// can extend to additional tool shapes without breaking the wire format.
+type anthropicTool struct {
+	Type  string `json:"type"`
+	Name  string `json:"name"`
+	Model string `json:"model,omitempty"`
+}
+
 // anthropicResponse is the Anthropic /v1/messages response format.
 type anthropicResponse struct {
-	ID      string `json:"id"`
-	Type    string `json:"type"`
-	Role    string `json:"role"`
-	Content []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	} `json:"content"`
+	ID      string                  `json:"id"`
+	Type    string                  `json:"type"`
+	Role    string                  `json:"role"`
+	Content []anthropicResponseBlock `json:"content"`
 	Model      string `json:"model"`
 	StopReason string `json:"stop_reason"`
 	Usage      struct {
-		InputTokens              int `json:"input_tokens"`
-		OutputTokens             int `json:"output_tokens"`
-		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
-		CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+		InputTokens              int                   `json:"input_tokens"`
+		OutputTokens             int                   `json:"output_tokens"`
+		CacheCreationInputTokens int                   `json:"cache_creation_input_tokens"`
+		CacheReadInputTokens     int                   `json:"cache_read_input_tokens"`
+		Iterations               []anthropicIteration  `json:"iterations"`
 	} `json:"usage"`
 	Error *struct {
 		Type    string `json:"type"`
 		Message string `json:"message"`
 	} `json:"error"`
+}
+
+// anthropicResponseBlock handles the assistant's content array. Only text
+// blocks carry user-visible output; server_tool_use and advisor_tool_result
+// blocks are metadata from the advisor tool and must be filtered out.
+type anthropicResponseBlock struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+// anthropicIteration is a single sub-inference entry in usage.iterations[].
+// Executor iterations have type "message"; advisor sub-inferences have
+// type "advisor_message" with the advisor model ID attached.
+type anthropicIteration struct {
+	Type                     string `json:"type"`
+	Model                    string `json:"model"`
+	InputTokens              int    `json:"input_tokens"`
+	OutputTokens             int    `json:"output_tokens"`
+	CacheCreationInputTokens int    `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int    `json:"cache_read_input_tokens"`
 }
 
 func (p *anthropicProvider) Run(ctx context.Context, prompt string, opts RunOpts) (*providerResult, error) {
@@ -154,19 +190,29 @@ func (p *anthropicProvider) Run(ctx context.Context, prompt string, opts RunOpts
 			},
 		},
 	}
+	if p.advisorModel != "" {
+		reqBody.Tools = []anthropicTool{{
+			Type:  advisorToolType,
+			Name:  advisorToolName,
+			Model: p.advisorModel,
+		}}
+	}
 
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.anthropic.com/v1/messages", bytes.NewReader(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, "POST", anthropicAPIURL, bytes.NewReader(jsonBody))
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", apiKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
+	if p.advisorModel != "" {
+		req.Header.Set("anthropic-beta", advisorBetaHeader)
+	}
 
 	start := time.Now()
 	resp, err := http.DefaultClient.Do(req)
@@ -199,7 +245,10 @@ func (p *anthropicProvider) Run(ctx context.Context, prompt string, opts RunOpts
 
 	truncated := msgResp.StopReason == "max_tokens"
 
-	// Extract text from content blocks.
+	// Extract text from content blocks. server_tool_use and
+	// advisor_tool_result blocks are advisor-tool metadata and never user
+	// output; filter them out so advisor calls do not contaminate the
+	// parsed findings JSON.
 	var textParts []string
 	for _, block := range msgResp.Content {
 		if block.Type == "text" {
@@ -208,6 +257,52 @@ func (p *anthropicProvider) Run(ctx context.Context, prompt string, opts RunOpts
 	}
 	if len(textParts) == 0 {
 		return nil, fmt.Errorf("Anthropic API returned no text content") //nolint:staticcheck // proper noun
+	}
+
+	result := &providerResult{
+		Text:       strings.Join(textParts, ""),
+		DurationMS: durationMS,
+		Truncated:  truncated,
+	}
+
+	// When the advisor tool ran, usage.iterations[] carries a per-sub-inference
+	// breakdown. Split it so executor tokens bill at the executor's rate and
+	// advisor tokens bill at the advisor's rate. For plain (non-advisor) calls
+	// the iterations array is empty; fall back to the top-level usage totals.
+	if len(msgResp.Usage.Iterations) > 0 {
+		for _, it := range msgResp.Usage.Iterations {
+			model := it.Model
+			if model == "" {
+				model = msgResp.Model
+			}
+			u := CallUsage{
+				Model:             model,
+				InputTokens:       it.InputTokens,
+				OutputTokens:      it.OutputTokens,
+				CacheReadTokens:   it.CacheReadInputTokens,
+				CacheCreateTokens: it.CacheCreationInputTokens,
+				DurationMS:        durationMS,
+			}
+			u.CostUSD = estimateCost(u)
+			result.ModelUsages = append(result.ModelUsages, u)
+		}
+		// Aggregate Usage reflects the executor-visible totals reported by the
+		// API so existing dashboards that read result.Usage still work.
+		agg := CallUsage{
+			Model:             msgResp.Model,
+			InputTokens:       msgResp.Usage.InputTokens,
+			OutputTokens:      msgResp.Usage.OutputTokens,
+			CacheReadTokens:   msgResp.Usage.CacheReadInputTokens,
+			CacheCreateTokens: msgResp.Usage.CacheCreationInputTokens,
+			DurationMS:        durationMS,
+		}
+		var total float64
+		for _, mu := range result.ModelUsages {
+			total += mu.CostUSD
+		}
+		agg.CostUSD = total
+		result.Usage = agg
+		return result, nil
 	}
 
 	usage := CallUsage{
@@ -219,11 +314,6 @@ func (p *anthropicProvider) Run(ctx context.Context, prompt string, opts RunOpts
 		DurationMS:        durationMS,
 	}
 	usage.CostUSD = estimateCost(usage)
-
-	return &providerResult{
-		Text:      strings.Join(textParts, ""),
-		Usage:     usage,
-		Truncated: truncated,
-	}, nil
+	result.Usage = usage
+	return result, nil
 }
-

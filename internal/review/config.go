@@ -29,6 +29,7 @@ type ReviewConfig struct {
 	TimeoutMins  int               `yaml:"timeout_minutes"` // per-invocation timeout in minutes (default 5)
 	ReviewModel  string            `yaml:"review_model"`    // model for main review (required)
 	TriageModel  string            `yaml:"triage_model"`    // model for thread re-evaluation (required)
+	AdvisorModel string            `yaml:"advisor_model"`   // optional advisor model for mid-generation strategic guidance (anthropic & claude providers only)
 	Provider     string            `yaml:"provider"`        // "anthropic", "openai", "openrouter", or "claude"
 	APIBase      string            `yaml:"api_base"`        // override base URL (openai provider only)
 	APIKeyEnv    string            `yaml:"api_key_env"`     // env var name for API key (default depends on provider)
@@ -41,12 +42,13 @@ type ReviewConfig struct {
 // single ModelProvider instance. Used internally to build review and triage
 // providers from the flat ReviewConfig fields.
 type ModelConfig struct {
-	Provider   string
-	Model      string
-	APIBase    string
-	APIKeyEnv  string
-	ClaudeArgs []string // forwarded to claudeCLIProvider; ignored by other providers
-	ClaudePath string   // forwarded to claudeCLIProvider; empty means "claude"
+	Provider     string
+	Model        string
+	AdvisorModel string // optional advisor model; when set, enables the server-side advisor tool (anthropic & claude providers only)
+	APIBase      string
+	APIKeyEnv    string
+	ClaudeArgs   []string // forwarded to claudeCLIProvider; ignored by other providers
+	ClaudePath   string   // forwarded to claudeCLIProvider; empty means "claude"
 }
 
 // EvaluationConfig holds per-evaluation-type settings for re-evaluation prompts.
@@ -206,6 +208,14 @@ func (c *ReviewConfig) Validate() error {
 		// Also validate the triage model.
 		triageMC := &ModelConfig{Provider: c.Provider, Model: c.TriageModel, APIBase: c.APIBase, APIKeyEnv: c.APIKeyEnv}
 		if err := pf.Validate(triageMC); err != nil {
+			return err
+		}
+	}
+	if c.AdvisorModel != "" {
+		if c.Provider != "anthropic" && c.Provider != "claude" {
+			return fmt.Errorf("advisor_model is only supported by the anthropic and claude providers, not %q", c.Provider)
+		}
+		if err := validateAdvisorPairing(c.Provider, c.ReviewModel, c.AdvisorModel); err != nil {
 			return err
 		}
 	}

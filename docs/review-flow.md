@@ -44,7 +44,7 @@ If the PR is a setup PR (only adds workflow files with no real code changes), th
 
 Two `ModelProvider` instances are created from config:
 
-- **Review provider**: The main model that reviews code (configured via `review_model` in config).
+- **Review provider**: The main model that reviews code (configured via `review_model` in config). When `advisor_model` is set (anthropic or claude provider only), the review provider also enables Anthropic's server-side advisor tool so a stronger advisor model can weigh in mid-generation — the triage provider never uses advisor, since its classifier turns are too short to benefit.
 - **Triage provider**: A cheaper model for re-evaluating previous findings (configured via `triage_model` in config).
 
 Each provider is constructed via the factory registry in `provider.go`. The provider name determines which adapter handles the API call (Anthropic, OpenAI, OpenRouter, or Claude CLI).

@@ -55,11 +55,17 @@ func validateClaude(mc *ModelConfig) error {
 // claudeCLIProvider implements ModelProvider using the Claude CLI binary.
 // Requires the `claude` binary in PATH and an OAuth token.
 type claudeCLIProvider struct {
-	model      string
-	env        []string
-	extraArgs  []string // from ClaudeArgs; appended after all managed flags
-	binaryPath string   // resolved Claude CLI binary path; never empty
+	model        string
+	advisorModel string // optional advisor model — enables the Claude CLI server-side advisor tool via --settings and the experimental env gate
+	env          []string
+	extraArgs    []string // from ClaudeArgs; appended after all managed flags
+	binaryPath   string   // resolved Claude CLI binary path; never empty
 }
+
+// claudeAdvisorEnableEnvVar is the Claude CLI env var that opts into the
+// experimental advisor tool. Surfaced as a constant so the implementation and
+// tests stay aligned with the name baked into the claude binary.
+const claudeAdvisorEnableEnvVar = "CLAUDE_CODE_ENABLE_EXPERIMENTAL_ADVISOR_TOOL"
 
 // claudeOAuthEnvVar is the environment variable the Claude CLI reads for OAuth tokens.
 const claudeOAuthEnvVar = "CLAUDE_CODE_OAUTH_TOKEN"
@@ -72,12 +78,42 @@ func newClaudeCLIProvider(mc *ModelConfig, env []string) ModelProvider {
 	// Map CODECANARY_PROVIDER_SECRET → CLAUDE_CODE_OAUTH_TOKEN so the Claude CLI
 	// can authenticate using the OAuth token obtained during `codecanary setup`.
 	env = injectClaudeOAuthToken(env)
-	return &claudeCLIProvider{
-		model:      mc.Model,
-		env:        env,
-		extraArgs:  mc.ClaudeArgs,
-		binaryPath: binaryPath,
+	if mc.AdvisorModel != "" {
+		env = injectClaudeAdvisorGate(env)
 	}
+	return &claudeCLIProvider{
+		model:        mc.Model,
+		advisorModel: mc.AdvisorModel,
+		env:          env,
+		extraArgs:    mc.ClaudeArgs,
+		binaryPath:   binaryPath,
+	}
+}
+
+// injectClaudeAdvisorGate sets CLAUDE_CODE_ENABLE_EXPERIMENTAL_ADVISOR_TOOL=1
+// so the Claude CLI activates its server-side advisor tool. Preserves any
+// caller-provided value for the same variable.
+func injectClaudeAdvisorGate(env []string) []string {
+	for _, e := range env {
+		key, _, _ := strings.Cut(e, "=")
+		if key == claudeAdvisorEnableEnvVar {
+			return env
+		}
+	}
+	return append(env, claudeAdvisorEnableEnvVar+"=1")
+}
+
+// hasFlag reports whether args contains the given flag in either `--name` or
+// `--name=value` form. Used to avoid stomping on user-provided values in
+// claude_args.
+func hasFlag(args []string, flag string) bool {
+	prefix := flag + "="
+	for _, a := range args {
+		if a == flag || strings.HasPrefix(a, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // injectClaudeOAuthToken copies CODECANARY_PROVIDER_SECRET into
@@ -118,6 +154,14 @@ func (p *claudeCLIProvider) Run(ctx context.Context, prompt string, opts RunOpts
 	}
 	if opts.MaxBudgetUSD > 0 {
 		args = append(args, "--max-budget-usd", fmt.Sprintf("%.2f", opts.MaxBudgetUSD))
+	}
+	if p.advisorModel != "" && !hasFlag(p.extraArgs, "--settings") {
+		// The Claude CLI surfaces the advisor as a settings-level field;
+		// inject it as a JSON string so we do not need a temp file.
+		settings := map[string]string{"advisorModel": p.advisorModel}
+		if data, err := json.Marshal(settings); err == nil {
+			args = append(args, "--settings", string(data))
+		}
 	}
 	args = append(args, p.extraArgs...)
 	cmd := exec.CommandContext(ctx, p.binaryPath, args...)

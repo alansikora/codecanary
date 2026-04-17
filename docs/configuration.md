@@ -18,6 +18,8 @@ provider: anthropic             # required: anthropic, openai, openrouter, or cl
 
 review_model: claude-sonnet-4-6 # model for main review (provider-specific default)
 triage_model: claude-haiku-4-5-20251001  # required: model for thread re-evaluation
+advisor_model: claude-opus-4-7  # optional: enables the Anthropic advisor tool for the review call
+                                # (anthropic + claude providers only)
 
 api_key_env: ANTHROPIC_API_KEY  # env var holding the API key (default per provider)
 api_base: https://...           # override base URL (openai provider only)
@@ -132,6 +134,23 @@ claude_path: /usr/local/bin/claude-beta
 | `openai` | `gpt-5.4` | `gpt-5.4-mini` |
 | `openrouter` | `anthropic/claude-sonnet-4-6` | `anthropic/claude-haiku-4-5-20251001` |
 | `claude` | `claude-sonnet-4-6` | `haiku` |
+
+## Advisor tool (optional)
+
+When `advisor_model` is set, the review call uses Anthropic's [advisor tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/advisor-tool): a faster executor (your `review_model`) consults a stronger advisor model mid-generation. Only the review call uses it — triage stays on `triage_model` because advisor adds cost that is hard to justify on short classifier prompts.
+
+Supported on `anthropic` and `claude` providers only. Executor must be one of `claude-haiku-4-5`, `claude-sonnet-4-6`, `claude-opus-4-6`, or `claude-opus-4-7`. The advisor must be `claude-opus-4-7` (CLI aliases `opus` accepted for the `claude` provider).
+
+- On the `anthropic` provider, codecanary sends the `advisor-tool-2026-03-01` beta header and the `advisor_20260301` tool entry. The response's `usage.iterations[]` is split so advisor tokens bill at the advisor model's rate.
+- On the `claude` provider, codecanary sets `CLAUDE_CODE_ENABLE_EXPERIMENTAL_ADVISOR_TOOL=1` and injects `{"advisorModel": "…"}` via `--settings`. The feature is flagged as experimental in the Claude CLI; the env gate is required.
+
+```yaml
+version: 1
+provider: anthropic
+review_model: claude-sonnet-4-6
+triage_model: claude-haiku-4-5-20251001
+advisor_model: claude-opus-4-7
+```
 
 ## Budget enforcement
 

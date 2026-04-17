@@ -340,7 +340,7 @@ func Run(opts RunOptions) error {
 			}
 		}
 	}
-	reviewMC := &ModelConfig{Provider: cfg.Provider, Model: cfg.ReviewModel, APIBase: cfg.APIBase, APIKeyEnv: cfg.APIKeyEnv}
+	reviewMC := &ModelConfig{Provider: cfg.Provider, Model: cfg.ReviewModel, AdvisorModel: cfg.AdvisorModel, APIBase: cfg.APIBase, APIKeyEnv: cfg.APIKeyEnv}
 	triageMC := &ModelConfig{Provider: cfg.Provider, Model: cfg.TriageModel, APIBase: cfg.APIBase, APIKeyEnv: cfg.APIKeyEnv}
 	if cfg.Provider == "claude" {
 		reviewMC.ClaudeArgs = cfg.ClaudeArgs
