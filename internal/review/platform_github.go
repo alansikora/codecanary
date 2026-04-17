@@ -230,7 +230,7 @@ func (g *GithubPlatform) Publish(result *ReviewResult, pr *PRData, threads []Rev
 		}
 		Stderrf(ansiGreen, "Review posted to PR #%d\n", g.PRNumber)
 	} else if len(threads) > 0 && allResolved(threads, fixed) {
-		if err := PostAllClearReview(g.Repo, g.PRNumber, minimizeFailed); err != nil {
+		if err := PostAllClearReview(g.Repo, g.PRNumber, result.SHA, minimizeFailed); err != nil {
 			return fmt.Errorf("posting all-clear review: %w", err)
 		}
 		Stderrf(ansiGreen, "All clear! No issues remaining.\n")
@@ -244,7 +244,7 @@ func (g *GithubPlatform) Publish(result *ReviewResult, pr *PRData, threads []Rev
 		unresolvedCount := len(threads) - len(codeFixedSet)
 		fmt.Fprintf(os.Stderr, "No new findings. %d previous thread(s) still unresolved.\n", unresolvedCount)
 	} else {
-		if err := PostCleanReview(g.Repo, g.PRNumber); err != nil {
+		if err := PostCleanReview(g.Repo, g.PRNumber, result.SHA); err != nil {
 			return fmt.Errorf("posting review: %w", err)
 		}
 		Stderrf(ansiGreen, "Review posted to PR #%d\n", g.PRNumber)

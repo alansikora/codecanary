@@ -53,7 +53,7 @@ Each provider is constructed via the factory registry in `provider.go`. The prov
 
 The platform adapter loads unresolved findings from the last review:
 
-**GitHub CI**: Fetches review threads via GraphQL. Filters to CodeCanary findings only (detected by HTML marker comments). Extracts the previous review's HEAD SHA from the most recent review body. Returns unresolved threads, the SHA, and a count for fix_ref numbering.
+**GitHub CI**: Fetches review threads via GraphQL. Filters to CodeCanary findings only (detected by HTML marker comments). Extracts the previous review's HEAD SHA from the most recent review body — clean and all-clear reviews embed this marker too, so the baseline advances even when a push produced no findings. Returns unresolved threads, the SHA, and a count for fix_ref numbering.
 
 **Local modes**: Reads `~/.codecanary/state/<branch>.json`, which stores the SHA, branch name, and findings array from the previous review. Converts saved findings into `ReviewThread` shape for the triage pipeline.
 
@@ -61,7 +61,7 @@ If no previous findings exist, this is a first review.
 
 ### 5. Triage and build prompt
 
-This step diverges based on whether previous findings exist.
+This step diverges based on whether a previous review SHA exists. A previous SHA alone is enough to enter the incremental path — if previous findings were all resolved (no open threads), the incremental diff still scopes the review to commits since the last baseline, avoiding a redundant full re-review.
 
 #### First review path
 

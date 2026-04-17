@@ -703,19 +703,43 @@ func GetIncrementalDiff(baseSHA string) (string, error) {
 	return string(out), nil
 }
 
-// PostCleanReview posts a review when the first review finds no issues.
-func PostCleanReview(repo string, prNumber int) error {
-	return postSimpleReview(repo, prNumber, "CodeCanary reviewed this PR \u2014 no issues found.")
+// PostCleanReview posts a review when the first review finds no issues. The
+// commitSHA is embedded in a hidden marker so future runs treat it as the
+// baseline for incremental reviews, avoiding a redundant full re-review on the
+// next push.
+func PostCleanReview(repo string, prNumber int, commitSHA string) error {
+	body := "CodeCanary reviewed this PR \u2014 no issues found."
+	body += embedBaselineMarker(repo, prNumber, commitSHA)
+	return postSimpleReview(repo, prNumber, body)
 }
 
-// PostAllClearReview posts a review when all previous findings have been resolved.
-// If minimizeFailed is true, a note is appended warning about visible old reviews.
-func PostAllClearReview(repo string, prNumber int, minimizeFailed bool) error {
+// PostAllClearReview posts a review when all previous findings have been
+// resolved. If minimizeFailed is true, a note is appended warning about
+// visible old reviews. The commitSHA is embedded in a hidden marker so future
+// runs treat it as the baseline for incremental reviews; without it, the next
+// push would fall back to reviewing the entire PR again.
+func PostAllClearReview(repo string, prNumber int, commitSHA string, minimizeFailed bool) error {
 	body := "## \U0001F425 CodeCanary\n\n\u2705 All previous findings have been addressed. No new issues found. \u2728"
 	if minimizeFailed {
 		body += "\n\n> \u26A0\uFE0F Some previous review comments could not be minimized and may still be visible."
 	}
+	body += embedBaselineMarker(repo, prNumber, commitSHA)
 	return postSimpleReview(repo, prNumber, body)
+}
+
+// embedBaselineMarker returns a hidden HTML comment containing the commitSHA
+// so FetchPreviousReviewSHA can use this review as the incremental baseline.
+// Returns an empty string if commitSHA is empty (local mode, dry run).
+func embedBaselineMarker(repo string, prNumber int, commitSHA string) string {
+	if commitSHA == "" {
+		return ""
+	}
+	result := ReviewResult{PRNumber: prNumber, Repo: repo, SHA: commitSHA}
+	data, err := json.Marshal(result)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("\n\n%s%s%s\n", reviewMarkerPrefixes[0], string(data), reviewMarkerSuffix)
 }
 
 func postSimpleReview(repo string, prNumber int, body string) error {
