@@ -215,7 +215,7 @@ func (c *ReviewConfig) Validate() error {
 		if c.Provider != "anthropic" && c.Provider != "claude" {
 			return fmt.Errorf("advisor_model is only supported by the anthropic and claude providers, not %q", c.Provider)
 		}
-		if err := validateAdvisorPairing(c.Provider, c.ReviewModel, c.AdvisorModel); err != nil {
+		if err := validateAdvisorPairing(c.ReviewModel, c.AdvisorModel); err != nil {
 			return err
 		}
 	}

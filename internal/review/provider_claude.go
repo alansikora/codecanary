@@ -155,12 +155,16 @@ func (p *claudeCLIProvider) Run(ctx context.Context, prompt string, opts RunOpts
 	if opts.MaxBudgetUSD > 0 {
 		args = append(args, "--max-budget-usd", fmt.Sprintf("%.2f", opts.MaxBudgetUSD))
 	}
-	if p.advisorModel != "" && !hasFlag(p.extraArgs, "--settings") {
-		// The Claude CLI surfaces the advisor as a settings-level field;
-		// inject it as a JSON string so we do not need a temp file.
-		settings := map[string]string{"advisorModel": p.advisorModel}
-		if data, err := json.Marshal(settings); err == nil {
-			args = append(args, "--settings", string(data))
+	if p.advisorModel != "" {
+		if hasFlag(p.extraArgs, "--settings") {
+			Stderrf(ansiYellow, "Warning: advisor_model is ignored because --settings is set via claude_args — merge advisorModel into your settings JSON to use both.\n")
+		} else {
+			// The Claude CLI surfaces the advisor as a settings-level field;
+			// inject it as a JSON string so we do not need a temp file.
+			settings := map[string]string{"advisorModel": p.advisorModel}
+			if data, err := json.Marshal(settings); err == nil {
+				args = append(args, "--settings", string(data))
+			}
 		}
 	}
 	args = append(args, p.extraArgs...)

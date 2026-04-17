@@ -60,6 +60,33 @@ func TestValidate_AdvisorModel_ClaudeAliasAccepted(t *testing.T) {
 	}
 }
 
+func TestValidate_AdvisorModel_UnknownCustomModelRejected(t *testing.T) {
+	// Substring match must not accept arbitrary fork names that happen to
+	// embed a known ID — see PR #161 finding 161-3.
+	cfg := &ReviewConfig{
+		Provider:     "anthropic",
+		ReviewModel:  "claude-sonnet-4-6",
+		TriageModel:  "claude-haiku-4-5-20251001",
+		AdvisorModel: "opus-tuned-fork", // contains "opus" but is not a CLI alias and not a full ID
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected error for non-alias, non-full-ID advisor")
+	}
+}
+
+func TestValidate_AdvisorModel_SonnetAliasRejectedAsAdvisor(t *testing.T) {
+	// Only `opus` is a valid CLI advisor alias. `sonnet`/`haiku` must not pass.
+	cfg := &ReviewConfig{
+		Provider:     "claude",
+		ReviewModel:  "sonnet",
+		TriageModel:  "haiku",
+		AdvisorModel: "sonnet",
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected error for sonnet as advisor alias")
+	}
+}
+
 func TestValidate_AdvisorModel_InvalidAdvisor(t *testing.T) {
 	cfg := &ReviewConfig{
 		Provider:     "anthropic",
@@ -159,7 +186,7 @@ func TestAnthropicProvider_AdvisorTool_Wiring(t *testing.T) {
 	if gotModel != "claude-sonnet-4-6" {
 		t.Errorf("request model = %q, want claude-sonnet-4-6", gotModel)
 	}
-	if len(gotTools) != 1 || gotTools[0].Type != advisorToolType || gotTools[0].Model != "claude-opus-4-7" {
+	if len(gotTools) != 1 || gotTools[0].Type != advisorToolType || gotTools[0].Name != advisorToolName || gotTools[0].Model != "claude-opus-4-7" {
 		t.Errorf("advisor tool not wired correctly: %+v", gotTools)
 	}
 	if !strings.Contains(result.Text, "pre-advisor") || !strings.Contains(result.Text, "post-advisor") {

@@ -19,44 +19,79 @@ const (
 	advisorToolName   = "advisor"
 )
 
-// advisorValidExecutors lists executor model substrings supported by the
-// advisor tool. The advisor model itself must be at least as capable as the
-// executor; Anthropic's documented pairings use claude-opus-4-7 as the advisor.
-var advisorValidExecutors = []string{
+// advisorValidExecutorIDs lists full model IDs supported as the executor for
+// the advisor tool, matched by exact substring (so dated variants like
+// claude-haiku-4-5-20251001 are accepted).
+var advisorValidExecutorIDs = []string{
 	"claude-haiku-4-5",
 	"claude-sonnet-4-6",
 	"claude-opus-4-6",
 	"claude-opus-4-7",
-	// CLI aliases — the Claude CLI resolves these server-side.
+}
+
+// advisorValidAdvisorIDs lists full model IDs supported as the advisor.
+// Anthropic's beta currently only ships claude-opus-4-7 as a valid advisor.
+var advisorValidAdvisorIDs = []string{
+	"claude-opus-4-7",
+}
+
+// advisorValidCLIAliases lists Claude CLI short aliases the user may type for
+// either executor or advisor. The CLI resolves these server-side, so we can't
+// know the exact model without querying — but we can at least accept the
+// documented short names.
+var advisorValidCLIAliases = []string{
 	"haiku", "sonnet", "opus",
 }
 
-// advisorValidAdvisors lists advisor model substrings supported by the tool.
-// Anthropic's beta currently only ships claude-opus-4-7 as a valid advisor.
-var advisorValidAdvisors = []string{
-	"claude-opus-4-7",
-	"opus",
-}
-
 // validateAdvisorPairing checks whether the given executor/advisor pair is
-// supported by the advisor tool. Matches by substring so provider-specific
-// aliases (e.g. "sonnet") and dated IDs both work.
-func validateAdvisorPairing(provider, executor, advisor string) error {
-	execOK := matchesAdvisorModel(executor, advisorValidExecutors)
-	advOK := matchesAdvisorModel(advisor, advisorValidAdvisors)
-	if !execOK {
-		return fmt.Errorf("advisor_model not supported for review_model %q — executor must be one of %s", executor, strings.Join(advisorValidExecutors, ", "))
+// supported. Full model IDs are matched by substring; short CLI aliases are
+// matched by exact equality so `"opus"` does not match `"claude-opus-4-7"`.
+func validateAdvisorPairing(executor, advisor string) error {
+	if !isValidAdvisorExecutor(executor) {
+		return fmt.Errorf("advisor_model not supported for review_model %q — executor must be one of %s (or CLI aliases %s)",
+			executor,
+			strings.Join(advisorValidExecutorIDs, ", "),
+			strings.Join(advisorValidCLIAliases, ", "))
 	}
-	if !advOK {
-		return fmt.Errorf("advisor_model %q is not a supported advisor — advisor must be one of %s", advisor, strings.Join(advisorValidAdvisors, ", "))
+	if !isValidAdvisor(advisor) {
+		return fmt.Errorf("advisor_model %q is not a supported advisor — advisor must be %s (or CLI alias %q)",
+			advisor,
+			strings.Join(advisorValidAdvisorIDs, ", "),
+			"opus")
 	}
 	return nil
 }
 
-func matchesAdvisorModel(model string, candidates []string) bool {
-	lower := strings.ToLower(strings.TrimSpace(model))
-	for _, c := range candidates {
-		if lower == c || strings.Contains(lower, c) {
+func isValidAdvisorExecutor(model string) bool {
+	trimmed := strings.ToLower(strings.TrimSpace(model))
+	if matchesAlias(trimmed, advisorValidCLIAliases) {
+		return true
+	}
+	return containsAny(trimmed, advisorValidExecutorIDs)
+}
+
+func isValidAdvisor(model string) bool {
+	trimmed := strings.ToLower(strings.TrimSpace(model))
+	// Only `opus` is a valid advisor alias — the other CLI aliases (haiku,
+	// sonnet) are not documented as advisors.
+	if trimmed == "opus" {
+		return true
+	}
+	return containsAny(trimmed, advisorValidAdvisorIDs)
+}
+
+func matchesAlias(model string, aliases []string) bool {
+	for _, a := range aliases {
+		if model == a {
+			return true
+		}
+	}
+	return false
+}
+
+func containsAny(model string, ids []string) bool {
+	for _, id := range ids {
+		if strings.Contains(model, id) {
 			return true
 		}
 	}
