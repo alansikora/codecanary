@@ -238,8 +238,9 @@ func abs(x int) int {
 
 // PostReview posts a PR review with inline comments using the GitHub API.
 // Findings with file and line information become inline comments; others are
-// included in the review body.
-func PostReview(repo string, prNumber int, result *ReviewResult, diff string, commitSHA string) error {
+// included in the review body. The summary block is appended to the body so
+// the status dashboard appears on every CodeCanary top-level review.
+func PostReview(repo string, prNumber int, result *ReviewResult, diff string, commitSHA string, summary ReviewSummary) error {
 	// Sort findings by severity before formatting.
 	sortFindings(result.Findings)
 
@@ -268,7 +269,7 @@ func PostReview(repo string, prNumber int, result *ReviewResult, diff string, co
 		}
 	}
 
-	body := FormatReviewBody(result, canInline)
+	body := withSummary(FormatReviewBody(result, canInline), summary)
 
 	payload := reviewPayload{
 		Event:    "COMMENT",
@@ -573,8 +574,122 @@ func ReplyToThread(threadID, body string) error {
 
 // ghReview is the JSON shape for a PR review from the REST API.
 type ghReview struct {
+	ID     int64  `json:"id"`
 	NodeID string `json:"node_id"`
 	Body   string `json:"body"`
+}
+
+// LatestCodecanaryReview captures the identity and body of the most recent
+// CodeCanary top-level review, together with the commit SHA embedded in its
+// hidden marker. Returned by FetchLatestCodecanaryReview for the
+// "edit if same SHA, otherwise post new" publish decision.
+type LatestCodecanaryReview struct {
+	ID   int64
+	SHA  string
+	Body string
+}
+
+// FetchLatestCodecanaryReview returns the most recent top-level review on
+// the PR that carries a CodeCanary marker, along with the commit SHA
+// embedded in that marker. Returns (nil, nil) when no matching review
+// exists. A non-nil error is returned only for transport/parsing failures.
+func FetchLatestCodecanaryReview(repo string, prNumber int) (*LatestCodecanaryReview, error) {
+	owner, name, err := parseRepoSlug(repo)
+	if err != nil {
+		return nil, err
+	}
+
+	apiPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, name, prNumber)
+	out, err := exec.Command("gh", "api", apiPath).Output()
+	if err != nil {
+		return nil, fmt.Errorf("fetching PR reviews: %w", err)
+	}
+
+	var reviews []ghReview
+	if err := json.Unmarshal(out, &reviews); err != nil {
+		return nil, fmt.Errorf("parsing PR reviews: %w", err)
+	}
+
+	// Walk newest → oldest so we return the latest CodeCanary review.
+	for i := len(reviews) - 1; i >= 0; i-- {
+		rev := reviews[i]
+		for _, prefix := range reviewMarkerPrefixes {
+			idx := strings.Index(rev.Body, prefix)
+			if idx < 0 {
+				continue
+			}
+			start := idx + len(prefix)
+			endIdx := strings.Index(rev.Body[start:], reviewMarkerSuffix)
+			if endIdx < 0 {
+				continue
+			}
+			jsonData := rev.Body[start : start+endIdx]
+			var payload struct {
+				SHA string `json:"sha"`
+			}
+			// Ignore unmarshal errors so old reviews that embed a richer
+			// ReviewResult (also containing a "sha" field) still match.
+			_ = json.Unmarshal([]byte(jsonData), &payload)
+			return &LatestCodecanaryReview{
+				ID:   rev.ID,
+				SHA:  payload.SHA,
+				Body: rev.Body,
+			}, nil
+		}
+	}
+
+	return nil, nil
+}
+
+// UpdateReviewBody replaces the body of an existing PR review via the
+// GitHub REST API. Used when a reply-only run (or a duplicate synchronize
+// webhook on the same HEAD) needs to refresh the latest CodeCanary review's
+// counts instead of posting a new top-level comment.
+func UpdateReviewBody(repo string, prNumber int, reviewID int64, body string) error {
+	owner, name, err := parseRepoSlug(repo)
+	if err != nil {
+		return err
+	}
+
+	payload, err := json.Marshal(struct {
+		Body string `json:"body"`
+	}{Body: body})
+	if err != nil {
+		return fmt.Errorf("marshaling update payload: %w", err)
+	}
+
+	apiPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews/%d", owner, name, prNumber, reviewID)
+	_, err = ghAPIRequest("PUT", apiPath, payload)
+	return err
+}
+
+// ghAPIRequest is a generic gh api wrapper that preserves the temp-file
+// pattern used by ghAPIPOST (avoids stdin pipe truncation on large bodies).
+func ghAPIRequest(method, apiPath string, payloadJSON []byte) ([]byte, error) {
+	dir, err := os.MkdirTemp("", "codecanary-*")
+	if err != nil {
+		return nil, fmt.Errorf("creating temp dir: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	tmpFile, err := os.CreateTemp(dir, "payload.json")
+	if err != nil {
+		return nil, fmt.Errorf("creating temp file: %w", err)
+	}
+	if _, err := tmpFile.Write(payloadJSON); err != nil {
+		_ = tmpFile.Close()
+		return nil, fmt.Errorf("writing payload to temp file: %w", err)
+	}
+	_ = tmpFile.Close()
+
+	cmd := exec.Command("gh", "api", apiPath, "--method", method, "--input", tmpFile.Name())
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return stdout.Bytes(), &apiError{Err: err, Stderr: stderr.String(), Response: stdout.String()}
+	}
+	return stdout.Bytes(), nil
 }
 
 // FetchPreviousReviewSHA gets the SHA from the last review's hidden data.
@@ -707,8 +822,8 @@ func GetIncrementalDiff(baseSHA string) (string, error) {
 // commitSHA is embedded in a hidden marker so future runs treat it as the
 // baseline for incremental reviews, avoiding a redundant full re-review on the
 // next push.
-func PostCleanReview(repo string, prNumber int, commitSHA string) error {
-	return postSimpleReview(repo, prNumber, buildCleanReviewBody(commitSHA))
+func PostCleanReview(repo string, prNumber int, commitSHA string, summary ReviewSummary) error {
+	return postSimpleReview(repo, prNumber, buildCleanReviewBody(commitSHA, summary))
 }
 
 // PostAllClearReview posts a review when all previous findings have been
@@ -716,25 +831,52 @@ func PostCleanReview(repo string, prNumber int, commitSHA string) error {
 // visible old reviews. The commitSHA is embedded in a hidden marker so future
 // runs treat it as the baseline for incremental reviews; without it, the next
 // push would fall back to reviewing the entire PR again.
-func PostAllClearReview(repo string, prNumber int, commitSHA string, minimizeFailed bool) error {
-	return postSimpleReview(repo, prNumber, buildAllClearReviewBody(commitSHA, minimizeFailed))
+func PostAllClearReview(repo string, prNumber int, commitSHA string, minimizeFailed bool, summary ReviewSummary) error {
+	return postSimpleReview(repo, prNumber, buildAllClearReviewBody(commitSHA, minimizeFailed, summary))
+}
+
+// PostActivityReview posts a review when no new findings were raised but
+// there is cycle activity worth surfacing (dismissals, acknowledgments,
+// rebuttals, still-open threads). This keeps every commit push producing a
+// visible top-level status comment instead of silently logging.
+func PostActivityReview(repo string, prNumber int, commitSHA string, summary ReviewSummary) error {
+	return postSimpleReview(repo, prNumber, buildActivityReviewBody(commitSHA, summary))
 }
 
 // buildCleanReviewBody renders the full Markdown body posted by
 // PostCleanReview. Split out from the poster so tests can assert the exact
 // string that lands on GitHub without having to mock gh.
-func buildCleanReviewBody(commitSHA string) string {
-	return "CodeCanary reviewed this PR \u2014 no issues found." + embedBaselineMarker(commitSHA)
+func buildCleanReviewBody(commitSHA string, summary ReviewSummary) string {
+	return withSummary("CodeCanary reviewed this PR \u2014 no issues found.", summary) + embedBaselineMarker(commitSHA)
 }
 
 // buildAllClearReviewBody renders the full Markdown body posted by
 // PostAllClearReview. Split out for the same reason as buildCleanReviewBody.
-func buildAllClearReviewBody(commitSHA string, minimizeFailed bool) string {
+func buildAllClearReviewBody(commitSHA string, minimizeFailed bool, summary ReviewSummary) string {
 	body := "## \U0001F425 CodeCanary\n\n\u2705 All previous findings have been addressed. No new issues found. \u2728"
 	if minimizeFailed {
 		body += "\n\n> \u26A0\uFE0F Some previous review comments could not be minimized and may still be visible."
 	}
-	return body + embedBaselineMarker(commitSHA)
+	return withSummary(body, summary) + embedBaselineMarker(commitSHA)
+}
+
+// buildActivityReviewBody renders the body for a commit push that raised no
+// new findings but has cycle activity (dismissals/acknowledgments/rebuttals
+// or still-open threads carried forward).
+func buildActivityReviewBody(commitSHA string, summary ReviewSummary) string {
+	body := "## \U0001F425 CodeCanary\n\nReviewed this push \u2014 no new issues found."
+	return withSummary(body, summary) + embedBaselineMarker(commitSHA)
+}
+
+// withSummary appends the status summary block to a review body. The block
+// is skipped when the summary has no non-zero counts, so existing clean/
+// all-clear bodies render identically when nothing happened.
+func withSummary(body string, summary ReviewSummary) string {
+	block := renderSummaryBlock(summary)
+	if block == "" {
+		return body
+	}
+	return body + block
 }
 
 // embedBaselineMarker returns a hidden HTML comment containing the commitSHA

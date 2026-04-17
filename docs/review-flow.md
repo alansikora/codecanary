@@ -151,7 +151,14 @@ If the response is truncated (hit max output tokens), a warning is logged. The p
 
 ### 8. Publish results
 
-**GitHub CI**: Posts a review via the REST API with inline comments anchored to diff lines. Findings that can't be mapped to a diff position go in the review body. If all previous findings were resolved, old review comments are minimized (collapsed) for a cleaner PR. If there are no findings at all, a "clean" or "all clear" comment is posted.
+**GitHub CI**: Every cycle emits exactly one top-level CodeCanary review, decided by an edit-vs-post rule. `FetchLatestCodecanaryReview` reads the commit SHA from the most recent CodeCanary review's hidden marker:
+
+- **Same SHA** (reply-only run, or a duplicate `synchronize` webhook on the same HEAD): the existing body is updated in place with `UpdateReviewBody`. Only the status block between the `<!-- codecanary:status -->` markers is swapped — inline comments and prior findings text are untouched.
+- **Different or no SHA** (new commits, or first review on the PR): a fresh review is posted. The body variant depends on the cycle outcome — findings review, all-clear, activity summary (no new findings but cycle activity to surface), or clean review. All variants carry the same status block and baseline SHA marker. Older CodeCanary reviews are minimized (collapsed) before posting.
+
+The status block lists non-zero counts for: new findings, resolved by code, file removed, dismissed by author, acknowledged by author, rebutted by author, still unresolved. The block renders nothing when all counts are zero, so clean reviews remain copy-exact.
+
+Per-thread ack replies for dismissed/acknowledged/rebutted resolutions are posted earlier in the pipeline (`HandleResolutions`) and deduped via `<!-- codecanary:ack:<reason> -->` markers. Reply-only runs skip `SaveState` so the empty findings slice doesn't overwrite persisted state.
 
 **Local modes**: Prints the formatted result to stdout. Format depends on context: terminal (colored, human-readable), markdown, or JSON.
 
