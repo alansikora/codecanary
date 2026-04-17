@@ -194,7 +194,30 @@ func (g *GithubPlatform) Publish(result *ReviewResult, pr *PRData, threads []Rev
 		return nil
 	}
 
-	// Minimize previous reviews before posting.
+	summary := computeReviewSummary(threads, fixed, result.Findings)
+
+	// Decide edit-vs-post: if the latest CodeCanary review on the PR carries
+	// the current HEAD SHA in its marker, this is either a reply-only run or
+	// a duplicate synchronize webhook — refresh that review in place rather
+	// than stacking another top-level comment.
+	latest, latestErr := FetchLatestCodecanaryReview(g.Repo, g.PRNumber)
+	if latestErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not fetch latest review for dedup: %v\n", latestErr)
+	}
+	if latest != nil && result.SHA != "" && latest.SHA == result.SHA {
+		updated := replaceSummaryBlock(latest.Body, summary)
+		if updated == latest.Body {
+			Stderrf(ansiGreen, "Latest review already current for %s — no update needed\n", shortSHA(result.SHA))
+			return nil
+		}
+		if err := UpdateReviewBody(g.Repo, g.PRNumber, latest.ID, updated); err != nil {
+			return fmt.Errorf("updating review body: %w", err)
+		}
+		Stderrf(ansiGreen, "Updated latest review on PR #%d\n", g.PRNumber)
+		return nil
+	}
+
+	// Minimize previous reviews before posting a fresh one.
 	minimizeFailed := false
 	if len(threads) > 0 {
 		if nodeIDs, err := FindReviewNodeIDs(g.Repo, g.PRNumber); err == nil {
@@ -223,28 +246,27 @@ func (g *GithubPlatform) Publish(result *ReviewResult, pr *PRData, threads []Rev
 		}
 	}
 
-	// Post one of: new findings, all-clear, clean review, or nothing.
-	if len(result.Findings) > 0 {
-		if err := PostReview(g.Repo, g.PRNumber, result, pr.ValidationDiff(), result.SHA); err != nil {
+	// POST path — pick the body shape that fits the cycle outcome. Every
+	// branch emits a top-level review so each push lands a visible status
+	// comment on the PR.
+	switch {
+	case len(result.Findings) > 0:
+		if err := PostReview(g.Repo, g.PRNumber, result, pr.ValidationDiff(), result.SHA, summary); err != nil {
 			return fmt.Errorf("posting review: %w", err)
 		}
 		Stderrf(ansiGreen, "Review posted to PR #%d\n", g.PRNumber)
-	} else if len(threads) > 0 && allResolved(threads, fixed) {
-		if err := PostAllClearReview(g.Repo, g.PRNumber, result.SHA, minimizeFailed); err != nil {
+	case len(threads) > 0 && allResolved(threads, fixed):
+		if err := PostAllClearReview(g.Repo, g.PRNumber, result.SHA, minimizeFailed, summary); err != nil {
 			return fmt.Errorf("posting all-clear review: %w", err)
 		}
 		Stderrf(ansiGreen, "All clear! No issues remaining.\n")
-	} else if len(threads) > 0 {
-		codeFixedSet := make(map[int]bool, len(fixed))
-		for _, f := range fixed {
-			if f.Index >= 0 && f.Index < len(threads) && isTrueResolution(f.Reason) {
-				codeFixedSet[f.Index] = true
-			}
+	case len(threads) > 0:
+		if err := PostActivityReview(g.Repo, g.PRNumber, result.SHA, summary); err != nil {
+			return fmt.Errorf("posting activity review: %w", err)
 		}
-		unresolvedCount := len(threads) - len(codeFixedSet)
-		fmt.Fprintf(os.Stderr, "No new findings. %d previous thread(s) still unresolved.\n", unresolvedCount)
-	} else {
-		if err := PostCleanReview(g.Repo, g.PRNumber, result.SHA); err != nil {
+		Stderrf(ansiGreen, "Posted activity summary to PR #%d\n", g.PRNumber)
+	default:
+		if err := PostCleanReview(g.Repo, g.PRNumber, result.SHA, summary); err != nil {
 			return fmt.Errorf("posting review: %w", err)
 		}
 		Stderrf(ansiGreen, "Review posted to PR #%d\n", g.PRNumber)

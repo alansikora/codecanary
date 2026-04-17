@@ -12,6 +12,13 @@ permissions:
   id-token: write
   pull-requests: write
 
+# Serialize CodeCanary runs per PR so two concurrent workflow runs never post
+# duplicate inline comments or race each other when editing the latest
+# top-level review body. Replies on the same PR queue behind the commit push.
+concurrency:
+  group: codecanary-pr-${{ github.event.pull_request.number || github.event.comment.pull_request_url }}
+  cancel-in-progress: false
+
 jobs:
   review:
     if: >-
