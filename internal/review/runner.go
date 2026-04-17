@@ -104,7 +104,7 @@ func prepareReview(pr *PRData, configPath string) (*reviewContext, error) {
 		return nil, err
 	}
 
-	projectDocs := ReadProjectDocs()
+	projectDocs := ReadProjectDocs(pr.Files)
 	if len(projectDocs) > 0 {
 		fmt.Fprintf(os.Stderr, "Loaded %d project doc(s) for review context\n", len(projectDocs))
 	}
