@@ -709,7 +709,7 @@ func GetIncrementalDiff(baseSHA string) (string, error) {
 // next push.
 func PostCleanReview(repo string, prNumber int, commitSHA string) error {
 	body := "CodeCanary reviewed this PR \u2014 no issues found."
-	body += embedBaselineMarker(repo, prNumber, commitSHA)
+	body += embedBaselineMarker(commitSHA)
 	return postSimpleReview(repo, prNumber, body)
 }
 
@@ -723,23 +723,26 @@ func PostAllClearReview(repo string, prNumber int, commitSHA string, minimizeFai
 	if minimizeFailed {
 		body += "\n\n> \u26A0\uFE0F Some previous review comments could not be minimized and may still be visible."
 	}
-	body += embedBaselineMarker(repo, prNumber, commitSHA)
+	body += embedBaselineMarker(commitSHA)
 	return postSimpleReview(repo, prNumber, body)
 }
 
 // embedBaselineMarker returns a hidden HTML comment containing the commitSHA
 // so FetchPreviousReviewSHA can use this review as the incremental baseline.
-// Returns an empty string if commitSHA is empty (local mode, dry run).
-func embedBaselineMarker(repo string, prNumber int, commitSHA string) string {
+// Returns an empty string if commitSHA is empty (local mode, dry run). The
+// marker carries only the SHA — FetchPreviousReviewSHA is the sole reader and
+// it only needs that field.
+func embedBaselineMarker(commitSHA string) string {
 	if commitSHA == "" {
 		return ""
 	}
-	result := ReviewResult{PRNumber: prNumber, Repo: repo, SHA: commitSHA}
-	data, err := json.Marshal(result)
+	data, err := json.Marshal(struct {
+		SHA string `json:"sha"`
+	}{SHA: commitSHA})
 	if err != nil {
 		return ""
 	}
-	return fmt.Sprintf("\n\n%s%s%s\n", reviewMarkerPrefixes[0], string(data), reviewMarkerSuffix)
+	return fmt.Sprintf("\n%s%s%s\n", reviewMarkerPrefixes[0], string(data), reviewMarkerSuffix)
 }
 
 func postSimpleReview(repo string, prNumber int, body string) error {

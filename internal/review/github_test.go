@@ -8,7 +8,7 @@ import (
 
 func TestEmbedBaselineMarkerRoundTrip(t *testing.T) {
 	sha := "6971e4164c0a4df9d89aefdb874174a56df420d4"
-	marker := embedBaselineMarker("owner/repo", 1502, sha)
+	marker := embedBaselineMarker(sha)
 
 	prefix := reviewMarkerPrefixes[0]
 	idx := strings.Index(marker, prefix)
@@ -21,6 +21,8 @@ func TestEmbedBaselineMarkerRoundTrip(t *testing.T) {
 		t.Fatalf("marker missing expected suffix: %q", marker)
 	}
 
+	// FetchPreviousReviewSHA unmarshals into ReviewResult, so the minimal
+	// {sha} payload must still populate ReviewResult.SHA correctly.
 	var result ReviewResult
 	if err := json.Unmarshal([]byte(marker[start:start+endIdx]), &result); err != nil {
 		t.Fatalf("marker JSON does not round-trip: %v (raw=%q)", err, marker[start:start+endIdx])
@@ -28,16 +30,22 @@ func TestEmbedBaselineMarkerRoundTrip(t *testing.T) {
 	if result.SHA != sha {
 		t.Errorf("SHA = %q, want %q", result.SHA, sha)
 	}
-	if result.PRNumber != 1502 {
-		t.Errorf("PRNumber = %d, want 1502", result.PRNumber)
-	}
-	if result.Repo != "owner/repo" {
-		t.Errorf("Repo = %q, want owner/repo", result.Repo)
-	}
 }
 
 func TestEmbedBaselineMarkerEmptySHA(t *testing.T) {
-	if got := embedBaselineMarker("owner/repo", 1, ""); got != "" {
+	if got := embedBaselineMarker(""); got != "" {
 		t.Errorf("expected empty marker for empty SHA, got %q", got)
+	}
+}
+
+// TestEmbedBaselineMarkerFormat guards the full rendered snippet against
+// accidental extra whitespace regressions. FormatReviewBody uses a single
+// leading and trailing newline around the marker; baseline-marker bodies
+// must match that convention so the rendered PR comment doesn't drift.
+func TestEmbedBaselineMarkerFormat(t *testing.T) {
+	got := embedBaselineMarker("abc123")
+	want := "\n<!-- codecanary:review {\"sha\":\"abc123\"} -->\n"
+	if got != want {
+		t.Errorf("marker = %q, want %q", got, want)
 	}
 }

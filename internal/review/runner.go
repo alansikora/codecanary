@@ -454,6 +454,13 @@ func Run(opts RunOptions) error {
 	}
 
 	// Handle early return for "no new changes" with no open findings.
+	// This fires when the incremental diff is empty and nothing is carried
+	// forward. Skipping Publish is intentional: there is nothing new to
+	// review and nothing to acknowledge, so emitting another comment would
+	// be noise. The baseline marker stays at the previous review's SHA,
+	// which is the correct comparison point for the next push — an empty
+	// diff means the tree is unchanged, so advancing the baseline would
+	// produce the same incremental diff next time either way.
 	if prompt == "" && len(findings) == 0 && len(stillOpenFindings) == 0 && isIncremental {
 		return nil
 	}
