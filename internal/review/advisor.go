@@ -67,7 +67,7 @@ func isValidAdvisorExecutor(model string) bool {
 	if matchesAlias(trimmed, advisorValidCLIAliases) {
 		return true
 	}
-	return containsAny(trimmed, advisorValidExecutorIDs)
+	return matchesFullID(trimmed, advisorValidExecutorIDs)
 }
 
 func isValidAdvisor(model string) bool {
@@ -77,7 +77,7 @@ func isValidAdvisor(model string) bool {
 	if trimmed == "opus" {
 		return true
 	}
-	return containsAny(trimmed, advisorValidAdvisorIDs)
+	return matchesFullID(trimmed, advisorValidAdvisorIDs)
 }
 
 func matchesAlias(model string, aliases []string) bool {
@@ -89,9 +89,12 @@ func matchesAlias(model string, aliases []string) bool {
 	return false
 }
 
-func containsAny(model string, ids []string) bool {
+// matchesFullID reports whether model equals a known full ID or is a dated
+// variant (e.g. claude-opus-4-7-20251001). Arbitrary strings that merely
+// contain the ID substring (e.g. my-claude-opus-4-7-fork) are rejected.
+func matchesFullID(model string, ids []string) bool {
 	for _, id := range ids {
-		if strings.Contains(model, id) {
+		if model == id || strings.HasPrefix(model, id+"-") {
 			return true
 		}
 	}

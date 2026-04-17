@@ -62,7 +62,7 @@ func TestValidate_AdvisorModel_ClaudeAliasAccepted(t *testing.T) {
 
 func TestValidate_AdvisorModel_UnknownCustomModelRejected(t *testing.T) {
 	// Substring match must not accept arbitrary fork names that happen to
-	// embed a known ID — see PR #161 finding 161-3.
+	// embed a known ID — see PR #161 findings 161-3 and 161-7.
 	cfg := &ReviewConfig{
 		Provider:     "anthropic",
 		ReviewModel:  "claude-sonnet-4-6",
@@ -71,6 +71,33 @@ func TestValidate_AdvisorModel_UnknownCustomModelRejected(t *testing.T) {
 	}
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected error for non-alias, non-full-ID advisor")
+	}
+}
+
+func TestValidate_AdvisorModel_ForkNameWithEmbeddedIDRejected(t *testing.T) {
+	// A fork whose name embeds a known full ID as substring must not pass —
+	// this is the specific case called out in 161-7.
+	cfg := &ReviewConfig{
+		Provider:     "anthropic",
+		ReviewModel:  "claude-sonnet-4-6",
+		TriageModel:  "claude-haiku-4-5-20251001",
+		AdvisorModel: "my-claude-opus-4-7-fork",
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected error for fork name embedding claude-opus-4-7")
+	}
+}
+
+func TestValidate_AdvisorModel_DatedVariantAccepted(t *testing.T) {
+	// Dated variants like claude-opus-4-7-20251001 must still be accepted.
+	cfg := &ReviewConfig{
+		Provider:     "anthropic",
+		ReviewModel:  "claude-sonnet-4-6-20251001",
+		TriageModel:  "claude-haiku-4-5-20251001",
+		AdvisorModel: "claude-opus-4-7-20251001",
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("unexpected error for dated variant: %v", err)
 	}
 }
 
