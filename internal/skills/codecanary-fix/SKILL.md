@@ -57,12 +57,13 @@ Track one piece of state across iterations:
    - **PR mode**: run
      `codecanary findings --watch --output json`.
      The command blocks until the review check completes; its stdout is
-     a single JSON object. Parse it. Deduplication is handled by GitHub
-     thread resolution — resolved threads are excluded by default.
-     Note: findings the operator previously skipped (via "Skip this
-     cycle" or "Apply some") will re-appear if their threads are still
-     open. This is intentional — skipped findings are deferred, not
-     dismissed.
+     a single JSON object. Parse it. Findings the bot considers handled
+     are excluded by default — that includes GitHub-resolved threads
+     *and* threads where the bot has recorded the author's deferral
+     (ack:dismissed / ack:rebutted / ack:acknowledged). Skip replies
+     posted by the skill in earlier cycles therefore stop re-surfacing
+     once the next bot run has ack'd them, so you should never see the
+     same deferred finding twice.
    - **Local mode**: run `codecanary review --output json`. The command
      runs the review inline; its stdout is a JSON object with a
      `findings` array in the same shape.

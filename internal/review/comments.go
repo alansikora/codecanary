@@ -195,6 +195,21 @@ func FetchReviewStatus(repo string, prNumber int) (ReviewStatus, error) {
 // Errors is populated on partial GraphQL failures (insufficient scope,
 // resource not found, etc.); when `data` is null or incomplete, those
 // errors are the only signal of what went wrong.
+type findingsCommentNode struct {
+	Body         string `json:"body"`
+	Path         string `json:"path"`
+	Line         int    `json:"line"`
+	OriginalLine int    `json:"originalLine"`
+	URL          string `json:"url"`
+	CreatedAt    string `json:"createdAt"`
+	Commit       struct {
+		Oid string `json:"oid"`
+	} `json:"commit"`
+	Author struct {
+		Login string `json:"login"`
+	} `json:"author"`
+}
+
 type graphQLFindingsResponse struct {
 	Data struct {
 		Repository struct {
@@ -204,20 +219,7 @@ type graphQLFindingsResponse struct {
 						IsResolved bool `json:"isResolved"`
 						IsOutdated bool `json:"isOutdated"`
 						Comments   struct {
-							Nodes []struct {
-								Body         string `json:"body"`
-								Path         string `json:"path"`
-								Line         int    `json:"line"`
-								OriginalLine int    `json:"originalLine"`
-								URL          string `json:"url"`
-								CreatedAt    string `json:"createdAt"`
-								Commit       struct {
-									Oid string `json:"oid"`
-								} `json:"commit"`
-								Author struct {
-									Login string `json:"login"`
-								} `json:"author"`
-							} `json:"nodes"`
+							Nodes []findingsCommentNode `json:"nodes"`
 						} `json:"comments"`
 					} `json:"nodes"`
 				} `json:"reviewThreads"`
@@ -231,10 +233,26 @@ type graphQLFindingsResponse struct {
 	} `json:"errors"`
 }
 
+// threadHasAckReply reports whether any of the given replies carries a
+// codecanary ack marker, meaning the bot already recorded the author's
+// deferral (dismissed / rebutted / acknowledged). Findings in that state
+// are filtered out of `codecanary findings` by default so the fix loop
+// doesn't re-surface deferrals every cycle.
+func threadHasAckReply(replies []findingsCommentNode) bool {
+	for _, r := range replies {
+		if strings.Contains(r.Body, ackMarkerPrefix) || strings.Contains(r.Body, legacyAckPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // FetchPRFindings returns the findings posted by the codecanary bot on
 // the given PR, keyed off GitHub's reviewThreads GraphQL endpoint so we
-// can honour per-thread resolution state. Resolved threads are omitted
-// by default; pass includeResolved=true to keep them.
+// can honour per-thread resolution state. By default, threads the bot
+// considers handled are omitted — that covers both GitHub-resolved
+// threads and threads carrying a codecanary ack marker (dismissed,
+// rebutted, acknowledged). Pass includeResolved=true to keep them.
 //
 // Uses GraphQL (not the REST comments endpoint) because isResolved
 // isn't exposed via REST. That's what caused the first iteration of
@@ -311,6 +329,13 @@ func FetchPRFindings(repo string, prNumber int, includeResolved bool) ([]PRFindi
 		}
 		head := thread.Comments.Nodes[0]
 		if !isBotAuthor(head.Author.Login) {
+			continue
+		}
+		// Skip threads the bot has already ack'd as
+		// dismissed/rebutted/acknowledged — the author deferred them,
+		// so re-surfacing them every cycle is noise. Callers that want
+		// the full history can pass includeResolved=true.
+		if !includeResolved && threadHasAckReply(thread.Comments.Nodes[1:]) {
 			continue
 		}
 		// Extract the finding marker from the body.
