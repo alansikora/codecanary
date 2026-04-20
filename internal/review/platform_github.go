@@ -99,13 +99,16 @@ func acknowledgmentMessage(reason string) string {
 	}
 }
 
-// hasAcknowledgmentReply checks if an acknowledgment reply already exists
-// on the thread for the given reason, to avoid posting duplicate replies.
-func hasAcknowledgmentReply(t ReviewThread, reason string) bool {
-	newMarker := fmt.Sprintf("%s%s -->", ackMarkerPrefix, reason)
-	oldMarker := fmt.Sprintf("%s%s -->", legacyAckPrefix, reason)
+// hasAcknowledgmentReply reports whether the thread already carries any
+// codecanary ack reply. Dedup is intentionally reason-agnostic: all three
+// ack reasons (dismissed/rebutted/acknowledged) keep the thread open and
+// convey the same outcome to the author, and triage classification across
+// runs is not deterministic — so checking only the same reason let a
+// rebutted ack get followed by a dismissed ack on the next run, stacking
+// two replies on one skip. One ack per thread is enough.
+func hasAcknowledgmentReply(t ReviewThread) bool {
 	for _, r := range t.Replies {
-		if strings.Contains(r.Body, newMarker) || strings.Contains(r.Body, oldMarker) {
+		if strings.Contains(r.Body, ackMarkerPrefix) || strings.Contains(r.Body, legacyAckPrefix) {
 			return true
 		}
 	}
@@ -171,7 +174,7 @@ func (g *GithubPlatform) HandleResolutions(threads []ReviewThread, fixed []fixed
 				}
 			}
 		} else {
-			if !hasAcknowledgmentReply(t, f.Reason) {
+			if !hasAcknowledgmentReply(t) {
 				msg := acknowledgmentMessage(f.Reason)
 				if err := ReplyToThread(t.ID, msg); err != nil {
 					fmt.Fprintf(os.Stderr, "  ! %s — failed to post acknowledgment: %v\n", label, err)

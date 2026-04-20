@@ -158,7 +158,9 @@ If the response is truncated (hit max output tokens), a warning is logged. The p
 
 The status block lists non-zero counts for: new findings, resolved by code, file removed, dismissed by author, acknowledged by author, rebutted by author, still unresolved. The block renders nothing when all counts are zero, so clean reviews remain copy-exact.
 
-Per-thread ack replies for dismissed/acknowledged/rebutted resolutions are posted earlier in the pipeline (`HandleResolutions`) and deduped via `<!-- codecanary:ack:<reason> -->` markers. Reply-only runs skip `SaveState` so the empty findings slice doesn't overwrite persisted state.
+Per-thread ack replies for dismissed/acknowledged/rebutted resolutions are posted earlier in the pipeline (`HandleResolutions`). Dedup is reason-agnostic: if the thread already carries *any* `<!-- codecanary:ack:... -->` marker, no further ack reply is posted. Reasons can shift across triage runs (LLM non-determinism), and all three convey the same outcome ("keeping open"), so one ack per thread is enough. Reply-only runs skip `SaveState` so the empty findings slice doesn't overwrite persisted state.
+
+`codecanary findings` applies the same marker to filter deferrals out of its default output: threads with any `codecanary:ack:*` reply are treated as handled and omitted alongside GitHub-resolved threads. Pass `--include-resolved` to see them. This keeps the codecanary-fix skill from re-prompting on findings the operator already deferred.
 
 **Local modes**: Prints the formatted result to stdout. Format depends on context: terminal (colored, human-readable), markdown, or JSON.
 
