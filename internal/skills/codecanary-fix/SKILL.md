@@ -45,6 +45,37 @@ is spent on triage judgment and fix application, not on watching CI.
 
 If you cannot tell which mode applies, ask the operator before starting.
 
+## Startup header
+
+Before the first iteration, run `codecanary --version` and extract the
+version string from its output (e.g. `codecanary version 0.6.13` →
+`0.6.13`). Then print a boxed hash-style banner to the operator using
+this exact shape:
+
+```
+####################################
+#                                  #
+#     CodeCanary v<VERSION> — Fix     #
+#                                  #
+####################################
+```
+
+Rules for rendering:
+
+- Use ASCII `#` characters only (no Unicode box-drawing).
+- The banner is five lines: a top row of `#`, a blank-interior row, the
+  title row, another blank-interior row, and a bottom row of `#`.
+- Top and bottom rows are solid `#` characters of the same width.
+- All three interior rows start and end with a single `#` and have
+  spaces in between.
+- Pad the title row with spaces on both sides so its total width
+  matches the top and bottom rows. Keep at least four spaces of
+  padding on each side of `CodeCanary v<VERSION> — Fix` so the title
+  feels centered.
+- Print the banner once per skill invocation, before the loop starts.
+- Render it inside a fenced code block so the alignment survives in
+  Markdown.
+
 ## The loop
 
 Track one piece of state across iterations:
