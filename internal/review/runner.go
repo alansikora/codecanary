@@ -14,17 +14,30 @@ import (
 
 // RunOptions configures a review run.
 type RunOptions struct {
-	Repo       string
-	PRNumber   int
-	ConfigPath string
-	Output     string // "markdown" or "json"
-	Post       bool
-	DryRun     bool
-	ReplyOnly  bool           // evaluate thread replies only, skip new findings
-	ClaudePath string         // override claude CLI binary path (overrides config claude_path)
-	Version    string         // binary version (for telemetry)
-	PR         *PRData        // pre-fetched PRData (used in local mode)
-	Platform   ReviewPlatform // environment adapter (GitHub or local)
+	Repo           string
+	PRNumber       int
+	ConfigPath     string
+	Output         string // "markdown" or "json"
+	Post           bool
+	DryRun         bool
+	ReplyOnly      bool           // evaluate thread replies only, skip new findings
+	ClaudePath     string         // override claude CLI binary path (overrides config claude_path)
+	FailOnSeverity string         // non-zero exit when findings at or above this severity exist
+	Version        string         // binary version (for telemetry)
+	PR             *PRData        // pre-fetched PRData (used in local mode)
+	Platform       ReviewPlatform // environment adapter (GitHub or local)
+}
+
+// FailOnSeverityError is returned when --fail-on is set and findings at or
+// above the given severity threshold are found. It is a distinct type so
+// callers can detect it via errors.As.
+type FailOnSeverityError struct {
+	Severity string
+	Count    int
+}
+
+func (e *FailOnSeverityError) Error() string {
+	return fmt.Sprintf("found %d finding(s) at or above severity %q (--fail-on %s)", e.Count, e.Severity, e.Severity)
 }
 
 // allowedEnvPrefixes lists environment variable prefixes passed to the LLM subprocess.
@@ -478,6 +491,22 @@ func Run(opts RunOptions) error {
 	tracker.SetPRSize(linesAdded, linesRemoved, filesChanged)
 	platform.ReportUsage(tracker)
 
+	// 11b. --fail-on: compute whether findings meet the severity threshold.
+	// Deferred until after telemetry so that failing runs still emit usage data.
+	var failOnErr error
+	if opts.FailOnSeverity != "" {
+		threshold := severityOrder(opts.FailOnSeverity)
+		var count int
+		for _, f := range result.Findings {
+			if severityOrder(f.Severity) <= threshold {
+				count++
+			}
+		}
+		if count > 0 {
+			failOnErr = &FailOnSeverityError{Severity: opts.FailOnSeverity, Count: count}
+		}
+	}
+
 	// 12. Anonymous telemetry (fire-and-forget).
 	if !opts.DryRun && telemetry.Enabled() {
 		calls := tracker.Calls()
@@ -519,7 +548,7 @@ func Run(opts RunOptions) error {
 		})
 	}
 
-	return nil
+	return failOnErr
 }
 
 // runTriage handles the incremental review: classify previous threads, evaluate
