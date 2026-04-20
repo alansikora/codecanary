@@ -45,6 +45,46 @@ is spent on triage judgment and fix application, not on watching CI.
 
 If you cannot tell which mode applies, ask the operator before starting.
 
+## Startup header
+
+Before the first iteration, run `codecanary --version` and extract the
+version string from its output (e.g. `codecanary version 0.6.13` →
+`0.6.13`). Then print a boxed hash-style banner to the operator.
+
+Concrete example — if the version is `0.6.13`, the banner must be
+exactly:
+
+```
+##################################
+#                                #
+#    CodeCanary v0.6.13 — Fix    #
+#                                #
+##################################
+```
+
+Here the top and bottom rows are 34 `#` characters; the title
+`CodeCanary v0.6.13 — Fix` is 24 display columns and is wrapped by
+`#` + 4 spaces on the left and 4 spaces + `#` on the right, for a
+total of 34 columns. The blank interior rows are `#` + 32 spaces + `#`.
+
+Rules for rendering:
+
+- Use ASCII `#` characters only (no Unicode box-drawing).
+- The banner is five lines: a top row of `#`, a blank-interior row, the
+  title row, another blank-interior row, and a bottom row of `#`.
+- The version string is variable-length — you must **recompute the
+  padding** for each invocation so every row has the same column
+  width. Do not copy the example padding literally if the version
+  differs; count the characters in `CodeCanary v<VERSION> — Fix`
+  and rebuild the border/padding around it.
+- Keep at least four spaces of padding on each side of the title so
+  it feels centered, and match top/bottom row widths to the title
+  row width exactly.
+- Count `—` (em dash) as one display column.
+- Print the banner once per skill invocation, before the loop starts.
+- Render it inside a fenced code block so the alignment survives in
+  Markdown.
+
 ## The loop
 
 Track one piece of state across iterations:
