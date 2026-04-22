@@ -27,7 +27,7 @@ func runGH(label string, args ...string) ([]byte, error) {
 		if msg == "" {
 			return nil, fmt.Errorf("%s: %w", label, err)
 		}
-		return nil, fmt.Errorf("%s: %w: %s", label, err, msg)
+		return nil, fmt.Errorf("%s: %s: %w", label, msg, err)
 	}
 	return out, nil
 }
@@ -116,12 +116,10 @@ func FetchPR(repo string, number int) (*PRData, error) {
 	}
 
 	// Fetch the diff. This hits GitHub's pull request diff API
-	// (GET /repos/{owner}/{repo}/pulls/{n} with Accept: application/vnd.github.v3.diff),
-	// which occasionally returns transient 5xx/timeouts — in that case, retrying the job
-	// is the usual fix.
+	// (GET /repos/{owner}/{repo}/pulls/{n} with Accept: application/vnd.github.v3.diff).
 	diffOut, err := runGH("gh pr diff", "pr", "diff", numStr, "--repo", repo)
 	if err != nil {
-		return nil, fmt.Errorf("%w (GitHub pull request diff API; often transient — retrying the job usually resolves it)", err)
+		return nil, fmt.Errorf("%w (GitHub pull request diff API; if this looks like a transient 5xx/timeout, retrying the job may help)", err)
 	}
 
 	files := make([]string, len(view.Files))
