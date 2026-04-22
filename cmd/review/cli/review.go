@@ -11,7 +11,7 @@ import (
 var reviewCmd = &cobra.Command{
 	Use:              "review [pr-number]",
 	Short:            "Review a pull request",
-	Long:             "Review a pull request. If no PR number is given, detects the PR for the current branch. If no PR exists, reviews the local branch diff.",
+	Long:             "Review a pull request. Without --post, always runs locally against the branch diff (uncommitted changes included) and persists state under ~/.codecanary/state/. With --post, fetches the PR from GitHub and posts findings as review comments — use a PR number or omit it to auto-detect from the current branch.",
 	Args:             cobra.ArbitraryArgs,
 	TraverseChildren: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -24,82 +24,60 @@ var reviewCmd = &cobra.Command{
 		claudePath, _ := cmd.Flags().GetString("claude-path")
 		baseBranch, _ := cmd.Flags().GetString("base")
 
-		// Explicit PR number — GitHub mode.
-		if len(args) > 0 {
-			prNumber, err := strconv.Atoi(args[0])
-			if err != nil {
-				return fmt.Errorf("invalid PR number %q: %w", args[0], err)
-			}
-			if baseBranch != "" {
-				review.Stderrf(review.ColorYellow, "Warning: --base ignored in PR mode\n")
-			}
-			return review.Run(review.RunOptions{
-				Repo:       repo,
-				PRNumber:   prNumber,
-				ConfigPath: configPath,
-				Output:     output,
-				Post:       post,
-				DryRun:     dryRun,
-				ReplyOnly:  replyOnly,
-				ClaudePath: claudePath,
-				Version:    Version,
-				Platform: &review.GithubPlatform{
-					Repo:         repo,
-					PRNumber:     prNumber,
-					Post:         post,
-					DryRun:       dryRun,
-					OutputFormat: output,
-				},
-			})
-		}
-
-		// Try auto-detecting PR from current branch.
-		if prNumber, err := review.DetectPRNumber(repo); err == nil {
-			review.Stderrf(review.ColorCyan, "Auto-detected PR #%d from current branch\n", prNumber)
-			if baseBranch != "" {
-				review.Stderrf(review.ColorYellow, "Warning: --base ignored in PR mode\n")
-			}
-			return review.Run(review.RunOptions{
-				Repo:       repo,
-				PRNumber:   prNumber,
-				ConfigPath: configPath,
-				Output:     output,
-				Post:       post,
-				DryRun:     dryRun,
-				ReplyOnly:  replyOnly,
-				ClaudePath: claudePath,
-				Version:    Version,
-				Platform: &review.GithubPlatform{
-					Repo:         repo,
-					PRNumber:     prNumber,
-					Post:         post,
-					DryRun:       dryRun,
-					OutputFormat: output,
-				},
-			})
-		}
-
-		// No PR — local mode.
-		pr, err := review.FetchLocalDiff(baseBranch)
-		if err != nil {
-			return fmt.Errorf("no PR found and local diff failed: %w", err)
-		}
-		review.Stderrf(review.ColorCyan, "No PR found — reviewing local changes on %s\n", pr.HeadBranch)
-
+		// GitHub mode — only when posting. Requires a PR (explicit or auto-detected).
 		if post {
-			review.Stderrf(review.ColorYellow, "Warning: --post ignored in local mode (no PR to post to)\n")
-			post = false
+			var prNumber int
+			if len(args) > 0 {
+				n, err := strconv.Atoi(args[0])
+				if err != nil {
+					return fmt.Errorf("invalid PR number %q: %w", args[0], err)
+				}
+				prNumber = n
+			} else {
+				n, err := review.DetectPRNumber(repo)
+				if err != nil {
+					return fmt.Errorf("--post requires a PR; could not auto-detect one for the current branch: %w", err)
+				}
+				review.Stderrf(review.ColorCyan, "Auto-detected PR #%d from current branch\n", n)
+				prNumber = n
+			}
+			if baseBranch != "" {
+				review.Stderrf(review.ColorYellow, "Warning: --base ignored in --post mode\n")
+			}
+			return review.Run(review.RunOptions{
+				Repo:       repo,
+				PRNumber:   prNumber,
+				ConfigPath: configPath,
+				Output:     output,
+				Post:       true,
+				DryRun:     dryRun,
+				ReplyOnly:  replyOnly,
+				ClaudePath: claudePath,
+				Version:    Version,
+				Platform: &review.GithubPlatform{
+					Repo:     repo,
+					PRNumber: prNumber,
+					DryRun:   dryRun,
+				},
+			})
 		}
+
+		// Local mode — default. A PR number argument is ignored: local is local.
 		if replyOnly {
 			review.Stderrf(review.ColorYellow, "Warning: --reply-only ignored in local mode\n")
 			replyOnly = false
 		}
 
+		pr, err := review.FetchLocalDiff(baseBranch)
+		if err != nil {
+			return fmt.Errorf("local diff failed: %w", err)
+		}
+		review.Stderrf(review.ColorCyan, "Reviewing local changes on %s\n", pr.HeadBranch)
+
 		return review.Run(review.RunOptions{
 			PR:         pr,
 			ConfigPath: configPath,
 			Output:     output,
-			Post:       post,
 			DryRun:     dryRun,
 			ReplyOnly:  replyOnly,
 			ClaudePath: claudePath,
@@ -113,11 +91,11 @@ var reviewCmd = &cobra.Command{
 }
 
 func init() {
-	reviewCmd.Flags().StringP("repo", "r", "", "GitHub repo (owner/name)")
+	reviewCmd.Flags().StringP("repo", "r", "", "GitHub repo (owner/name) — only used with --post")
 	reviewCmd.Flags().StringP("output", "o", "markdown", "Output format: markdown, terminal, or json; auto-upgrades to terminal when stdout is a TTY")
-	reviewCmd.Flags().Bool("post", false, "Post findings as a PR comment")
+	reviewCmd.Flags().Bool("post", false, "Fetch the PR from GitHub and post findings as review comments (requires a PR; auto-detected if no number given)")
 	reviewCmd.Flags().StringP("config", "c", "", "Path to review config (auto-detected if empty)")
-	reviewCmd.Flags().Bool("reply-only", false, "Evaluate thread replies only, skip new findings")
+	reviewCmd.Flags().Bool("reply-only", false, "Evaluate thread replies only, skip new findings (--post only)")
 	reviewCmd.Flags().String("claude-path", "", "Path to the Claude CLI binary (overrides config claude_path)")
 	reviewCmd.Flags().StringP("base", "b", "", "Base branch for local review (auto-detected if empty)")
 	reviewCmd.PersistentFlags().Bool("dry-run", false, "Show prompt without running Claude")

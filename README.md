@@ -63,7 +63,7 @@ codecanary review --post         # same, but also post findings to the PR on Git
 codecanary review --output json  # machine-readable output
 ```
 
-If your branch has an open PR, CodeCanary auto-detects it. Otherwise it diffs against the default branch. State is tracked in `~/.codecanary/state/` for incremental reviews on subsequent runs.
+Without `--post`, `codecanary review` is always local: it diffs your branch (with uncommitted changes) against the default branch and keeps state in `~/.codecanary/state/<branch>.json` for incremental re-runs. With `--post`, it fetches the PR from GitHub — pass a number or let it auto-detect from the current branch — and posts findings as review comments.
 
 ### GitHub Actions
 

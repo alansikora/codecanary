@@ -115,13 +115,13 @@ func hasAcknowledgmentReply(t ReviewThread) bool {
 	return false
 }
 
-// GithubPlatform implements ReviewPlatform for GitHub Actions / PR mode.
+// GithubPlatform implements ReviewPlatform for GitHub PR mode. It always
+// posts to the PR; "local preview" against a GitHub PR is no longer a thing —
+// `codecanary review` without --post uses LocalPlatform.
 type GithubPlatform struct {
-	Repo         string
-	PRNumber     int
-	Post         bool   // whether to post review comments to GitHub
-	DryRun       bool
-	OutputFormat string // user-requested output format (may be empty)
+	Repo     string
+	PRNumber int
+	DryRun   bool
 }
 
 func (g *GithubPlatform) LoadPreviousFindings() ([]ReviewThread, string, int) {
@@ -185,18 +185,6 @@ func (g *GithubPlatform) HandleResolutions(threads []ReviewThread, fixed []fixed
 }
 
 func (g *GithubPlatform) Publish(result *ReviewResult, pr *PRData, threads []ReviewThread, fixed []fixedThread) error {
-	// Print output to stdout when not posting to GitHub.
-	outputFormat := resolveOutputFormat(g.OutputFormat)
-	if !g.Post {
-		formatted, err := formatResult(result, outputFormat)
-		if err != nil {
-			return err
-		}
-		fmt.Print(formatted)
-		// Usage table is printed by ReportUsage for terminal output.
-		return nil
-	}
-
 	summary := computeReviewSummary(threads, fixed, result.Findings)
 
 	// Decide edit-vs-post: if the latest CodeCanary review on the PR carries
@@ -278,43 +266,16 @@ func (g *GithubPlatform) Publish(result *ReviewResult, pr *PRData, threads []Rev
 	return nil
 }
 
-func (g *GithubPlatform) SaveState(result *ReviewResult, stillOpen []Finding, isIncremental bool) error {
-	// In CI mode (Post=true), don't save local state.
-	// In LocalDetect mode (Post=false), save for future incremental reviews.
-	if g.Post || g.DryRun {
-		return nil
-	}
-
-	branch, err := currentBranch()
-	if err != nil {
-		return nil // non-fatal
-	}
-
-	allFindings := combineFindings(stillOpen, result.Findings)
-
-	if err := SaveLocalState(branch, &LocalState{
-		SHA:      result.SHA,
-		Branch:   branch,
-		Findings: allFindings,
-	}); err != nil {
-		Stderrf(ansiYellow, "Warning: could not save local state: %v\n", err)
-	}
+func (g *GithubPlatform) SaveState(_ *ReviewResult, _ []Finding, _ bool) error {
+	// No-op: GitHub mode stores state in PR review threads (embedded JSON
+	// markers carry the SHA and findings). Local state files are owned by
+	// LocalPlatform — this keeps the two adapters from fighting over the
+	// same ~/.codecanary/state/<branch>.json file.
 	return nil
 }
 
-func (g *GithubPlatform) GetIncrementalDiff(baseSHA string, prFiles []string) (string, error) {
-	diff, err := GetIncrementalDiff(baseSHA)
-	if err != nil {
-		return "", err
-	}
-
-	// In CI mode, only committed changes matter.
-	if g.Post {
-		return diff, nil
-	}
-
-	// Local-detect mode: also include uncommitted changes scoped to PR files.
-	return appendWorkingTreeDiff(diff, prFiles)
+func (g *GithubPlatform) GetIncrementalDiff(baseSHA string, _ []string) (string, error) {
+	return GetIncrementalDiff(baseSHA)
 }
 
 func (g *GithubPlatform) ReportUsage(tracker *UsageTracker) {
@@ -322,14 +283,6 @@ func (g *GithubPlatform) ReportUsage(tracker *UsageTracker) {
 	if len(report.Calls) > 0 {
 		if err := WriteUsageEnv(report); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not write usage env: %v\n", err)
-		}
-	}
-
-	// Also print usage table when output goes to terminal (local-detect mode).
-	if !g.Post {
-		outputFormat := resolveOutputFormat(g.OutputFormat)
-		if outputFormat == "terminal" {
-			fmt.Fprint(os.Stderr, FormatUsageTable(tracker, colorsEnabled()))
 		}
 	}
 }

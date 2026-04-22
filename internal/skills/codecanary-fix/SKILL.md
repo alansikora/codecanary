@@ -38,10 +38,14 @@ is spent on triage judgment and fix application, not on watching CI.
 ## Mode selection
 
 - **PR mode (default)**: fixes land as commits on the current branch and
-  are pushed. Used when an open PR exists for the branch.
-- **Local mode** — activated automatically when no PR is detected for the
-  current branch: `codecanary review --output json` runs a review on the
-  current dirty working tree; fixes are applied but not committed or pushed.
+  are pushed. Used when an open PR exists for the branch and the operator
+  wants CodeCanary's GitHub review cycle to drive the loop.
+- **Local mode** — used when no PR exists for the branch, or when the
+  operator explicitly wants a local-only pass: `codecanary review --output
+  json` runs a review on the current dirty working tree; fixes are applied
+  but not committed or pushed. `codecanary review` is always local unless
+  `--post` is passed, so this mode works even when the branch has an open
+  PR.
 
 If you cannot tell which mode applies, ask the operator before starting.
 

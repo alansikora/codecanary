@@ -13,21 +13,22 @@ Both modes run through the same `Run()` function in `runner.go`. The pipeline is
 
 ## Platforms
 
-There are three runtime contexts:
+Two platforms, routed strictly by `--post`:
 
 | Context | Platform | How it runs | State storage | Output |
 |---------|----------|-------------|---------------|--------|
-| **GitHub CI** | `GithubPlatform` (Post=true) | GitHub Actions workflow | PR review threads via API | Posts review comments on the PR |
-| **GitHub local-detect** | `GithubPlatform` (Post=false) | `codecanary review <pr>` locally | `~/.codecanary/state/<branch>.json` | Prints to terminal |
-| **Local** | `LocalPlatform` | `codecanary review` (no PR number) | `~/.codecanary/state/<branch>.json` | Prints to terminal |
+| **GitHub PR** | `GithubPlatform` | `codecanary review --post` (locally or in CI) | PR review threads via API | Posts review comments on the PR |
+| **Local** | `LocalPlatform` | `codecanary review` (with or without a PR for the branch) | `~/.codecanary/state/<branch>.json` | Prints to terminal |
+
+`codecanary review` without `--post` is always local — even if the branch has an open PR. "Local is local": the branch diff (including uncommitted changes) is reviewed against the default base, and previous findings come from `~/.codecanary/state/<branch>.json`. There is no hybrid mode that reads GitHub but writes local state. Two consecutive local runs go incremental off the saved state (locked in by `TestLocalPlatformIncrementalHandoff` in `state_test.go`).
 
 ## Pipeline Steps
 
 ### 1. Fetch PR data
 
-**GitHub mode**: Fetches PR metadata (title, body, author, branches) and diff via `gh pr view` and `gh pr diff`.
+**GitHub PR** (`--post`): Fetches PR metadata (title, body, author, branches) and diff via `gh pr view` and `gh pr diff`.
 
-**Local mode**: Detects the default branch (`main`, falling back to `master`) and computes diff from merge-base to HEAD via `git diff $(git merge-base HEAD <default-branch>)..HEAD`. Uses current branch name as the title and `git config user.name` as the author.
+**Local**: Detects the default branch (`main`, falling back to `master`, or the explicit `--base`) and computes diff from merge-base to HEAD via `git diff $(git merge-base HEAD <default-branch>)..HEAD`. Uncommitted working-tree changes scoped to the branch files are appended to the incremental diff on subsequent runs. Uses current branch name as the title and `git config user.name` as the author.
 
 If the PR is a setup PR (only adds workflow files with no real code changes), the review is skipped with an informational comment.
 
@@ -53,9 +54,9 @@ Each provider is constructed via the factory registry in `provider.go`. The prov
 
 The platform adapter loads unresolved findings from the last review:
 
-**GitHub CI**: Fetches review threads via GraphQL. Filters to CodeCanary findings only (detected by HTML marker comments). Extracts the previous review's HEAD SHA from the most recent review body — clean and all-clear reviews embed this marker too, so the baseline advances even when a push produced no findings. Returns unresolved threads, the SHA, and a count for fix_ref numbering.
+**GitHub PR** (`--post`): Fetches review threads via GraphQL. Filters to CodeCanary findings only (detected by HTML marker comments). Extracts the previous review's HEAD SHA from the most recent review body — clean and all-clear reviews embed this marker too, so the baseline advances even when a push produced no findings. Returns unresolved threads, the SHA, and a count for fix_ref numbering.
 
-**Local modes**: Reads `~/.codecanary/state/<branch>.json`, which stores the SHA, branch name, and findings array from the previous review. Converts saved findings into `ReviewThread` shape for the triage pipeline.
+**Local**: Reads `~/.codecanary/state/<branch>.json`, which stores the SHA, branch name, and findings array from the previous review. Converts saved findings into `ReviewThread` shape for the triage pipeline.
 
 If no previous findings exist, this is a first review.
 
@@ -151,7 +152,7 @@ If the response is truncated (hit max output tokens), a warning is logged. The p
 
 ### 8. Publish results
 
-**GitHub CI**: Every cycle emits exactly one top-level CodeCanary review, decided by an edit-vs-post rule. `FetchLatestCodecanaryReview` reads the commit SHA from the most recent CodeCanary review's hidden marker:
+**GitHub PR** (`--post`): Every cycle emits exactly one top-level CodeCanary review, decided by an edit-vs-post rule. `FetchLatestCodecanaryReview` reads the commit SHA from the most recent CodeCanary review's hidden marker:
 
 - **Same SHA** (reply-only run, or a duplicate `synchronize` webhook on the same HEAD): the existing body is updated in place with `UpdateReviewBody`. Only the status block between the `<!-- codecanary:status -->` markers is swapped — inline comments and prior findings text are untouched.
 - **Different or no SHA** (new commits, or first review on the PR): a fresh review is posted. The body variant depends on the cycle outcome — findings review, all-clear, activity summary (no new findings but cycle activity to surface), or clean review. All variants carry the same status block and baseline SHA marker. Older CodeCanary reviews are minimized (collapsed) before posting.
@@ -162,19 +163,19 @@ Per-thread ack replies for dismissed/acknowledged/rebutted resolutions are poste
 
 `codecanary findings` applies the same marker to filter deferrals out of its default output: threads with any `codecanary:ack:*` reply are treated as handled and omitted alongside GitHub-resolved threads. Pass `--include-resolved` to see them. This keeps the codecanary-fix skill from re-prompting on findings the operator already deferred.
 
-**Local modes**: Prints the formatted result to stdout. Format depends on context: terminal (colored, human-readable), markdown, or JSON.
+**Local**: Prints the formatted result to stdout. Format depends on context: terminal (colored, human-readable), markdown, or JSON.
 
 ### 9. Save state
 
-**GitHub CI**: No-op. State is stored in the review threads themselves (the embedded JSON marker contains the SHA and findings).
+**GitHub PR** (`--post`): No-op. State is stored in the review threads themselves (the embedded JSON marker contains the SHA and findings).
 
-**Local modes**: Writes `~/.codecanary/state/<branch>.json` with the current HEAD SHA, branch name, and combined findings (still-open + new). This enables incremental reviews on the next run.
+**Local**: Writes `~/.codecanary/state/<branch>.json` with the current HEAD SHA, branch name, and combined findings (still-open + new). This enables incremental reviews on the next run.
 
 ### 10. Report usage
 
-**GitHub CI**: Writes token counts and cost to `GITHUB_ENV` for downstream workflow steps.
+**GitHub PR** (`--post`): Writes token counts and cost to `GITHUB_ENV` for downstream workflow steps.
 
-**Local modes**: Prints a usage summary table to stderr (model, tokens, cost, duration) if running in a terminal.
+**Local**: Prints a usage summary table to stderr (model, tokens, cost, duration) if running in a terminal.
 
 ### 11. Telemetry
 

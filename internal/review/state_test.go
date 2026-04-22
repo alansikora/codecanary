@@ -4,6 +4,50 @@ import (
 	"testing"
 )
 
+// TestLocalPlatformIncrementalHandoff locks in the two-run parity contract:
+// a LocalPlatform.SaveState followed by a fresh LocalPlatform.LoadPreviousFindings
+// on the same branch must return a non-empty previousSHA.
+//
+// This is the exact gate runner.go uses to decide isIncremental (see
+// runner.go:372 — `isIncremental := previousSHA != ""`). If this breaks,
+// two consecutive local `codecanary review` runs stop surfacing
+// "Re-evaluating N unresolved thread(s)..." and "N finding(s) resolved by
+// code changes" — the regression from #166/earlier that prompted this test.
+//
+// The GithubPlatform-with-Post=false hybrid used to fail this invariant by
+// writing local state it never read back. Keep this test even if the
+// adapter layout changes.
+func TestLocalPlatformIncrementalHandoff(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+
+	branch := "test-incremental-handoff"
+
+	writer := &LocalPlatform{Branch: branch}
+	result := &ReviewResult{SHA: "deadbeef", Findings: []Finding{
+		{ID: "x", File: "a.go", Line: 1, Severity: "warning", Title: "t", Description: "d"},
+	}}
+	if err := writer.SaveState(result, nil, false); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+
+	reader := &LocalPlatform{Branch: branch}
+	threads, previousSHA, startIndex := reader.LoadPreviousFindings()
+
+	if previousSHA == "" {
+		t.Fatal("previousSHA is empty — second run would not enter the incremental path")
+	}
+	if previousSHA != "deadbeef" {
+		t.Errorf("previousSHA = %q, want %q", previousSHA, "deadbeef")
+	}
+	if len(threads) != 1 {
+		t.Errorf("len(threads) = %d, want 1", len(threads))
+	}
+	if startIndex != 1 {
+		t.Errorf("startIndex = %d, want 1", startIndex)
+	}
+}
+
 func TestFindingFromThreadLosesLocalStateFields(t *testing.T) {
 	// This test documents the known limitation: FindingFromThread cannot
 	// reconstruct findings from the plain-text body that findingsToKnownIssues
