@@ -14,6 +14,24 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 )
 
+// runGH runs a gh command and returns stdout; on failure, the returned error
+// includes gh's stderr so upstream API messages surface in logs instead of just
+// "exit status 1".
+func runGH(label string, args ...string) ([]byte, error) {
+	cmd := exec.Command("gh", args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			return nil, fmt.Errorf("%s: %w", label, err)
+		}
+		return nil, fmt.Errorf("%s: %w: %s", label, err, msg)
+	}
+	return out, nil
+}
+
 // parseRepoSlug splits a "owner/name" repository slug into its two parts.
 func parseRepoSlug(repo string) (owner, name string, err error) {
 	parts := strings.SplitN(repo, "/", 2)
@@ -84,12 +102,12 @@ func FetchPR(repo string, number int) (*PRData, error) {
 	numStr := fmt.Sprintf("%d", number)
 
 	// Fetch PR metadata as JSON.
-	viewOut, err := exec.Command("gh", "pr", "view", numStr,
+	viewOut, err := runGH("gh pr view", "pr", "view", numStr,
 		"--repo", repo,
 		"--json", "title,body,author,baseRefName,headRefName,files",
-	).Output()
+	)
 	if err != nil {
-		return nil, fmt.Errorf("gh pr view: %w", err)
+		return nil, err
 	}
 
 	var view ghPRView
@@ -97,12 +115,13 @@ func FetchPR(repo string, number int) (*PRData, error) {
 		return nil, fmt.Errorf("parsing gh pr view output: %w", err)
 	}
 
-	// Fetch the diff.
-	diffOut, err := exec.Command("gh", "pr", "diff", numStr,
-		"--repo", repo,
-	).Output()
+	// Fetch the diff. This hits GitHub's pull request diff API
+	// (GET /repos/{owner}/{repo}/pulls/{n} with Accept: application/vnd.github.v3.diff),
+	// which occasionally returns transient 5xx/timeouts — in that case, retrying the job
+	// is the usual fix.
+	diffOut, err := runGH("gh pr diff", "pr", "diff", numStr, "--repo", repo)
 	if err != nil {
-		return nil, fmt.Errorf("gh pr diff: %w", err)
+		return nil, fmt.Errorf("%w (GitHub pull request diff API; often transient — retrying the job usually resolves it)", err)
 	}
 
 	files := make([]string, len(view.Files))
