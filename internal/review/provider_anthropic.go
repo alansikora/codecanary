@@ -231,7 +231,15 @@ func (p *anthropicProvider) Run(ctx context.Context, prompt string, opts RunOpts
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Anthropic API returned status %d: %s", resp.StatusCode, string(body)) //nolint:staticcheck // proper noun
+		// Try to decode the structured {error:{type,message}} envelope so we
+		// can surface the upstream message; fall back to the raw body when
+		// the body is empty or not JSON.
+		var errResp anthropicResponse
+		msg := ""
+		if err := json.Unmarshal(body, &errResp); err == nil && errResp.Error != nil {
+			msg = errResp.Error.Message
+		}
+		return nil, classifyProviderError("anthropic", resp.StatusCode, msg, string(body))
 	}
 
 	var msgResp anthropicResponse
@@ -240,7 +248,7 @@ func (p *anthropicProvider) Run(ctx context.Context, prompt string, opts RunOpts
 	}
 
 	if msgResp.Error != nil {
-		return nil, fmt.Errorf("Anthropic API error: %s", msgResp.Error.Message) //nolint:staticcheck // proper noun
+		return nil, classifyProviderError("anthropic", resp.StatusCode, msgResp.Error.Message, string(body))
 	}
 
 	truncated := msgResp.StopReason == "max_tokens"

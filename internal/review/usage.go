@@ -186,10 +186,11 @@ func PrintUsageSummary(report *UsageReport) {
 
 // claudeJSONResponse represents the JSON output from `claude --print --output-format json`.
 type claudeJSONResponse struct {
-	Result     string  `json:"result"`
-	IsError    bool    `json:"is_error"`
-	CostUSD    float64 `json:"total_cost_usd"`
-	DurationMS int     `json:"duration_ms"`
+	Result         string  `json:"result"`
+	IsError        bool    `json:"is_error"`
+	APIErrorStatus int     `json:"api_error_status"` // HTTP status when is_error is true (e.g. 429 on rate limit)
+	CostUSD        float64 `json:"total_cost_usd"`
+	DurationMS     int     `json:"duration_ms"`
 	Usage      struct {
 		InputTokens              int `json:"input_tokens"`
 		OutputTokens             int `json:"output_tokens"`

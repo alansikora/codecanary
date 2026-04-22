@@ -178,29 +178,26 @@ func (p *claudeCLIProvider) Run(ctx context.Context, prompt string, opts RunOpts
 		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
+			// The CLI may still emit the JSON envelope on stdout when it exits
+			// non-zero (e.g. 429). Try to parse and classify it first so the
+			// user sees a friendly message; fall back to a raw dump only when
+			// we cannot extract structured info.
+			if resp, ok := tryParseClaudeEnvelope(output); ok && resp.IsError {
+				return nil, classifyProviderError("claude", resp.APIErrorStatus, resp.Result, string(output))
+			}
 			return nil, fmt.Errorf("claude failed: %s\n%s", string(exitErr.Stderr), string(output))
 		}
 		return nil, fmt.Errorf("running claude: %w", err)
 	}
 
-	// The Claude CLI may print non-JSON status lines (e.g. status-line UI) to
-	// stdout before or after the JSON envelope. Seek to the first '{' to skip
-	// any leading noise, then use a json.Decoder which stops after the first
-	// complete value — tolerating any trailing noise as well.
-	// Preserve the original output for the plain-text fallback.
-	jsonOutput := output
-	if i := bytes.IndexByte(output, '{'); i > 0 {
-		jsonOutput = output[i:]
-	}
-
-	var resp claudeJSONResponse
-	if err := json.NewDecoder(bytes.NewReader(jsonOutput)).Decode(&resp); err != nil {
+	resp, ok := tryParseClaudeEnvelope(output)
+	if !ok {
 		// Fallback: treat entire original output as plain text (e.g. older CLI version).
 		return &providerResult{Text: string(output)}, nil
 	}
 
 	if resp.IsError {
-		return nil, fmt.Errorf("claude returned error: %s", resp.Result)
+		return nil, classifyProviderError("claude", resp.APIErrorStatus, resp.Result, string(output))
 	}
 
 	// Note: the Claude CLI JSON output does not expose stop_reason, so we
@@ -229,4 +226,20 @@ func (p *claudeCLIProvider) Run(ctx context.Context, prompt string, opts RunOpts
 		})
 	}
 	return result, nil
+}
+
+// tryParseClaudeEnvelope pulls a claudeJSONResponse out of the CLI's stdout.
+// The Claude CLI may print non-JSON status lines (status-line UI) before or
+// after the JSON envelope, so we seek to the first '{' and let json.Decoder
+// stop after the first complete value — tolerating trailing noise.
+func tryParseClaudeEnvelope(output []byte) (claudeJSONResponse, bool) {
+	var resp claudeJSONResponse
+	jsonOutput := output
+	if i := bytes.IndexByte(output, '{'); i > 0 {
+		jsonOutput = output[i:]
+	}
+	if err := json.NewDecoder(bytes.NewReader(jsonOutput)).Decode(&resp); err != nil {
+		return resp, false
+	}
+	return resp, true
 }
