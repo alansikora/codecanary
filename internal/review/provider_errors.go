@@ -75,10 +75,11 @@ func (e *ProviderError) Error() string {
 	// the user still has something to debug with. Truncate defensively: some
 	// upstreams return HTML error pages that would otherwise swamp terminal
 	// output and logs.
-	b.WriteString(fmt.Sprintf(
+	fmt.Fprintf(
+		&b,
 		"\n\nNo formatted error handler for %q provider — showing raw upstream response.",
 		e.Provider,
-	))
+	)
 	if e.RawBody != "" {
 		body := e.RawBody
 		if len(body) > maxRawBodyDisplay {
