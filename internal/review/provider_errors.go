@@ -63,18 +63,37 @@ func (e *ProviderError) Error() string {
 		return b.String()
 	}
 
-	// No provider-specific hint registered — tell the user we're falling back
-	// to the raw upstream response so they can still debug.
+	// The provider is registered but we have no hint for this specific Kind
+	// (e.g. a 400/422 against anthropic). Return the header + upstream message
+	// alone; the "no formatter" banner is reserved for providers that aren't
+	// in the registry at all.
+	if _, providerRegistered := providerHints[e.Provider]; providerRegistered {
+		return b.String()
+	}
+
+	// Unregistered provider — surface the banner and preserve the raw body so
+	// the user still has something to debug with. Truncate defensively: some
+	// upstreams return HTML error pages that would otherwise swamp terminal
+	// output and logs.
 	b.WriteString(fmt.Sprintf(
 		"\n\nNo formatted error handler for %q provider — showing raw upstream response.",
 		e.Provider,
 	))
 	if e.RawBody != "" {
+		body := e.RawBody
+		if len(body) > maxRawBodyDisplay {
+			body = body[:maxRawBodyDisplay] + "... (truncated)"
+		}
 		b.WriteString("\n\n")
-		b.WriteString(e.RawBody)
+		b.WriteString(body)
 	}
 	return b.String()
 }
+
+// maxRawBodyDisplay caps how many bytes of the raw upstream body we echo
+// inside Error(). Chosen as a balance between debuggability and not flooding
+// terminals or log aggregators with HTML error pages from proxies.
+const maxRawBodyDisplay = 2048
 
 // providerHints maps (provider, kind) to a human-readable next-step message.
 // Providers that opt in register entries here; the formatter falls through to

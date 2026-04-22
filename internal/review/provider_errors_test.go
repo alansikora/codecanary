@@ -95,6 +95,23 @@ func TestProviderError_Error_UnknownKindStillReportsStatus(t *testing.T) {
 	if !strings.Contains(got, "anthropic error (418)") {
 		t.Errorf("expected generic 'error' label with status, got: %q", got)
 	}
+	// Registered providers never trigger the "no formatter" banner, even
+	// when we don't have a hint for this specific Kind.
+	if strings.Contains(got, "No formatted error handler") {
+		t.Errorf("registered provider should not get fallback banner: %q", got)
+	}
+}
+
+func TestProviderError_Error_TruncatesLargeRawBody(t *testing.T) {
+	big := strings.Repeat("x", maxRawBodyDisplay+500)
+	pe := classifyProviderError("openrouter", 503, "", big)
+	got := pe.Error()
+	if !strings.Contains(got, "... (truncated)") {
+		t.Errorf("expected truncation marker, got: %q", got)
+	}
+	if strings.Count(got, "x") > maxRawBodyDisplay+10 {
+		t.Errorf("body not trimmed: saw %d x's", strings.Count(got, "x"))
+	}
 }
 
 func TestTryParseClaudeEnvelope_HandlesAPIErrorStatus(t *testing.T) {
