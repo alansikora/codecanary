@@ -314,11 +314,11 @@ func PostReview(repo string, prNumber int, result *ReviewResult, diff string, co
 
 // ReviewCommitStatusContext is the commit-status context the review bot
 // writes when a review run completes. Using a stable string lets teams
-// require it in branch protection — "codecanary/review must be green
+// require it in branch protection — "CodeCanary / review must be green
 // before merge." Matches the context used by `codecanary signoff`, so
 // both the bot (on PRs with the workflow) and a local signoff can
 // satisfy the same required check.
-const ReviewCommitStatusContext = "codecanary/review"
+const ReviewCommitStatusContext = "CodeCanary / review"
 
 // PostReviewCommitStatus POSTs a commit status on the given SHA summarising
 // the review outcome. state is "success" when all findings are resolved or

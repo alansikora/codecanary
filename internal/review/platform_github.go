@@ -289,7 +289,7 @@ func (g *GithubPlatform) ReportUsage(tracker *UsageTracker) {
 	}
 }
 
-// postReviewCommitStatus POSTs a `codecanary/review` commit status on the
+// postReviewCommitStatus POSTs a `CodeCanary / review` commit status on the
 // reviewed SHA. state=success when no unresolved findings remain for the
 // PR (new findings this cycle + threads still open with no classification
 // both at zero); state=failure otherwise. Teams can require this check in
