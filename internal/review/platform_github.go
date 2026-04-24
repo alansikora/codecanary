@@ -186,6 +186,7 @@ func (g *GithubPlatform) HandleResolutions(threads []ReviewThread, fixed []fixed
 
 func (g *GithubPlatform) Publish(result *ReviewResult, pr *PRData, threads []ReviewThread, fixed []fixedThread) error {
 	summary := computeReviewSummary(threads, fixed, result.Findings)
+	defer g.postReviewCommitStatus(result.SHA, summary)
 
 	// Decide edit-vs-post: if the latest CodeCanary review on the PR carries
 	// the current HEAD SHA in its marker, this is either a reply-only run or
@@ -285,4 +286,51 @@ func (g *GithubPlatform) ReportUsage(tracker *UsageTracker) {
 			fmt.Fprintf(os.Stderr, "Warning: could not write usage env: %v\n", err)
 		}
 	}
+}
+
+// postReviewCommitStatus POSTs a `codecanary/review` commit status on the
+// reviewed SHA. state=success when no unresolved findings remain for the
+// PR (new findings this cycle + threads still open with no classification
+// both at zero); state=failure otherwise. Teams can require this check in
+// branch protection to gate merges on a clean review.
+//
+// Skipped silently when the SHA is empty (non-pr-loop contexts that
+// accidentally share the adapter). Failures are logged as warnings — the
+// review itself has already been published, so a flaky status post should
+// not abort the whole Publish flow.
+func (g *GithubPlatform) postReviewCommitStatus(sha string, summary ReviewSummary) {
+	if sha == "" {
+		return
+	}
+	state, desc := commitStatusFromSummary(summary)
+	if err := PostReviewCommitStatus(g.Repo, sha, state, desc); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not post %s commit status: %v\n",
+			ReviewCommitStatusContext, err)
+		return
+	}
+	Stderrf(ansiGreen, "Posted %s = %s on %s (%s)\n",
+		ReviewCommitStatusContext, state, shortSHA(sha), desc)
+}
+
+// commitStatusFromSummary maps a ReviewSummary to the (state, description)
+// pair sent to the commit status API. Pulled out so the mapping is
+// unit-testable without network access.
+//
+// An "unresolved" count combines new findings this cycle with threads that
+// were already open and remain unclassified — either kind should fail the
+// required check. Everything classified by triage (resolved by code, file
+// removed, dismissed, acknowledged, rebutted) counts as handled.
+func commitStatusFromSummary(summary ReviewSummary) (state, desc string) {
+	unresolved := summary.NewFindings + summary.StillOpen
+	if unresolved > 0 {
+		suffix := "s"
+		if unresolved == 1 {
+			suffix = ""
+		}
+		return "failure", fmt.Sprintf("%d unresolved finding%s", unresolved, suffix)
+	}
+	if summary.ResolvedByCode+summary.FileRemoved+summary.Dismissed+summary.Acknowledged+summary.Rebutted > 0 {
+		return "success", "all findings resolved"
+	}
+	return "success", "no findings"
 }
