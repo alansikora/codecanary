@@ -91,7 +91,7 @@ func stateFilePaths(branch string) (preferred, legacy string) {
 	safe := strings.ReplaceAll(branch, "/", "-")
 	legacy = filepath.Join(home, ".codecanary", "state", safe+".json")
 
-	slug, err := repoSlug()
+	slug, err := RepoSlug()
 	if err != nil {
 		return legacy, legacy
 	}

@@ -19,7 +19,7 @@ func FetchLocalDiff(baseBranch string) (*PRData, error) {
 		}
 	}
 
-	head, err := currentBranch()
+	head, err := CurrentBranch()
 	if err != nil {
 		return nil, fmt.Errorf("detecting current branch: %w", err)
 	}
@@ -107,8 +107,8 @@ func detectDefaultBranch() string {
 	return ""
 }
 
-// currentBranch returns the name of the current git branch.
-func currentBranch() (string, error) {
+// CurrentBranch returns the name of the current git branch.
+func CurrentBranch() (string, error) {
 	out, err := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output()
 	if err != nil {
 		return "", err
@@ -118,4 +118,23 @@ func currentBranch() (string, error) {
 		return "", fmt.Errorf("detached HEAD state — check out a branch to review")
 	}
 	return branch, nil
+}
+
+// HeadSHA returns the full 40-character SHA of the current HEAD commit.
+func HeadSHA() (string, error) {
+	out, err := exec.Command("git", "rev-parse", "HEAD").Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse HEAD failed: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// WorkingTreeDirty reports whether the working tree has uncommitted
+// changes (staged, unstaged, or untracked).
+func WorkingTreeDirty() (bool, error) {
+	out, err := exec.Command("git", "status", "--porcelain").Output()
+	if err != nil {
+		return false, fmt.Errorf("git status failed: %w", err)
+	}
+	return len(strings.TrimSpace(string(out))) > 0, nil
 }
