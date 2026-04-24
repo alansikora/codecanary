@@ -265,15 +265,19 @@ var claudeReservedArgs = map[string]bool{
 // safeSlugSegment matches valid owner/repo name characters (GitHub-compatible).
 var safeSlugSegment = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$`)
 
-// repoSlug returns "owner/repo" derived from the git remote origin URL
+// RepoSlug returns "owner/repo" derived from the git remote origin URL
 // of the current working directory. Supports HTTPS, SSH, and SCP-style URLs.
-func repoSlug() (string, error) {
+func RepoSlug() (string, error) {
 	out, err := exec.Command("git", "remote", "get-url", "origin").Output()
 	if err != nil {
 		return "", fmt.Errorf("could not detect git remote: %w (are you in a git repo with an origin remote?)", err)
 	}
-	url := strings.TrimSpace(string(out))
+	return parseRepoSlugURL(strings.TrimSpace(string(out)))
+}
 
+// parseRepoSlugURL extracts "owner/repo" from a git remote URL. Split out
+// from RepoSlug so it's unit-testable without needing a real git repo.
+func parseRepoSlugURL(url string) (string, error) {
 	// SCP-style (no ://): git@github.com:owner/repo.git
 	if !strings.Contains(url, "://") {
 		if i := strings.Index(url, ":"); i >= 0 {
@@ -307,7 +311,7 @@ func LocalConfigPath() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("could not determine home directory: %w", err)
 	}
-	slug, err := repoSlug()
+	slug, err := RepoSlug()
 	if err != nil {
 		return "", err
 	}

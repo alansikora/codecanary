@@ -626,3 +626,39 @@ func TestFilterRulesNoFilesReturnsAll(t *testing.T) {
 		t.Errorf("FilterRules(_, nil) dropped rules: got %v, want input unchanged", got)
 	}
 }
+
+func TestParseRepoSlugURL(t *testing.T) {
+	cases := []struct {
+		name    string
+		url     string
+		want    string
+		wantErr bool
+	}{
+		{"https", "https://github.com/alansikora/codecanary.git", "alansikora/codecanary", false},
+		{"https no .git", "https://github.com/alansikora/codecanary", "alansikora/codecanary", false},
+		{"ssh scheme", "ssh://git@github.com/alansikora/codecanary.git", "alansikora/codecanary", false},
+		{"scp style", "git@github.com:alansikora/codecanary.git", "alansikora/codecanary", false},
+		{"dashes and dots", "git@github.com:acme-corp/my.repo.git", "acme-corp/my.repo", false},
+		{"https with port", "https://git.example.com:8443/foo/bar.git", "foo/bar", false},
+		{"missing repo", "git@github.com:alansikora", "", true},
+		{"empty owner", "https://github.com//codecanary.git", "", true},
+		{"unsafe chars", "git@github.com:foo/bar$bad.git", "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseRepoSlugURL(tc.url)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("parseRepoSlugURL(%q) = %q, want error", tc.url, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseRepoSlugURL(%q) unexpected error: %v", tc.url, err)
+			}
+			if got != tc.want {
+				t.Errorf("parseRepoSlugURL(%q) = %q, want %q", tc.url, got, tc.want)
+			}
+		})
+	}
+}

@@ -223,12 +223,12 @@ func TestStateFileRepoScoped(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 
-	// Tests run inside the codecanary repo so repoSlug() resolves; skip
+	// Tests run inside the codecanary repo so RepoSlug() resolves; skip
 	// gracefully on CI runners that check out without a configured
 	// origin remote (shallow clones, detached HEAD) instead of failing.
-	slug, err := repoSlug()
+	slug, err := RepoSlug()
 	if err != nil {
-		t.Skipf("repoSlug() unavailable (%v); skipping repo-scoped state test", err)
+		t.Skipf("RepoSlug() unavailable (%v); skipping repo-scoped state test", err)
 	}
 
 	branch := "test-repo-scoped"
@@ -253,12 +253,12 @@ func TestStateFileRepoScoped(t *testing.T) {
 }
 
 // TestStateFileFallback verifies that state falls back to the legacy
-// ~/.codecanary/state/ path when repoSlug() fails (e.g., no git remote).
+// ~/.codecanary/state/ path when RepoSlug() fails (e.g., no git remote).
 func TestStateFileFallback(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 
-	// Chdir into a non-git directory so repoSlug() errors out.
+	// Chdir into a non-git directory so RepoSlug() errors out.
 	nonGit := t.TempDir()
 	t.Chdir(nonGit)
 
@@ -284,9 +284,9 @@ func TestStateFileMigration(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 
-	slug, err := repoSlug()
+	slug, err := RepoSlug()
 	if err != nil {
-		t.Skipf("repoSlug() unavailable (%v); skipping migration test", err)
+		t.Skipf("RepoSlug() unavailable (%v); skipping migration test", err)
 	}
 
 	branch := "test-migration"

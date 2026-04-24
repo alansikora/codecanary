@@ -42,12 +42,12 @@ type ModeInfo struct {
 
 // DetectMode resolves the loop mode for the current working tree.
 //
-// It calls currentBranch(), DetectPRNumber(), DetectRepo(), and scans
+// It calls CurrentBranch(), DetectPRNumber(), DetectRepo(), and scans
 // .github/workflows/*.yml — all best-effort. A missing PR or missing
 // workflow is not an error, just a signal that pushes the decision
 // toward a local-loop mode.
 func DetectMode() (*ModeInfo, error) {
-	branch, err := currentBranch()
+	branch, err := CurrentBranch()
 	if err != nil {
 		return nil, err
 	}
