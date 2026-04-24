@@ -101,7 +101,7 @@ block merges until a clean local review exists for the tip commit.`,
 				err, strings.TrimSpace(string(out)))
 		}
 
-		fmt.Fprintf(cmd.OutOrStdout(),
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 			"✓ codecanary/review = %s on %s@%s (%s)\n",
 			statusState, slug, shortSHA(sha), desc)
 		return nil
