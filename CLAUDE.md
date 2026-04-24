@@ -116,7 +116,7 @@ Adding a new LLM provider means: create `provider_<name>.go` and register a `Pro
 
 Abstracts environment-specific operations: loading previous findings, publishing results, saving state, resolving threads, reporting usage.
 
-**Implementations**: `GithubPlatform` (posts to PRs, reads threads via API), `LocalPlatform` (prints to terminal, persists state to `~/.codecanary/state/<branch>.json`).
+**Implementations**: `GithubPlatform` (posts to PRs, reads threads via API), `LocalPlatform` (prints to terminal, persists state to `~/.codecanary/repos/<owner>/<repo>/state/<branch>.json` — per-repo scoping keeps branch names like `main` from colliding across repos; falls back to `~/.codecanary/state/<branch>.json` when no git remote is resolvable).
 
 Routing is strict: `codecanary review --post` → `GithubPlatform`; `codecanary review` (no `--post`) → `LocalPlatform`, even when the branch has an open PR. Local is local — the branch diff (with uncommitted changes) is reviewed against the default base, previous findings come from local state, nothing is fetched from or posted to GitHub. The old `GithubPlatform`-with-`Post=false` hybrid is gone; it was the source of the "state written locally, read from GitHub" asymmetry that kept breaking incremental local reviews.
 

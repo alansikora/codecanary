@@ -18,9 +18,11 @@ Two platforms, routed strictly by `--post`:
 | Context | Platform | How it runs | State storage | Output |
 |---------|----------|-------------|---------------|--------|
 | **GitHub PR** | `GithubPlatform` | `codecanary review --post` (locally or in CI) | PR review threads via API | Posts review comments on the PR |
-| **Local** | `LocalPlatform` | `codecanary review` (with or without a PR for the branch) | `~/.codecanary/state/<branch>.json` | Prints to terminal |
+| **Local** | `LocalPlatform` | `codecanary review` (with or without a PR for the branch) | `~/.codecanary/repos/<owner>/<repo>/state/<branch>.json` | Prints to terminal |
 
-`codecanary review` without `--post` is always local — even if the branch has an open PR. "Local is local": the branch diff (including uncommitted changes) is reviewed against the default base, and previous findings come from `~/.codecanary/state/<branch>.json`. There is no hybrid mode that reads GitHub but writes local state. Two consecutive local runs go incremental off the saved state (locked in by `TestLocalPlatformIncrementalHandoff` in `state_test.go`).
+`codecanary review` without `--post` is always local — even if the branch has an open PR. "Local is local": the branch diff (including uncommitted changes) is reviewed against the default base, and previous findings come from the repo-scoped state file. There is no hybrid mode that reads GitHub but writes local state. Two consecutive local runs go incremental off the saved state (locked in by `TestLocalPlatformIncrementalHandoff` in `state_test.go`).
+
+State files are keyed by `owner/repo/branch` so the same branch name across different repos (e.g. `main` in repo A vs. repo B) no longer collides. When the git remote can't be resolved (detached worktree, no remote), state falls back to the legacy `~/.codecanary/state/<branch>.json` path. On first save after the upgrade, any existing legacy file is read once, migrated to the repo-scoped path, and the legacy copy is removed — transparent to the operator.
 
 ## Pipeline Steps
 
@@ -56,7 +58,7 @@ The platform adapter loads unresolved findings from the last review:
 
 **GitHub PR** (`--post`): Fetches review threads via GraphQL. Filters to CodeCanary findings only (detected by HTML marker comments). Extracts the previous review's HEAD SHA from the most recent review body — clean and all-clear reviews embed this marker too, so the baseline advances even when a push produced no findings. Returns unresolved threads, the SHA, and a count for fix_ref numbering.
 
-**Local**: Reads `~/.codecanary/state/<branch>.json`, which stores the SHA, branch name, and findings array from the previous review. Converts saved findings into `ReviewThread` shape for the triage pipeline.
+**Local**: Reads `~/.codecanary/repos/<owner>/<repo>/state/<branch>.json`, which stores the SHA, branch name, and findings array from the previous review. Falls back to `~/.codecanary/state/<branch>.json` when the repo slug can't be resolved or a pre-migration state file is present. Converts saved findings into `ReviewThread` shape for the triage pipeline.
 
 If no previous findings exist, this is a first review.
 
@@ -169,7 +171,7 @@ Per-thread ack replies for dismissed/acknowledged/rebutted resolutions are poste
 
 **GitHub PR** (`--post`): No-op. State is stored in the review threads themselves (the embedded JSON marker contains the SHA and findings).
 
-**Local**: Writes `~/.codecanary/state/<branch>.json` with the current HEAD SHA, branch name, and combined findings (still-open + new). This enables incremental reviews on the next run.
+**Local**: Writes `~/.codecanary/repos/<owner>/<repo>/state/<branch>.json` with the current HEAD SHA, branch name, and combined findings (still-open + new). If a legacy `~/.codecanary/state/<branch>.json` exists from a pre-migration run, it is removed after the new file lands. This enables incremental reviews on the next run.
 
 ### 10. Report usage
 
@@ -196,3 +198,15 @@ If telemetry is enabled (opt-in), fires an anonymous event with aggregate stats:
 **Context window fitting.** After building the prompt, the pipeline estimates token count and progressively trims file contents (largest first) then diff to fit the model's context window. This prevents API failures on large PRs.
 
 **Finding validation.** All findings are validated against the PR diff regardless of what diff the LLM prompt contained. Line proximity checks (within 20 lines of a changed line) catch hallucinated line numbers and prevent scope creep from rebase noise.
+
+## The codecanary-fix loop
+
+The `codecanary-fix` Claude skill wraps the review pipeline in a confirm-and-apply loop. The skill calls `codecanary mode --output json` once at startup; the CLI returns one of three modes based on whether an open PR exists for the current branch and whether a CodeCanary workflow file is detected under `.github/workflows/`:
+
+| Mode | PR | Workflow | Findings source | Cycle finalization |
+|---|---|---|---|---|
+| `pr-loop` | yes | yes | `codecanary findings --watch` (bot posts on push) | commit + push; bot re-runs |
+| `local-loop-git` | yes | no | `codecanary review` (local engine) | commit on PR branch, **no push**; operator is asked at session end whether to push accumulated commits |
+| `local-loop-nogit` | no | — | `codecanary review` (local engine) | no commits, no pushes; fixes applied in place |
+
+Workflow detection is a textual scan for a non-commented `uses: alansikora/codecanary...` step in any workflow file on the current branch. All three modes share the same triage UX (Markdown table, `AskUserQuestion` confirmation). The bot's ack layer (`<!-- codecanary:ack:* -->` markers) handles deferral persistence in `pr-loop`; local modes use an in-memory `DEFERRED_FIX_REFS` set in the skill so operator-skipped findings don't re-surface within a session. `pr-loop` failures (GHA broken, `conclusion: failure`) never silently fall back to a local mode — the operator is asked to investigate.
