@@ -88,10 +88,9 @@ CodeCanary can block merges until a review comes back clean. After every review,
 
 To turn this into a required check:
 
-1. Make sure a review has run at least once on any PR so `codecanary/review` appears in the status-check picker.
-2. In your repo: **Settings → Branches → Branch protection rules → Edit your rule for `main`**.
-3. Enable **Require status checks to pass before merging**.
-4. Add `codecanary/review` to the required list.
+1. In your repo: **Settings → Branches → Branch protection rules → Edit your rule for `main`**.
+2. Enable **Require status checks to pass before merging**.
+3. Type `codecanary/review` into the status-check search box and add it to the required list. (GitHub accepts any context name; if you've already run a review, it will also show up in the autocomplete.)
 
 Statuses are keyed by commit SHA, so staling is automatic: a new push has no status until the next review run posts one, which re-blocks the merge button.
 
