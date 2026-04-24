@@ -186,7 +186,6 @@ func (g *GithubPlatform) HandleResolutions(threads []ReviewThread, fixed []fixed
 
 func (g *GithubPlatform) Publish(result *ReviewResult, pr *PRData, threads []ReviewThread, fixed []fixedThread) error {
 	summary := computeReviewSummary(threads, fixed, result.Findings)
-	defer g.postReviewCommitStatus(result.SHA, summary)
 
 	// Decide edit-vs-post: if the latest CodeCanary review on the PR carries
 	// the current HEAD SHA in its marker, this is either a reply-only run or
@@ -206,6 +205,7 @@ func (g *GithubPlatform) Publish(result *ReviewResult, pr *PRData, threads []Rev
 			return fmt.Errorf("updating review body: %w", err)
 		}
 		Stderrf(ansiGreen, "Updated latest review on PR #%d\n", g.PRNumber)
+		g.postReviewCommitStatus(result.SHA, summary)
 		return nil
 	}
 
@@ -264,6 +264,7 @@ func (g *GithubPlatform) Publish(result *ReviewResult, pr *PRData, threads []Rev
 		Stderrf(ansiGreen, "Review posted to PR #%d\n", g.PRNumber)
 	}
 
+	g.postReviewCommitStatus(result.SHA, summary)
 	return nil
 }
 
