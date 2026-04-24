@@ -64,7 +64,10 @@ block merges until a clean local review exists for the tip commit.`,
 				return fmt.Errorf("checking working tree: %w", err)
 			}
 			if dirty {
-				return errors.New("working tree has uncommitted changes — commit or stash before signing off (or pass --force)")
+				return errors.New(
+					"working tree has uncommitted changes — commit them, " +
+						"run 'git stash --include-untracked' (plain 'git stash' leaves untracked files behind), " +
+						"or pass --force if you know the dirty files are unrelated to the PR")
 			}
 		}
 
