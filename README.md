@@ -86,11 +86,7 @@ CodeCanary can block merges until a review comes back clean. After every review,
 - `success` — no unresolved findings (everything is either unraised, fixed by code, or handled by the author)
 - `failure` — one or more findings remain unresolved, with a description like `"3 unresolved findings"`
 
-To turn this into a required check:
-
-1. In your repo: **Settings → Branches → Branch protection rules → Edit your rule for `main`**.
-2. Enable **Require status checks to pass before merging**.
-3. Type `codecanary/review` into the status-check search box and add it to the required list. (GitHub accepts any context name; if you've already run a review, it will also show up in the autocomplete.)
+To turn this into a required check, add `codecanary/review` to your repo's required status checks via whichever branch protection mechanism you use (rulesets, classic branch protection rules, etc.). GitHub accepts any context name; if a review has already run, it will also show up in autocomplete.
 
 Statuses are keyed by commit SHA, so staling is automatic: a new push has no status until the next review run posts one, which re-blocks the merge button.
 
