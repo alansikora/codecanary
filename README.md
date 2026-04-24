@@ -81,12 +81,12 @@ Once merged, CodeCanary reviews every PR on open and push. Draft PRs are skipped
 
 ### Gating merges on clean reviews
 
-CodeCanary can block merges until a review comes back clean. After every review, the bot (and the local `codecanary signoff` command) posts a GitHub commit status under the context `codecanary/review`:
+CodeCanary can block merges until a review comes back clean. After every review, the bot (and the local `codecanary signoff` command) posts a GitHub commit status under the context `CodeCanary / review`:
 
 - `success` — no unresolved findings (everything is either unraised, fixed by code, or handled by the author)
 - `failure` — one or more findings remain unresolved, with a description like `"3 unresolved findings"`
 
-To turn this into a required check, add `codecanary/review` to your repo's required status checks via whichever branch protection mechanism you use (rulesets, classic branch protection rules, etc.). GitHub accepts any context name; if a review has already run, it will also show up in autocomplete.
+To turn this into a required check, add `CodeCanary / review` to your repo's required status checks via whichever branch protection mechanism you use (rulesets, classic branch protection rules, etc.). GitHub accepts any context name; if a review has already run, it will also show up in autocomplete.
 
 Statuses are keyed by commit SHA, so staling is automatic: a new push has no status until the next review run posts one, which re-blocks the merge button.
 
@@ -95,7 +95,7 @@ Statuses are keyed by commit SHA, so staling is automatic: a new push has no sta
 ```sh
 codecanary review     # reviews locally, stores findings in ~/.codecanary/...
 # fix anything that came up, commit
-codecanary signoff    # posts codecanary/review = success on HEAD
+codecanary signoff    # posts CodeCanary / review = success on HEAD
 ```
 
 The command refuses to sign off unless HEAD matches the reviewed SHA and the tree is clean — this prevents attesting a review of code that isn't actually in the commit. It needs `gh` authenticated with `repo:status` scope (default `gh auth login` covers it).
@@ -109,7 +109,7 @@ Same required-check config works for both paths: the bot satisfies the check on 
 | `codecanary review [pr-number]` | Review a PR or local diff |
 | `codecanary findings [pr-number]` | Fetch bot findings for a PR (markdown or JSON) |
 | `codecanary reply --url <URL> --body <text>` | Post a reply on a review-comment thread (used by the skill when skipping) |
-| `codecanary signoff` | Post a `codecanary/review` commit status from the last local review (see [gating merges](#gating-merges-on-clean-reviews)) |
+| `codecanary signoff` | Post a `CodeCanary / review` commit status from the last local review (see [gating merges](#gating-merges-on-clean-reviews)) |
 | `codecanary install-skill` | Install the `codecanary-fix` Claude Code skill |
 | `codecanary setup [local\|github]` | Interactive setup wizard |
 | `codecanary auth status` | Show stored credential info |

@@ -25,7 +25,7 @@ Requires:
   - the working tree is clean and HEAD matches the reviewed SHA
   - 'gh' is installed and authenticated with repo:status scope
 
-Combine with a required 'codecanary/review' check in branch protection to
+Combine with a required 'CodeCanary / review' check in branch protection to
 block merges until a clean local review exists for the tip commit.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		force, _ := cmd.Flags().GetBool("force")
