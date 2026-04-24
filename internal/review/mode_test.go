@@ -80,8 +80,13 @@ func TestDetectCodecanaryWorkflow(t *testing.T) {
 		if !ok {
 			t.Fatal("expected workflow to be detected")
 		}
-		if filepath.Base(path) != "codecanary.yml" {
-			t.Errorf("got %q, want basename codecanary.yml", path)
+		// The returned path must be repo-root-relative so JSON output
+		// stays stable regardless of caller cwd. In the non-git
+		// fallback this means cwd-relative, which equals the same
+		// relative form.
+		want := filepath.Join(".github", "workflows", "codecanary.yml")
+		if path != want {
+			t.Errorf("got %q, want %q", path, want)
 		}
 	})
 

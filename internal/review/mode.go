@@ -126,10 +126,27 @@ func detectCodecanaryWorkflow() (string, bool) {
 			continue
 		}
 		if workflowUsesCodecanary(string(data)) {
-			return path, true
+			return relToRoot(root, path), true
 		}
 	}
 	return "", false
+}
+
+// relToRoot returns path relative to root so WorkflowPath stays stable
+// in the JSON output regardless of the caller's cwd. When root is
+// empty (non-git fallback), path is already cwd-relative and returned
+// as-is. On any Rel() error, falls back to the absolute path rather
+// than returning an empty string — a visible full path is better than
+// a silently-empty one for downstream consumers.
+func relToRoot(root, path string) string {
+	if root == "" {
+		return path
+	}
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return path
+	}
+	return rel
 }
 
 // gitRepoRoot returns the absolute path to the current git repository's
