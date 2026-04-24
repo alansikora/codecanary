@@ -121,6 +121,33 @@ func doChat(ctx context.Context, apiBase, apiKey, model, prompt string, timeout 
 	return &chatResp, durationMS, truncated, nil
 }
 
+// openaiCompatProvider is the shared ModelProvider implementation for
+// backends that speak the OpenAI chat completions format (openai, openrouter,
+// grok, plus any OpenAI-compatible endpoint configured via api_base). Each
+// provider file registers its own factory that constructs this struct with
+// the right apiBase — the Run logic is identical, so keeping it here prevents
+// every new OpenAI-compatible provider from copy-pasting HTTP boilerplate.
+type openaiCompatProvider struct {
+	model   string
+	apiBase string
+	keyEnv  string
+	env     []string
+}
+
+func (p *openaiCompatProvider) Run(ctx context.Context, prompt string, opts RunOpts) (*providerResult, error) {
+	apiKey := lookupEnvVar(p.env, p.keyEnv)
+	if apiKey == "" {
+		return nil, errMissingAPIKey(p.keyEnv)
+	}
+
+	chatResp, durationMS, truncated, err := doChat(ctx, p.apiBase, apiKey, p.model, prompt, opts.Timeout)
+	if err != nil {
+		return nil, err
+	}
+
+	return chatResultFromResponse(p.model, chatResp, durationMS, truncated), nil
+}
+
 // chatResultFromResponse builds a providerResult from a chat completions
 // response. Both the openai and openrouter adapters call this after doChat.
 func chatResultFromResponse(model string, chatResp *chatResponse, durationMS int, truncated bool) *providerResult {

@@ -17,7 +17,7 @@ func ValidateAPIKey(provider, apiKey string) error {
 	case "openai":
 		return validateOpenAI(apiKey)
 	case "grok":
-		return validateGrokKey(apiKey)
+		return validateGrok(apiKey)
 	case "openrouter":
 		return validateOpenRouter(apiKey)
 	case "claude":
@@ -100,7 +100,7 @@ func validateOpenAI(apiKey string) error {
 	return fmt.Errorf("unexpected status %d from OpenAI API", resp.StatusCode)
 }
 
-func validateGrokKey(apiKey string) error {
+func validateGrok(apiKey string) error {
 	req, err := http.NewRequest("GET", "https://api.x.ai/v1/models", nil)
 	if err != nil {
 		return err

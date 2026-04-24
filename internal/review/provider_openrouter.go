@@ -1,7 +1,6 @@
 package review
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/alansikora/codecanary/internal/credentials"
@@ -26,33 +25,20 @@ func validateOpenRouter(mc *ModelConfig) error {
 	return nil
 }
 
-// openrouterProvider implements ModelProvider for the OpenRouter API.
-// OpenRouter uses the OpenAI-compatible chat completions format and
-// supports automatic prompt caching with sticky provider routing.
-type openrouterProvider struct {
-	model  string
-	keyEnv string
-	env    []string
-}
-
+// newOpenRouterProvider constructs the OpenRouter adapter. OpenRouter uses the
+// OpenAI-compatible chat completions format and supports automatic prompt
+// caching with sticky provider routing. Transport logic lives in
+// openaiCompatProvider; api_base is fixed because OpenRouter is only ever
+// reached at its canonical URL.
 func newOpenRouterProvider(mc *ModelConfig, env []string) ModelProvider {
 	keyEnv := credentials.EnvVar
 	if mc.APIKeyEnv != "" {
 		keyEnv = mc.APIKeyEnv
 	}
-	return &openrouterProvider{model: mc.Model, keyEnv: keyEnv, env: env}
-}
-
-func (p *openrouterProvider) Run(ctx context.Context, prompt string, opts RunOpts) (*providerResult, error) {
-	apiKey := lookupEnvVar(p.env, p.keyEnv)
-	if apiKey == "" {
-		return nil, fmt.Errorf("API key not found: set %s or run `codecanary setup local`", p.keyEnv)
+	return &openaiCompatProvider{
+		model:   mc.Model,
+		apiBase: "https://openrouter.ai/api/v1",
+		keyEnv:  keyEnv,
+		env:     env,
 	}
-
-	chatResp, durationMS, truncated, err := doChat(ctx, "https://openrouter.ai/api/v1", apiKey, p.model, prompt, opts.Timeout)
-	if err != nil {
-		return nil, err
-	}
-
-	return chatResultFromResponse(p.model, chatResp, durationMS, truncated), nil
 }
