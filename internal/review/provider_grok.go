@@ -1,7 +1,6 @@
 package review
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/alansikora/codecanary/internal/credentials"
@@ -37,15 +36,9 @@ func validateGrok(mc *ModelConfig) error {
 	return nil
 }
 
-// grokProvider implements ModelProvider for the xAI Grok API.
-// Grok uses the OpenAI-compatible chat completions format.
-type grokProvider struct {
-	model   string
-	apiBase string
-	keyEnv  string
-	env     []string
-}
-
+// newGrokProvider constructs the xAI Grok adapter. Grok uses the
+// OpenAI-compatible chat completions format, so transport logic lives in
+// openaiCompatProvider.
 func newGrokProvider(mc *ModelConfig, env []string) ModelProvider {
 	apiBase := "https://api.x.ai/v1"
 	if mc.APIBase != "" {
@@ -55,19 +48,5 @@ func newGrokProvider(mc *ModelConfig, env []string) ModelProvider {
 	if mc.APIKeyEnv != "" {
 		keyEnv = mc.APIKeyEnv
 	}
-	return &grokProvider{model: mc.Model, apiBase: apiBase, keyEnv: keyEnv, env: env}
-}
-
-func (p *grokProvider) Run(ctx context.Context, prompt string, opts RunOpts) (*providerResult, error) {
-	apiKey := lookupEnvVar(p.env, p.keyEnv)
-	if apiKey == "" {
-		return nil, fmt.Errorf("API key not found: set %s or run `codecanary setup local`", p.keyEnv)
-	}
-
-	chatResp, durationMS, truncated, err := doChat(ctx, p.apiBase, apiKey, p.model, prompt, opts.Timeout)
-	if err != nil {
-		return nil, err
-	}
-
-	return chatResultFromResponse(p.model, chatResp, durationMS, truncated), nil
+	return &openaiCompatProvider{model: mc.Model, apiBase: apiBase, keyEnv: keyEnv, env: env}
 }

@@ -1,7 +1,6 @@
 package review
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/alansikora/codecanary/internal/credentials"
@@ -64,17 +63,10 @@ func validateOpenAI(mc *ModelConfig) error {
 	return nil
 }
 
-// openaiProvider implements ModelProvider for the OpenAI API.
-// Supports automatic prompt caching (reported via prompt_tokens_details).
-// Also works with any OpenAI-compatible endpoint by overriding api_base
-// (e.g. Azure OpenAI, Ollama, vLLM).
-type openaiProvider struct {
-	model   string
-	apiBase string
-	keyEnv  string
-	env     []string
-}
-
+// newOpenAIProvider constructs the OpenAI adapter. OpenAI supports automatic
+// prompt caching (reported via prompt_tokens_details) and works with any
+// OpenAI-compatible endpoint by overriding api_base (e.g. Azure OpenAI,
+// Ollama, vLLM). The transport logic lives in openaiCompatProvider.
 func newOpenAIProvider(mc *ModelConfig, env []string) ModelProvider {
 	apiBase := "https://api.openai.com/v1"
 	if mc.APIBase != "" {
@@ -84,19 +76,5 @@ func newOpenAIProvider(mc *ModelConfig, env []string) ModelProvider {
 	if mc.APIKeyEnv != "" {
 		keyEnv = mc.APIKeyEnv
 	}
-	return &openaiProvider{model: mc.Model, apiBase: apiBase, keyEnv: keyEnv, env: env}
-}
-
-func (p *openaiProvider) Run(ctx context.Context, prompt string, opts RunOpts) (*providerResult, error) {
-	apiKey := lookupEnvVar(p.env, p.keyEnv)
-	if apiKey == "" {
-		return nil, fmt.Errorf("API key not found: set %s or run `codecanary setup local`", p.keyEnv)
-	}
-
-	chatResp, durationMS, truncated, err := doChat(ctx, p.apiBase, apiKey, p.model, prompt, opts.Timeout)
-	if err != nil {
-		return nil, err
-	}
-
-	return chatResultFromResponse(p.model, chatResp, durationMS, truncated), nil
+	return &openaiCompatProvider{model: mc.Model, apiBase: apiBase, keyEnv: keyEnv, env: env}
 }

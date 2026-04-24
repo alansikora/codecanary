@@ -181,3 +181,10 @@ func lookupEnvVar(env []string, key string) string {
 	}
 	return ""
 }
+
+// errMissingAPIKey is the canonical error returned when a provider can't find
+// its API key in the filtered environment. Shared so every provider surfaces
+// the same remediation hint.
+func errMissingAPIKey(keyEnv string) error {
+	return fmt.Errorf("API key not found: set %s or run `codecanary setup local`", keyEnv)
+}
