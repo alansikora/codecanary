@@ -1,6 +1,8 @@
 package review
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -211,5 +213,114 @@ func TestLocalStillOpenFindingsPreserved(t *testing.T) {
 	}
 	if _, ok := lp.SavedFinding(999); ok {
 		t.Error("SavedFinding(999) should return false")
+	}
+}
+
+// TestStateFileRepoScoped verifies that state files land under
+// ~/.codecanary/repos/<owner>/<repo>/state/ when a git remote is
+// available — the fix for branch-name collisions across repos.
+func TestStateFileRepoScoped(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	// Tests run inside the codecanary repo so repoSlug() resolves; skip
+	// gracefully on CI runners that check out without a configured
+	// origin remote (shallow clones, detached HEAD) instead of failing.
+	slug, err := repoSlug()
+	if err != nil {
+		t.Skipf("repoSlug() unavailable (%v); skipping repo-scoped state test", err)
+	}
+
+	branch := "test-repo-scoped"
+	if err := SaveLocalState(branch, &LocalState{SHA: "abc", Branch: branch}); err != nil {
+		t.Fatalf("SaveLocalState: %v", err)
+	}
+
+	want := filepath.Join(tmpHome, ".codecanary", "repos", slug, "state", branch+".json")
+	if _, err := os.Stat(want); err != nil {
+		t.Fatalf("expected state file at %s: %v", want, err)
+	}
+
+	legacy := filepath.Join(tmpHome, ".codecanary", "state", branch+".json")
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Errorf("legacy path %s should not exist on a fresh save (err=%v)", legacy, err)
+	}
+
+	got, err := LoadLocalState(branch)
+	if err != nil || got == nil || got.SHA != "abc" {
+		t.Fatalf("LoadLocalState roundtrip failed: got=%+v err=%v", got, err)
+	}
+}
+
+// TestStateFileFallback verifies that state falls back to the legacy
+// ~/.codecanary/state/ path when repoSlug() fails (e.g., no git remote).
+func TestStateFileFallback(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	// Chdir into a non-git directory so repoSlug() errors out.
+	nonGit := t.TempDir()
+	t.Chdir(nonGit)
+
+	branch := "test-fallback"
+	if err := SaveLocalState(branch, &LocalState{SHA: "xyz", Branch: branch}); err != nil {
+		t.Fatalf("SaveLocalState: %v", err)
+	}
+
+	want := filepath.Join(tmpHome, ".codecanary", "state", branch+".json")
+	if _, err := os.Stat(want); err != nil {
+		t.Fatalf("expected fallback state file at %s: %v", want, err)
+	}
+
+	got, err := LoadLocalState(branch)
+	if err != nil || got == nil || got.SHA != "xyz" {
+		t.Fatalf("LoadLocalState roundtrip failed: got=%+v err=%v", got, err)
+	}
+}
+
+// TestStateFileMigration verifies that a legacy state file is read on
+// load and removed after the next save writes to the repo-scoped path.
+func TestStateFileMigration(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	slug, err := repoSlug()
+	if err != nil {
+		t.Skipf("repoSlug() unavailable (%v); skipping migration test", err)
+	}
+
+	branch := "test-migration"
+	legacy := filepath.Join(tmpHome, ".codecanary", "state", branch+".json")
+	preferred := filepath.Join(tmpHome, ".codecanary", "repos", slug, "state", branch+".json")
+
+	// Pre-populate the legacy path directly.
+	if err := os.MkdirAll(filepath.Dir(legacy), 0o755); err != nil {
+		t.Fatalf("mkdir legacy: %v", err)
+	}
+	if err := os.WriteFile(legacy, []byte(`{"sha":"legacy-sha","branch":"test-migration","findings":[],"reviewed_at":"2026-01-01T00:00:00Z"}`), 0o644); err != nil {
+		t.Fatalf("write legacy: %v", err)
+	}
+
+	// Load should find the legacy file since the preferred path doesn't exist yet.
+	got, err := LoadLocalState(branch)
+	if err != nil || got == nil || got.SHA != "legacy-sha" {
+		t.Fatalf("LoadLocalState did not read legacy: got=%+v err=%v", got, err)
+	}
+
+	// Save migrates: preferred gets written, legacy gets removed.
+	if err := SaveLocalState(branch, &LocalState{SHA: "new-sha", Branch: branch}); err != nil {
+		t.Fatalf("SaveLocalState: %v", err)
+	}
+	if _, err := os.Stat(preferred); err != nil {
+		t.Fatalf("preferred path not written: %v", err)
+	}
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Errorf("legacy path should be removed after migration (err=%v)", err)
+	}
+
+	// Next load picks up the new file.
+	got, err = LoadLocalState(branch)
+	if err != nil || got == nil || got.SHA != "new-sha" {
+		t.Fatalf("LoadLocalState after migration: got=%+v err=%v", got, err)
 	}
 }

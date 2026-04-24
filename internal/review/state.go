@@ -19,9 +19,18 @@ type LocalState struct {
 
 // LoadLocalState reads the state file for the given branch.
 // Returns nil, nil if no state file exists.
+//
+// If the preferred (repo-scoped) file is missing but a legacy
+// (branch-only) file exists, the legacy file is read — the next
+// SaveLocalState call will migrate it to the preferred location.
 func LoadLocalState(branch string) (*LocalState, error) {
-	path := stateFilePath(branch)
+	preferred, legacy := stateFilePaths(branch)
+
+	path := preferred
 	data, err := os.ReadFile(path)
+	if err != nil && os.IsNotExist(err) && preferred != legacy {
+		data, err = os.ReadFile(legacy)
+	}
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -36,12 +45,13 @@ func LoadLocalState(branch string) (*LocalState, error) {
 	return &state, nil
 }
 
-// SaveLocalState writes the state file for the given branch.
+// SaveLocalState writes the state file for the given branch to the
+// repo-scoped path. If a legacy (branch-only) file exists, it is
+// removed after the new file is written successfully.
 func SaveLocalState(branch string, state *LocalState) error {
-	path := stateFilePath(branch)
+	preferred, legacy := stateFilePaths(branch)
 
-	// Ensure the .codecanary/.state/ directory exists.
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(preferred), 0o755); err != nil {
 		return fmt.Errorf("creating state directory: %w", err)
 	}
 
@@ -53,22 +63,40 @@ func SaveLocalState(branch string, state *LocalState) error {
 	}
 	data = append(data, '\n')
 
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(preferred, data, 0o600); err != nil {
 		return fmt.Errorf("writing local state: %w", err)
+	}
+	if preferred != legacy {
+		// Clean up any legacy file left over from before repo-scoped state
+		// landed. Best-effort: ignore errors (e.g., permissions, gone already).
+		_ = os.Remove(legacy)
 	}
 	return nil
 }
 
-// stateFilePath returns the path to ~/.codecanary/state/<sanitized-branch>.json.
-// Branch name slashes are replaced with dashes for filesystem safety.
-func stateFilePath(branch string) string {
+// stateFilePaths returns the preferred and legacy state file paths
+// for the given branch.
+//
+//	preferred: ~/.codecanary/repos/<owner>/<repo>/state/<branch>.json
+//	legacy:    ~/.codecanary/state/<branch>.json
+//
+// If the repo slug cannot be derived (no git remote), both paths
+// collapse to the legacy path — we keep working rather than erroring.
+// Branch-name slashes are replaced with dashes for filesystem safety.
+func stateFilePaths(branch string) (preferred, legacy string) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		// Best-effort fallback to repo-level path.
 		home = "."
 	}
 	safe := strings.ReplaceAll(branch, "/", "-")
-	return filepath.Join(home, ".codecanary", "state", safe+".json")
+	legacy = filepath.Join(home, ".codecanary", "state", safe+".json")
+
+	slug, err := repoSlug()
+	if err != nil {
+		return legacy, legacy
+	}
+	preferred = filepath.Join(home, ".codecanary", "repos", slug, "state", safe+".json")
+	return preferred, legacy
 }
 
 // mergeFindings appends new findings to existing ones, deduplicating by
