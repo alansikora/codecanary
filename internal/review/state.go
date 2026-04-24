@@ -63,7 +63,7 @@ func SaveLocalState(branch string, state *LocalState) error {
 	}
 	data = append(data, '\n')
 
-	if err := os.WriteFile(preferred, data, 0o644); err != nil {
+	if err := os.WriteFile(preferred, data, 0o600); err != nil {
 		return fmt.Errorf("writing local state: %w", err)
 	}
 	if preferred != legacy {

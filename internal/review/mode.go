@@ -3,6 +3,7 @@ package review
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -89,15 +90,23 @@ func DetectMode() (*ModeInfo, error) {
 }
 
 // detectCodecanaryWorkflow scans .github/workflows/*.yml and *.yaml in
-// the current working tree for a step that uses the CodeCanary action.
-// Returns the first matching file's path relative to cwd.
+// the current repository for a step that uses the CodeCanary action.
+// Returns the first matching file's path relative to the repo root.
+//
+// The scan is rooted at `git rev-parse --show-toplevel` rather than
+// the current working directory so calls from a subdirectory still
+// find workflow files correctly — running `codecanary` from
+// `repo/cmd/review/` must not silently miscategorise the mode.
+// When not in a git repo, falls back to a cwd-relative scan so the
+// detector keeps working in tests and non-git setups.
 //
 // Textual scan, not YAML parsing: the detection rule (a `uses:` line
 // referencing the action repo) is stable, and a real parse would need
 // to resolve matrix expansions and reusable workflows for no win.
 // Commented-out lines are skipped.
 func detectCodecanaryWorkflow() (string, bool) {
-	workflowsDir := filepath.Join(".github", "workflows")
+	root := gitRepoRoot()
+	workflowsDir := filepath.Join(root, ".github", "workflows")
 	entries, err := os.ReadDir(workflowsDir)
 	if err != nil {
 		return "", false
@@ -121,6 +130,19 @@ func detectCodecanaryWorkflow() (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// gitRepoRoot returns the absolute path to the current git repository's
+// root via `git rev-parse --show-toplevel`, or an empty string when
+// not inside a git repo. An empty return makes filepath.Join collapse
+// to the cwd-relative path, which is the right fallback for tests
+// that Chdir into a bare temp directory.
+func gitRepoRoot() string {
+	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // workflowUsesCodecanary returns true if the given workflow YAML text

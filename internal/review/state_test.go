@@ -223,10 +223,12 @@ func TestStateFileRepoScoped(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 
-	// Tests run inside the codecanary repo, so repoSlug() resolves.
+	// Tests run inside the codecanary repo so repoSlug() resolves; skip
+	// gracefully on CI runners that check out without a configured
+	// origin remote (shallow clones, detached HEAD) instead of failing.
 	slug, err := repoSlug()
 	if err != nil {
-		t.Fatalf("repoSlug(): %v (test must run inside a git repo with an origin remote)", err)
+		t.Skipf("repoSlug() unavailable (%v); skipping repo-scoped state test", err)
 	}
 
 	branch := "test-repo-scoped"
@@ -284,7 +286,7 @@ func TestStateFileMigration(t *testing.T) {
 
 	slug, err := repoSlug()
 	if err != nil {
-		t.Fatalf("repoSlug(): %v", err)
+		t.Skipf("repoSlug() unavailable (%v); skipping migration test", err)
 	}
 
 	branch := "test-migration"
