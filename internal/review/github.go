@@ -312,6 +312,42 @@ func PostReview(repo string, prNumber int, result *ReviewResult, diff string, co
 	return err
 }
 
+// ReviewCommitStatusContext is the commit-status context the review bot
+// writes when a review run completes. Using a stable string lets teams
+// require it in branch protection — "codecanary/review must be green
+// before merge." Matches the context used by `codecanary signoff`, so
+// both the bot (on PRs with the workflow) and a local signoff can
+// satisfy the same required check.
+const ReviewCommitStatusContext = "codecanary/review"
+
+// PostReviewCommitStatus POSTs a commit status on the given SHA summarising
+// the review outcome. state is "success" when all findings are resolved or
+// handled by the author, "failure" otherwise. Description is shown on the
+// PR checks list, so keep it short and human-readable. Errors are returned
+// so the caller can log them — a failed status post should not abort the
+// larger Publish flow, since the review itself has already been posted.
+func PostReviewCommitStatus(repo, sha, state, description string) error {
+	if sha == "" {
+		return fmt.Errorf("commit status requires a SHA")
+	}
+	owner, name, err := parseRepoSlug(repo)
+	if err != nil {
+		return err
+	}
+	payload := map[string]string{
+		"state":       state,
+		"context":     ReviewCommitStatusContext,
+		"description": description,
+	}
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshaling commit status payload: %w", err)
+	}
+	apiPath := fmt.Sprintf("repos/%s/%s/statuses/%s", owner, name, sha)
+	_, err = ghAPIPOST(apiPath, payloadJSON)
+	return err
+}
+
 // FetchReviewFromPR extracts cached review data from a PR review's hidden HTML tag.
 func FetchReviewFromPR(repo string, prNumber int) (*ReviewResult, error) {
 	owner, name, err := parseRepoSlug(repo)

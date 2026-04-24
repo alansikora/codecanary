@@ -3,8 +3,6 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"os/exec"
-	"strings"
 
 	"github.com/alansikora/codecanary/internal/review"
 	"github.com/spf13/cobra"
@@ -89,21 +87,13 @@ block merges until a clean local review exists for the tip commit.`,
 			desc = fmt.Sprintf("%d unresolved finding%s", unresolved, suffix)
 		}
 
-		apiPath := fmt.Sprintf("repos/%s/statuses/%s", slug, sha)
-		c := exec.Command("gh", "api", "-X", "POST", apiPath,
-			"-f", "context=codecanary/review",
-			"-f", "state="+statusState,
-			"-f", "description="+desc,
-		)
-		out, err := c.CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("posting commit status via gh api: %w\n%s",
-				err, strings.TrimSpace(string(out)))
+		if err := review.PostReviewCommitStatus(slug, sha, statusState, desc); err != nil {
+			return fmt.Errorf("posting commit status: %w", err)
 		}
 
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-			"✓ codecanary/review = %s on %s@%s (%s)\n",
-			statusState, slug, shortSHA(sha), desc)
+			"✓ %s = %s on %s@%s (%s)\n",
+			review.ReviewCommitStatusContext, statusState, slug, shortSHA(sha), desc)
 		return nil
 	},
 }
