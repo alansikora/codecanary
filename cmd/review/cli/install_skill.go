@@ -6,7 +6,9 @@ import (
 	"path/filepath"
 
 	"github.com/alansikora/codecanary/internal/skills"
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var installSkillCmd = &cobra.Command{
@@ -30,6 +32,14 @@ this cleanup since the caller is driving placement themselves.
 The skill content is embedded in the codecanary binary; re-run this
 command after upgrading codecanary to pick up any updates.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		postUpgrade, err := cmd.Flags().GetBool("post-upgrade")
+		if err != nil {
+			return fmt.Errorf("flag --post-upgrade: %w", err)
+		}
+		if postUpgrade {
+			return runPostUpgradeSkillCheck()
+		}
+
 		destFlag, err := cmd.Flags().GetString("dest")
 		if err != nil {
 			return fmt.Errorf("flag --dest: %w", err)
@@ -134,6 +144,78 @@ func removeLegacyLoopSkill() {
 	}
 }
 
+// skillNeedsUpgrade reports whether the codecanary-fix skill is installed
+// at the default user-scoped path and whether its content differs from
+// the copy embedded in this binary. destPath is returned regardless so
+// callers can surface it in error messages or prompts.
+func skillNeedsUpgrade() (installed bool, differs bool, destPath string, err error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false, false, "", err
+	}
+	destPath = filepath.Join(home, ".claude", "skills", "codecanary-fix", "SKILL.md")
+
+	existing, err := os.ReadFile(destPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, false, destPath, nil
+		}
+		return false, false, destPath, err
+	}
+	return true, string(existing) != skills.CodecanaryFix(), destPath, nil
+}
+
+// runPostUpgradeSkillCheck is invoked by `codecanary upgrade` after the
+// binary has been swapped. It detects drift between the freshly embedded
+// skill and the on-disk copy, asks the operator whether to overwrite,
+// and writes the new content on confirmation. Always exits with nil:
+// this is a best-effort convenience and must never mask an otherwise
+// successful upgrade.
+func runPostUpgradeSkillCheck() error {
+	installed, differs, destPath, err := skillNeedsUpgrade()
+	if err != nil || !installed || !differs {
+		return nil
+	}
+
+	// Non-interactive upgrades (CI, remote shells piping input) shouldn't
+	// hang on a prompt — surface the hint and let the operator run the
+	// explicit command when they can answer it.
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintf(os.Stderr,
+			"The codecanary-fix skill has changed. Run `codecanary install-skill --force` to upgrade %s.\n",
+			destPath)
+		return nil
+	}
+
+	var confirm bool
+	if formErr := huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title("The codecanary-fix skill has been updated in this release.").
+				Description(fmt.Sprintf("Upgrade the installed copy at %s?", destPath)).
+				Value(&confirm),
+		),
+	).Run(); formErr != nil {
+		return nil
+	}
+	if !confirm {
+		return nil
+	}
+
+	if mkErr := os.MkdirAll(filepath.Dir(destPath), 0o755); mkErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not create skill directory: %v\n", mkErr)
+		return nil
+	}
+	if writeErr := os.WriteFile(destPath, []byte(skills.CodecanaryFix()), 0o644); writeErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not upgrade skill: %v\n", writeErr)
+		return nil
+	}
+	fmt.Fprintf(os.Stderr, "✓ upgraded codecanary-fix skill at %s\n", destPath)
+	fmt.Fprintln(os.Stderr, "  Restart Claude Code to pick it up.")
+	return nil
+}
+
 func init() {
 	installSkillCmd.Flags().String("dest", "",
 		"Destination file path (default: ~/.claude/skills/codecanary-fix/SKILL.md)")
@@ -141,5 +223,8 @@ func init() {
 		"Print the skill content to stdout instead of writing to disk")
 	installSkillCmd.Flags().Bool("force", false,
 		"Overwrite the destination file if it already exists")
+	installSkillCmd.Flags().Bool("post-upgrade", false,
+		"Internal: called by `codecanary upgrade` to prompt for a skill refresh when it has drifted")
+	_ = installSkillCmd.Flags().MarkHidden("post-upgrade")
 	rootCmd.AddCommand(installSkillCmd)
 }
