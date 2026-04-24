@@ -79,6 +79,34 @@ This runs the same provider and key selection, then:
 
 Once merged, CodeCanary reviews every PR on open and push. Draft PRs are skipped by default.
 
+### Gating merges on clean reviews
+
+CodeCanary can block merges until a review comes back clean. After every review, the bot (and the local `codecanary signoff` command) posts a GitHub commit status under the context `codecanary/review`:
+
+- `success` — no unresolved findings (everything is either unraised, fixed by code, or handled by the author)
+- `failure` — one or more findings remain unresolved, with a description like `"3 unresolved findings"`
+
+To turn this into a required check:
+
+1. Make sure a review has run at least once on any PR so `codecanary/review` appears in the status-check picker.
+2. In your repo: **Settings → Branches → Branch protection rules → Edit your rule for `main`**.
+3. Enable **Require status checks to pass before merging**.
+4. Add `codecanary/review` to the required list.
+
+Statuses are keyed by commit SHA, so staling is automatic: a new push has no status until the next review run posts one, which re-blocks the merge button.
+
+**Without a workflow.** If your repo doesn't use the GitHub Action, `codecanary signoff` posts the same status from your local machine after a clean `codecanary review`:
+
+```sh
+codecanary review     # reviews locally, stores findings in ~/.codecanary/...
+# fix anything that came up, commit
+codecanary signoff    # posts codecanary/review = success on HEAD
+```
+
+The command refuses to sign off unless HEAD matches the reviewed SHA and the tree is clean — this prevents attesting a review of code that isn't actually in the commit. It needs `gh` authenticated with `repo:status` scope (default `gh auth login` covers it).
+
+Same required-check config works for both paths: the bot satisfies the check on PRs that run the workflow; `codecanary signoff` satisfies it for repos without the workflow, branches where the workflow doesn't run, or PRs from forks where secrets are unavailable.
+
 ## CLI Reference
 
 | Command | Description |
@@ -86,6 +114,7 @@ Once merged, CodeCanary reviews every PR on open and push. Draft PRs are skipped
 | `codecanary review [pr-number]` | Review a PR or local diff |
 | `codecanary findings [pr-number]` | Fetch bot findings for a PR (markdown or JSON) |
 | `codecanary reply --url <URL> --body <text>` | Post a reply on a review-comment thread (used by the skill when skipping) |
+| `codecanary signoff` | Post a `codecanary/review` commit status from the last local review (see [gating merges](#gating-merges-on-clean-reviews)) |
 | `codecanary install-skill` | Install the `codecanary-fix` Claude Code skill |
 | `codecanary setup [local\|github]` | Interactive setup wizard |
 | `codecanary auth status` | Show stored credential info |
