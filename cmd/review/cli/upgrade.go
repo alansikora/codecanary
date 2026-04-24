@@ -54,7 +54,9 @@ func offerSkillRefresh() {
 	refresh.Stdin = os.Stdin
 	refresh.Stdout = os.Stdout
 	refresh.Stderr = os.Stderr
-	_ = refresh.Run()
+	if err := refresh.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "note: skill refresh subprocess exited with error: %v\n", err)
+	}
 }
 
 func init() {

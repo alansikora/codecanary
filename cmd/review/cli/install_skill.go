@@ -203,6 +203,10 @@ func runPostUpgradeSkillCheck() error {
 		return nil
 	}
 
+	if mkErr := os.MkdirAll(filepath.Dir(destPath), 0o755); mkErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not create skill directory: %v\n", mkErr)
+		return nil
+	}
 	if writeErr := os.WriteFile(destPath, []byte(skills.CodecanaryFix()), 0o644); writeErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not upgrade skill: %v\n", writeErr)
 		return nil
