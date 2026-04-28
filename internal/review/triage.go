@@ -21,17 +21,19 @@ const (
 	TriageCodeChangedReply                               // both code changed AND has replies
 	TriageCrossFileChange                                // diff has changes but NOT in this thread's file
 	TriageFileRemovedFromPR                              // file no longer in the PR
+	TriagePreviouslyAcked                                // bot already ack'd a deferral; no new human reply since
 )
 
 // TriagedThread pairs a ReviewThread with its classification and context.
 type TriagedThread struct {
-	Thread      ReviewThread
-	Index       int                  // original index in the unresolved slice
-	Class       ThreadClassification
-	FileDiff    string               // file-scoped diff (level 1) or full diff (cross-file)
-	FullDiff    string               // full PR diff for widened-scope fallback; empty when not applicable
-	FileSnippet string               // windowed file content around finding + diff hunks
-	BotLogin    string               // login of the review bot, for filtering replies
+	Thread         ReviewThread
+	Index          int // original index in the unresolved slice
+	Class          ThreadClassification
+	FileDiff       string // file-scoped diff (level 1) or full diff (cross-file)
+	FullDiff       string // full PR diff for widened-scope fallback; empty when not applicable
+	FileSnippet    string // windowed file content around finding + diff hunks
+	BotLogin       string // login of the review bot, for filtering replies
+	PriorAckReason string // for TriagePreviouslyAcked: the previously-recorded reason (acknowledged/rebutted/dismissed)
 }
 
 // ThreadResolution is the result of a per-thread Claude evaluation.
@@ -284,8 +286,20 @@ func ClassifyThreads(threads []ReviewThread, activityDiff, contextDiff, botLogin
 		outdated := t.Outdated
 		deleted := fileDeletedInDiff(contextDiff, t.Path)
 
+		// Sticky-ack: when the bot already recorded a deferral and the
+		// author has not added a fresh reply since, preserve the prior
+		// classification instead of rerunning triage. This prevents the
+		// "Acknowledged by author: 2" → "Still unresolved: 2" regression
+		// that happened on subsequent pushes when no new signal was present.
+		var priorAck string
+		if !hasReply {
+			priorAck = parsePriorAckReason(t, botLogin)
+		}
+
 		var class ThreadClassification
 		switch {
+		case priorAck != "":
+			class = TriagePreviouslyAcked
 		case deleted:
 			// File was deleted — evaluate with full diff so Claude can check
 			// whether the code moved to a replacement file with the fix applied.
@@ -341,17 +355,58 @@ func ClassifyThreads(threads []ReviewThread, activityDiff, contextDiff, botLogin
 		}
 
 		result[i] = TriagedThread{
-			Thread:      t,
-			Index:       i,
-			Class:       class,
-			FileDiff:    fileDiff,
-			FullDiff:    fullDiff,
-			FileSnippet: fileSnippet,
-			BotLogin:    botLogin,
+			Thread:         t,
+			Index:          i,
+			Class:          class,
+			FileDiff:       fileDiff,
+			FullDiff:       fullDiff,
+			FileSnippet:    fileSnippet,
+			BotLogin:       botLogin,
+			PriorAckReason: priorAck,
 		}
 	}
 
 	return result
+}
+
+// parsePriorAckReason returns the reason recorded in the most recent
+// codecanary ack reply on the thread (acknowledged/rebutted/dismissed),
+// or "" if no ack reply is present. Handles both the current marker
+// (<!-- codecanary:ack:<reason> -->) and the legacy clanopy form.
+func parsePriorAckReason(t ReviewThread, botLogin string) string {
+	var latest string
+	for _, r := range t.Replies {
+		if r.Author != botLogin {
+			continue
+		}
+		if reason := extractAckReason(r.Body); reason != "" {
+			latest = reason
+		}
+	}
+	return latest
+}
+
+// extractAckReason pulls the reason value out of a codecanary ack marker.
+// Returns "" when the body has no marker. Unknown reasons are returned
+// as-is so callers can decide how to handle them; in practice the bot
+// only writes "acknowledged", "rebutted", "dismissed", or "unknown".
+func extractAckReason(body string) string {
+	for _, prefix := range []string{ackMarkerPrefix, legacyAckPrefix} {
+		idx := strings.Index(body, prefix)
+		if idx < 0 {
+			continue
+		}
+		rest := body[idx+len(prefix):]
+		end := strings.Index(rest, " -->")
+		if end < 0 {
+			end = strings.Index(rest, "-->")
+			if end < 0 {
+				continue
+			}
+		}
+		return strings.TrimSpace(rest[:end])
+	}
+	return ""
 }
 
 // fileInDiff checks if the diff contains changes to the given file path.
@@ -682,6 +737,19 @@ func EvaluateThreadsParallel(triaged []TriagedThread, provider ModelProvider, cf
 			results[i] = ThreadResolution{Index: t.Index, Resolved: false}
 			continue
 		}
+		if t.Class == TriagePreviouslyAcked {
+			// Sticky: carry the prior ack reason forward without burning
+			// triage tokens. computeReviewSummary will route it to the
+			// matching bucket (Dismissed/Acknowledged/Rebutted), so the
+			// commit status check stays green across pushes that don't
+			// touch the deferred finding.
+			results[i] = ThreadResolution{
+				Index:    t.Index,
+				Resolved: true,
+				Reason:   t.PriorAckReason,
+			}
+			continue
+		}
 		// Soft budget cap: skip remaining evaluations if budget is exceeded.
 		if err := CheckBudget(tracker, maxBudgetUSD); err != nil {
 			results[i] = ThreadResolution{Index: t.Index, Error: err}
@@ -789,6 +857,8 @@ func LogTriage(triaged []TriagedThread) {
 			fmt.Fprintf(os.Stderr, "  [evaluate] %s — cross-file changes detected\n", label)
 		case TriageFileRemovedFromPR:
 			fmt.Fprintf(os.Stderr, "  [resolve]  %s — file removed from PR\n", label)
+		case TriagePreviouslyAcked:
+			fmt.Fprintf(os.Stderr, "  [sticky]   %s — prior ack (%s) carried forward\n", label, t.PriorAckReason)
 		}
 	}
 
@@ -799,7 +869,7 @@ func LogTriage(triaged []TriagedThread) {
 		switch t.Class {
 		case TriageSkip:
 			skipped++
-		case TriageFileRemovedFromPR:
+		case TriageFileRemovedFromPR, TriagePreviouslyAcked:
 			autoResolved++
 		default:
 			needsEval++
@@ -812,7 +882,8 @@ func LogTriage(triaged []TriagedThread) {
 func LogResolutions(triaged []TriagedThread, resolutions []ThreadResolution) {
 	fmt.Fprintf(os.Stderr, "\n")
 	for i, r := range resolutions {
-		if triaged[i].Class == TriageSkip || triaged[i].Class == TriageFileRemovedFromPR {
+		switch triaged[i].Class {
+		case TriageSkip, TriageFileRemovedFromPR, TriagePreviouslyAcked:
 			continue
 		}
 		label := threadLabel(triaged[i].Thread)
@@ -845,7 +916,10 @@ func LogResolutions(triaged []TriagedThread, resolutions []ThreadResolution) {
 func countNonSkipped(triaged []TriagedThread) int {
 	n := 0
 	for _, t := range triaged {
-		if t.Class != TriageSkip && t.Class != TriageFileRemovedFromPR {
+		switch t.Class {
+		case TriageSkip, TriageFileRemovedFromPR, TriagePreviouslyAcked:
+			continue
+		default:
 			n++
 		}
 	}

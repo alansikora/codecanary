@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -440,6 +441,131 @@ func TestToFixedThreads_PropagatesRationale(t *testing.T) {
 	if fixed[1].Rationale != "" {
 		t.Errorf("empty rationale should stay empty, got %q", fixed[1].Rationale)
 	}
+}
+
+func TestExtractAckReason(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"current marker", "<!-- codecanary:ack:rebutted -->\nKeeping open.", "rebutted"},
+		{"acknowledged", "<!-- codecanary:ack:acknowledged -->\nKeeping open.", "acknowledged"},
+		{"dismissed", "<!-- codecanary:ack:dismissed -->\nKeeping open.", "dismissed"},
+		{"legacy marker", "<!-- clanopy:ack:rebutted -->\nKeeping open.", "rebutted"},
+		{"no marker", "Some normal reply", ""},
+		{"no closing tag", "<!-- codecanary:ack:acknowledged with no closer", ""},
+		{"unknown reason", "<!-- codecanary:ack:unknown -->\n", "unknown"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := extractAckReason(tc.body); got != tc.want {
+				t.Errorf("extractAckReason(%q) = %q, want %q", tc.body, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParsePriorAckReason_PicksLatestBotAck(t *testing.T) {
+	thread := ReviewThread{
+		Replies: []ThreadReply{
+			{Author: "user", Body: "Deferring — see rationale."},
+			{Author: "bot", Body: "<!-- codecanary:ack:acknowledged -->\nAuthor acknowledged this finding."},
+			{Author: "bot", Body: "<!-- codecanary:ack:rebutted -->\nAuthor provided rebuttal."},
+		},
+	}
+	if got := parsePriorAckReason(thread, "bot"); got != "rebutted" {
+		t.Errorf("expected latest reason 'rebutted', got %q", got)
+	}
+}
+
+func TestParsePriorAckReason_IgnoresNonBotMarkers(t *testing.T) {
+	thread := ReviewThread{
+		Replies: []ThreadReply{
+			{Author: "attacker", Body: "<!-- codecanary:ack:dismissed -->\nFake."},
+		},
+	}
+	if got := parsePriorAckReason(thread, "bot"); got != "" {
+		t.Errorf("non-bot ack should not be sticky, got %q", got)
+	}
+}
+
+func TestClassifyThreads_StickyAckSurvivesNextPush(t *testing.T) {
+	threads := []ReviewThread{
+		{
+			Path: "CLAUDE.md",
+			Line: 724,
+			Body: "Original finding",
+			Replies: []ThreadReply{
+				{Author: "user", Body: "Deferring — forward recommendation, not yet implemented."},
+				{Author: "bot", Body: "<!-- codecanary:ack:acknowledged -->\nAuthor acknowledged."},
+			},
+		},
+	}
+	// File changed in the next push — without sticky-ack this would
+	// classify as TriageCodeChanged and lose the prior reason.
+	diff := "diff --git a/CLAUDE.md b/CLAUDE.md\n--- a/CLAUDE.md\n+++ b/CLAUDE.md\n@@ -700,3 +700,3 @@\n-old\n+new\n"
+
+	triaged := ClassifyThreads(threads, diff, diff, "bot", []string{"CLAUDE.md"}, nil)
+
+	if triaged[0].Class != TriagePreviouslyAcked {
+		t.Fatalf("expected TriagePreviouslyAcked, got %d", triaged[0].Class)
+	}
+	if triaged[0].PriorAckReason != "acknowledged" {
+		t.Errorf("expected PriorAckReason 'acknowledged', got %q", triaged[0].PriorAckReason)
+	}
+}
+
+func TestClassifyThreads_NewHumanReplyBreaksStickiness(t *testing.T) {
+	// Author replied AGAIN after the bot's ack — that's a fresh signal
+	// and should reopen the thread for evaluation, not stay sticky.
+	threads := []ReviewThread{
+		{
+			Path: "CLAUDE.md",
+			Line: 724,
+			Replies: []ThreadReply{
+				{Author: "user", Body: "Original deferring rationale."},
+				{Author: "bot", Body: "<!-- codecanary:ack:acknowledged -->\nAck."},
+				{Author: "user", Body: "Wait, actually this one needs another look."},
+			},
+		},
+	}
+	triaged := ClassifyThreads(threads, "", "", "bot", []string{"CLAUDE.md"}, nil)
+
+	if triaged[0].Class != TriageHasReply {
+		t.Fatalf("expected TriageHasReply (new reply after ack), got %d", triaged[0].Class)
+	}
+	if triaged[0].PriorAckReason != "" {
+		t.Errorf("PriorAckReason should be empty when new reply present, got %q", triaged[0].PriorAckReason)
+	}
+}
+
+func TestEvaluateThreadsParallel_StickyAckShortCircuits(t *testing.T) {
+	// Provider that panics if called — sticky-ack must skip the LLM.
+	provider := &stickyAckPanicProvider{t: t}
+
+	triaged := []TriagedThread{
+		{Index: 0, Class: TriagePreviouslyAcked, PriorAckReason: "rebutted"},
+		{Index: 1, Class: TriagePreviouslyAcked, PriorAckReason: "dismissed"},
+	}
+	results := EvaluateThreadsParallel(triaged, provider, nil, 3, &UsageTracker{}, 0)
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	if !results[0].Resolved || results[0].Reason != "rebutted" {
+		t.Errorf("first result: expected resolved=true reason=rebutted, got %+v", results[0])
+	}
+	if !results[1].Resolved || results[1].Reason != "dismissed" {
+		t.Errorf("second result: expected resolved=true reason=dismissed, got %+v", results[1])
+	}
+}
+
+type stickyAckPanicProvider struct{ t *testing.T }
+
+func (p *stickyAckPanicProvider) Run(_ context.Context, _ string, _ RunOpts) (*providerResult, error) {
+	p.t.Fatalf("provider.Run must not be called for TriagePreviouslyAcked threads")
+	return nil, nil
 }
 
 func TestResolutionFormat_RequestsRationale(t *testing.T) {
