@@ -912,12 +912,17 @@ func LogResolutions(triaged []TriagedThread, resolutions []ThreadResolution) {
 	}
 }
 
-// countNonSkipped returns the number of triaged threads that need LLM evaluation.
+// countNonSkipped returns the number of triaged threads that EvaluateThreadsParallel
+// must process. TriagePreviouslyAcked is included even though it short-circuits
+// without an LLM call: the function still has to run to emit the carried-forward
+// fixedThread, which is what feeds the summary's Acknowledged/Rebutted/Dismissed
+// buckets. Excluding it here was the bug behind the "Still unresolved: 2" stuck
+// status on already-acked threads.
 func countNonSkipped(triaged []TriagedThread) int {
 	n := 0
 	for _, t := range triaged {
 		switch t.Class {
-		case TriageSkip, TriageFileRemovedFromPR, TriagePreviouslyAcked:
+		case TriageSkip, TriageFileRemovedFromPR:
 			continue
 		default:
 			n++

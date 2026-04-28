@@ -540,6 +540,23 @@ func TestClassifyThreads_NewHumanReplyBreaksStickiness(t *testing.T) {
 	}
 }
 
+func TestCountNonSkipped_IncludesPreviouslyAcked(t *testing.T) {
+	// Regression: sticky-ack threads must count toward needsEval so
+	// EvaluateThreadsParallel runs and emits the carried-forward fixedThread.
+	// Excluding them caused the runner to skip eval entirely, leaving the
+	// summary stuck on "Still unresolved" for threads the bot had already
+	// acked.
+	triaged := []TriagedThread{
+		{Class: TriageSkip},
+		{Class: TriageFileRemovedFromPR},
+		{Class: TriagePreviouslyAcked, PriorAckReason: "acknowledged"},
+		{Class: TriagePreviouslyAcked, PriorAckReason: "rebutted"},
+	}
+	if got := countNonSkipped(triaged); got != 2 {
+		t.Errorf("countNonSkipped = %d, want 2 (the two PreviouslyAcked threads)", got)
+	}
+}
+
 func TestEvaluateThreadsParallel_StickyAckShortCircuits(t *testing.T) {
 	// Provider that panics if called — sticky-ack must skip the LLM.
 	provider := &stickyAckPanicProvider{t: t}
