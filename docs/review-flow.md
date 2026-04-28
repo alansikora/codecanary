@@ -94,16 +94,19 @@ First, an incremental diff is computed (`git diff <previousSHA>..HEAD`). Two dif
 - **Activity diff** (incremental): Determines whether there's new activity to evaluate. If empty, threads with no replies are skipped (no LLM cost).
 - **Context diff** (full PR diff): Used for classification and evaluation context. Ensures fixes from earlier pushes are visible even if they predate the incremental window.
 
-`ClassifyThreads()` assigns each unresolved thread one of six classifications:
+`ClassifyThreads()` assigns each unresolved thread one of seven classifications:
 
 | Classification | Condition | Evaluation |
 |---|---|---|
+| `TriagePreviouslyAcked` | Bot already posted a `<!-- codecanary:ack:* -->` reply and no human reply since | Auto-resolved by Go code (no LLM) -- prior reason carried forward |
 | `TriageSkip` | No activity diff, not outdated, no replies | Skipped (no LLM) |
 | `TriageCodeChanged` | GitHub outdated flag, or file in PR diff | LLM evaluates with file-scoped diff + file snippet |
 | `TriageHasReply` | Human replied (no code changes) | LLM evaluates reply intent |
 | `TriageCodeChangedReply` | Both code changed and human replied | LLM evaluates both |
 | `TriageCrossFileChange` | Changes in other files only | LLM evaluates with full PR diff |
 | `TriageFileRemovedFromPR` | File no longer in PR | Auto-resolved by Go code (no LLM) -- thread resolved on GitHub |
+
+`TriagePreviouslyAcked` is checked first. When the bot already recorded a deferral (`<!-- codecanary:ack:dismissed/rebutted/acknowledged -->`) and the author hasn't added a fresh reply since, `EvaluateThreadsParallel` short-circuits without an LLM call and re-emits the same fixedThread the prior cycle produced. `computeReviewSummary` then routes the thread back to its original Dismissed/Acknowledged/Rebutted bucket and the `CodeCanary / review` commit status stays green across pushes that don't touch the deferred finding. A new human reply after the ack flips the thread back to `TriageHasReply` (or `TriageCodeChangedReply`) so the fresh signal gets re-evaluated.
 
 Threads classified as `TriageFileRemovedFromPR` are auto-resolved without an LLM call. The Go code sets reason `file_removed` and resolves the thread directly.
 
@@ -196,6 +199,8 @@ If telemetry is enabled (opt-in), fires an anonymous event with aggregate stats:
 **Per-thread evaluation.** Each unresolved thread gets its own LLM call with tailored context, rather than one bulk prompt. This allows fine-grained classification, parallel execution, and per-thread budget control.
 
 **Anti-ping-pong.** The incremental prompt includes recently resolved findings so the LLM doesn't re-raise similar issues. Non-code resolutions (dismissed, acknowledged, rebutted) keep threads open for re-triage on future pushes, but post ack replies to avoid duplicate acknowledgments.
+
+**Sticky ack across pushes.** Once the bot has recorded a deferral on a thread, subsequent pushes preserve that classification (via `TriagePreviouslyAcked`) until the author adds a new reply. Without this, the next push would re-triage the thread as `TriageCodeChanged` (when the file was touched) or `TriageSkip` (when it wasn't), and the resolution reason would evaporate from the summary — flipping `Acknowledged by author: N` to `Still unresolved: N` and failing the commit status check on a thread the operator already deferred.
 
 **Context window fitting.** After building the prompt, the pipeline estimates token count and progressively trims file contents (largest first) then diff to fit the model's context window. This prevents API failures on large PRs.
 
