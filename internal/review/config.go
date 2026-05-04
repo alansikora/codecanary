@@ -35,7 +35,17 @@ type ReviewConfig struct {
 	APIKeyEnv    string            `yaml:"api_key_env"`     // env var name for API key (default depends on provider)
 	ClaudeArgs   []string          `yaml:"claude_args"`     // extra args passed to the Claude CLI binary (claude provider only)
 	ClaudePath   string            `yaml:"claude_path"`     // path to Claude CLI binary (default: "claude")
-	Evaluation   *EvaluationConfig `yaml:"evaluation"`
+	// ClaudeReviewTools, when non-empty, enables the listed tools for the
+	// review model (claude provider only). Format mirrors the Claude CLI
+	// `--tools` flag: comma-separated tool names (e.g. "Read,Grep,Glob") or
+	// "default" for all built-in tools. Empty (the default) preserves the
+	// historical single-shot behaviour with `--tools ""`. Read-only tools
+	// like `Read,Grep,Glob` let the reviewer verify hypotheses (does this
+	// column exist? is this function called elsewhere?) without writing or
+	// executing anything. Triage stays single-shot regardless — only the
+	// review-model invocation gets tools.
+	ClaudeReviewTools string            `yaml:"claude_review_tools"`
+	Evaluation        *EvaluationConfig `yaml:"evaluation"`
 }
 
 // ModelConfig holds the provider and model settings needed to construct a
@@ -49,6 +59,10 @@ type ModelConfig struct {
 	APIKeyEnv    string
 	ClaudeArgs   []string // forwarded to claudeCLIProvider; ignored by other providers
 	ClaudePath   string   // forwarded to claudeCLIProvider; empty means "claude"
+	// ClaudeReviewTools, when non-empty, replaces the default `--tools ""`
+	// argument the claude provider uses to disable built-in tools. Set only on
+	// the review provider (not triage). See ReviewConfig.ClaudeReviewTools.
+	ClaudeReviewTools string
 }
 
 // EvaluationConfig holds per-evaluation-type settings for re-evaluation prompts.
@@ -234,6 +248,9 @@ func (c *ReviewConfig) Validate() error {
 		}
 	} else if len(c.ClaudeArgs) > 0 || c.ClaudePath != "" {
 		Stderrf(ansiYellow, "Warning: claude_args and claude_path are ignored for provider %q\n", c.Provider)
+	}
+	if c.ClaudeReviewTools != "" && c.Provider != "claude" {
+		Stderrf(ansiYellow, "Warning: claude_review_tools is ignored for provider %q (claude provider only)\n", c.Provider)
 	}
 	for i, r := range c.Rules {
 		if r.Severity != "" && !validSeverities[r.Severity] {

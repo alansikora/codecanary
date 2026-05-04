@@ -149,6 +149,27 @@ func TestValidate_ClaudeArgsNonClaudeProvider(t *testing.T) {
 	}
 }
 
+func TestValidate_ClaudeReviewToolsClaude(t *testing.T) {
+	cfg := &ReviewConfig{
+		Provider: "claude", ReviewModel: "sonnet", TriageModel: "haiku",
+		ClaudeReviewTools: "Read,Grep,Glob",
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidate_ClaudeReviewToolsNonClaudeProvider(t *testing.T) {
+	cfg := &ReviewConfig{
+		Provider: "anthropic", ReviewModel: "claude-sonnet-4-6", TriageModel: "claude-haiku-4-5-20251001",
+		ClaudeReviewTools: "Read,Grep,Glob",
+	}
+	// Should not error — only warns to stderr (claude-only setting).
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("unexpected error for non-claude provider with claude_review_tools: %v", err)
+	}
+}
+
 func TestValidate_ClaudePathNonClaudeProvider(t *testing.T) {
 	cfg := &ReviewConfig{
 		Provider: "anthropic", ReviewModel: "claude-sonnet-4-6", TriageModel: "claude-haiku-4-5-20251001",

@@ -345,6 +345,10 @@ func Run(opts RunOptions) error {
 	if cfg.Provider == "claude" {
 		reviewMC.ClaudeArgs = cfg.ClaudeArgs
 		reviewMC.ClaudePath = claudePath
+		// Tools are review-only — triage stays single-shot to keep cost
+		// predictable. Triage operates on small per-thread prompts that don't
+		// benefit from filesystem lookups.
+		reviewMC.ClaudeReviewTools = cfg.ClaudeReviewTools
 		triageMC.ClaudeArgs = cfg.ClaudeArgs
 		triageMC.ClaudePath = claudePath
 	}
