@@ -188,3 +188,41 @@ func TestBuildIncrementalPrompt_ResolvedSectionHandlesMissingFields(t *testing.T
 		t.Error("suggestion block should be omitted when empty")
 	}
 }
+
+// The Lifecycle Considerations section is what catches "behaves on PR
+// branch but not on main" bugs (push triggers scoped to the PR branch,
+// concurrency keys keyed on github.ref, etc.). It must appear in both
+// full and incremental prompts and must remind the LLM to anchor
+// findings to diff lines.
+func TestBuildPrompt_IncludesLifecycleSection(t *testing.T) {
+	pr := &PRData{Number: 1, Title: "t", Files: []string{"a.go"}, Diff: "diff"}
+	got := BuildPrompt(pr, nil, 0, nil)
+
+	mustContain := []string{
+		"## Lifecycle Considerations",
+		"behave differently between the PR branch",
+		"github.ref",
+		"anchor your finding's `file` and `line`",
+	}
+	for _, s := range mustContain {
+		if !strings.Contains(got, s) {
+			t.Errorf("BuildPrompt missing expected lifecycle snippet %q", s)
+		}
+	}
+}
+
+func TestBuildIncrementalPrompt_IncludesLifecycleSection(t *testing.T) {
+	got := BuildIncrementalPrompt("diff --git a/foo b/foo\n", nil, nil, 1, 0, nil, []string{"foo"}, nil, nil)
+
+	mustContain := []string{
+		"## Lifecycle Considerations",
+		"behave differently between the PR branch",
+		"github.ref",
+		"anchor your finding's `file` and `line`",
+	}
+	for _, s := range mustContain {
+		if !strings.Contains(got, s) {
+			t.Errorf("BuildIncrementalPrompt missing expected lifecycle snippet %q", s)
+		}
+	}
+}
