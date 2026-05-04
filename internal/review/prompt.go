@@ -106,6 +106,9 @@ func BuildPrompt(pr *PRData, cfg *ReviewConfig, startIndex int, projectDocs map[
 	writeFencedBlock(&b, "diff", pr.Diff)
 	b.WriteString("\n")
 
+	// Lifecycle considerations — flag changes that behave differently after merge.
+	writeLifecycleSection(&b)
+
 	// Output format instructions.
 	b.WriteString("## Output Format\n")
 	b.WriteString("Return your findings as a JSON array inside a ```json code fence. Each finding must have these fields:\n\n")
@@ -306,6 +309,9 @@ func BuildIncrementalPrompt(diff string, cfg *ReviewConfig, knownIssues []Review
 	writeFencedBlock(&b, "diff", diff)
 	b.WriteString("\n")
 
+	// Lifecycle considerations — flag changes that behave differently after merge.
+	writeLifecycleSection(&b)
+
 	// Output format instructions.
 	b.WriteString("## Output Format\n")
 	b.WriteString("Return your findings as a JSON array inside a ```json code fence. Each finding must have these fields:\n\n")
@@ -363,6 +369,27 @@ func writeRulesSection(b *strings.Builder, cfg *ReviewConfig, files []string) {
 	default:
 		b.WriteString("## Review Rules\nNo specific rules are defined. Perform a general code review covering correctness, security, performance, and maintainability.\n\n")
 	}
+}
+
+// writeLifecycleSection adds a "Lifecycle Considerations" section that asks
+// the reviewer to flag changes that behave differently between the PR branch
+// (where the review runs) and the default branch (where the code lives after
+// merge). These bugs are easy to miss in a hunk-only review because the code
+// looks correct in isolation — the defect is the gap between PR-branch and
+// post-merge state.
+//
+// All findings emitted from this section must still anchor `file` and `line`
+// to a diff line; the existing file allowlist + line-proximity validators in
+// runner.go enforce that. The section only widens the LLM's attention, not
+// the validator's tolerance.
+func writeLifecycleSection(b *strings.Builder) {
+	b.WriteString("## Lifecycle Considerations\n")
+	b.WriteString("Some changes behave differently between the PR branch (where this review runs) and the default branch (where the code lives after merge). Scan the diff for places where this asymmetry could cause a real bug post-merge:\n\n")
+	b.WriteString("- A trigger, branch filter, or workflow condition is hard-coded to the PR's source branch (e.g. `branches: [feature/foo]`, `if: github.ref == 'refs/heads/feature/foo'`, `if: github.head_ref == ...`). These typically need to be removed or generalized before merge.\n")
+	b.WriteString("- A concurrency group, lock key, cache key, or identifier is keyed on a value that is unique-per-branch on the PR but shared post-merge (e.g. `${{ github.ref }}` resolves to many distinct refs across PRs but to a single value on the default branch). After merge, dispatches that should run in parallel will silently cancel each other.\n")
+	b.WriteString("- Code paths or values gated on the PR being open or unmerged (e.g. test-only flags, debug switches, sample data, scaffolding) that won't behave the same way on the default branch.\n")
+	b.WriteString("- Documentation, comments, or examples that describe temporary scaffolding the diff also adds — both need to be removed before merge, and missing one leaves a stale reference.\n\n")
+	b.WriteString("For each lifecycle issue, anchor your finding's `file` and `line` to the offending diff line and explain the post-merge consequence in `description`. Do NOT report concerns in unchanged code — only in lines added or modified by this diff.\n\n")
 }
 
 // writeProjectDocs adds a "Project Documentation" section to the prompt builder
