@@ -313,6 +313,62 @@ func TestClaudeProvider_NoAdvisor_NoGate(t *testing.T) {
 	}
 }
 
+// argValue returns the value following the named flag, or "" if missing.
+// Test-only helper for asserting on managed flags built by buildArgs.
+func argValue(args []string, flag string) string {
+	for i, a := range args {
+		if a == flag && i+1 < len(args) {
+			return args[i+1]
+		}
+		if strings.HasPrefix(a, flag+"=") {
+			return strings.TrimPrefix(a, flag+"=")
+		}
+	}
+	return ""
+}
+
+// Default behaviour: `--tools ""` disables all built-in tools, preserving
+// the historical single-shot CLI invocation. No regression when the caller
+// doesn't set claude_review_tools.
+func TestClaudeProvider_DefaultDisablesTools(t *testing.T) {
+	mc := &ModelConfig{Provider: "claude", Model: "sonnet"}
+	p := newClaudeCLIProvider(mc, []string{"PATH=/usr/bin"}).(*claudeCLIProvider)
+	args := p.buildArgs(RunOpts{})
+	got := argValue(args, "--tools")
+	if got != "" {
+		t.Errorf("--tools should be empty by default, got %q", got)
+	}
+}
+
+// When claude_review_tools is set, the provider passes the allowlist through
+// to `--tools`, letting the LLM use Read/Grep/Glob to verify hypotheses.
+func TestClaudeProvider_ReviewToolsPassedThrough(t *testing.T) {
+	mc := &ModelConfig{
+		Provider:          "claude",
+		Model:             "sonnet",
+		ClaudeReviewTools: "Read,Grep,Glob",
+	}
+	p := newClaudeCLIProvider(mc, []string{"PATH=/usr/bin"}).(*claudeCLIProvider)
+	if p.reviewTools != "Read,Grep,Glob" {
+		t.Errorf("reviewTools not stored on provider: %q", p.reviewTools)
+	}
+	args := p.buildArgs(RunOpts{})
+	if got := argValue(args, "--tools"); got != "Read,Grep,Glob" {
+		t.Errorf("--tools = %q, want %q", got, "Read,Grep,Glob")
+	}
+	// `--tools` is in claudeReservedArgs, so the user can't smuggle a
+	// conflicting value via claude_args. Verify exactly one --tools occurs.
+	count := 0
+	for _, a := range args {
+		if a == "--tools" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected exactly one --tools flag, got %d (%v)", count, args)
+	}
+}
+
 func TestHasFlag(t *testing.T) {
 	cases := []struct {
 		args []string
