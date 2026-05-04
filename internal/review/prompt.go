@@ -272,15 +272,11 @@ func BuildIncrementalPrompt(diff string, cfg *ReviewConfig, knownIssues []Review
 		b.WriteString("\n")
 	}
 
-	// Known issues to avoid duplicating.
-	if len(knownIssues) > 0 {
-		b.WriteString("## Known Issues (DO NOT DUPLICATE)\n")
-		b.WriteString("These issues are already reported and unresolved. Do NOT report them again:\n\n")
-		for _, t := range knownIssues {
-			fmt.Fprintf(&b, "- `%s:%d`\n", t.Path, t.Line)
-		}
-		b.WriteString("\n")
-	}
+	// Known issues — render with title and description so the reviewer can
+	// (a) reliably avoid duplicate-with-different-wording emissions and
+	// (b) recognize when the incremental diff provides new evidence that an
+	// existing open finding's premise has been undermined.
+	writeKnownIssuesSection(&b, knownIssues)
 
 	// Recently resolved issues — anti-ping-pong context.
 	if len(resolved) > 0 {
@@ -426,6 +422,42 @@ func writeLifecycleSection(b *strings.Builder) {
 	b.WriteString("- Code paths or values gated on the PR being open or unmerged (e.g. test-only flags, debug switches, sample data, scaffolding) that won't behave the same way on the default branch.\n")
 	b.WriteString("- Documentation, comments, or examples that describe temporary scaffolding the diff also adds — both need to be removed before merge, and missing one leaves a stale reference.\n\n")
 	b.WriteString("For each lifecycle issue, anchor your finding's `file` and `line` to the offending diff line and explain the post-merge consequence in `description`. Do NOT report concerns in unchanged code — only in lines added or modified by this diff.\n\n")
+}
+
+// writeKnownIssuesSection renders the still-open findings carried into the
+// incremental review with enough context (title, severity, description) for
+// the LLM to (a) avoid emitting duplicates with different wording and (b)
+// recognize when the incremental diff invalidates an open finding's premise.
+//
+// The previous version of this section emitted only `path:line`, which left
+// the LLM with no way to tell why the finding was open in the first place.
+// That made it hard to relate new findings to existing ones, and impossible
+// to flag "evidence that an open finding is now wrong."
+//
+// Untrusted body text is neutralised via escapeAllTags — the same treatment
+// applied to the Recently Resolved Issues section.
+func writeKnownIssuesSection(b *strings.Builder, knownIssues []ReviewThread) {
+	if len(knownIssues) == 0 {
+		return
+	}
+	b.WriteString("## Known Issues (Open)\n")
+	b.WriteString("These findings from prior reviews are still open. Do NOT emit them again — including as variants with different wording.\n\n")
+	b.WriteString("**If the incremental diff provides new evidence that an open finding's premise is wrong** (e.g. a documentation update or refactor in the diff makes the original concern moot, an assumption no longer holds, or the relevant code path is now unreachable), do NOT silently re-emit the original finding. Instead, emit a NEW finding anchored to the relevant diff line whose `description` notes the conflict (e.g. \"Contradicts open finding at `path:line`: …\"). Don't fabricate evidence — only flag this when the incremental diff actually undermines the open finding.\n\n")
+	for _, t := range knownIssues {
+		f := FindingFromThread(t)
+		title := f.Title
+		if title == "" {
+			title = "(no title)"
+		}
+		fmt.Fprintf(b, "### `%s:%d` — %s\n", t.Path, t.Line, escapeAllTags(title))
+		if f.Severity != "" {
+			fmt.Fprintf(b, "**Severity:** %s\n", f.Severity)
+		}
+		if f.Description != "" {
+			fmt.Fprintf(b, "\n**Description:**\n%s\n", escapeAllTags(f.Description))
+		}
+		b.WriteString("\n")
+	}
 }
 
 // writePRBodyCrossCheckSection adds a "PR Description Cross-Check" section
