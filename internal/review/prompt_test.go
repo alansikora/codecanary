@@ -42,7 +42,7 @@ func TestBuildIncrementalPrompt_FiltersRulesByPath(t *testing.T) {
 	}
 	files := []string{"internal/review/runner.go"}
 
-	got := BuildIncrementalPrompt("diff", cfg, nil, 1, 0, nil, files, nil, nil)
+	got := BuildIncrementalPrompt("diff", cfg, nil, 1, 0, nil, files, nil, nil, "")
 
 	if !strings.Contains(got, "go-rule") {
 		t.Errorf("incremental prompt missing applicable rule:\n%s", got)
@@ -89,7 +89,7 @@ func TestBuildIncrementalPrompt_ResolvedSectionRendersRichContext(t *testing.T) 
 
 	prompt := BuildIncrementalPrompt(
 		"diff --git a/foo b/foo\n",
-		nil, nil, 1508, 0, nil, []string{"foo"}, resolved, nil,
+		nil, nil, 1508, 0, nil, []string{"foo"}, resolved, nil, "",
 	)
 
 	mustContain := []string{
@@ -116,7 +116,7 @@ func TestBuildIncrementalPrompt_ResolvedSectionRendersRichContext(t *testing.T) 
 func TestBuildIncrementalPrompt_NoResolvedSectionWhenEmpty(t *testing.T) {
 	prompt := BuildIncrementalPrompt(
 		"diff --git a/foo b/foo\n",
-		nil, nil, 1, 0, nil, []string{"foo"}, nil, nil,
+		nil, nil, 1, 0, nil, []string{"foo"}, nil, nil, "",
 	)
 	if strings.Contains(prompt, "## Recently Resolved Issues") {
 		t.Error("resolved section should be omitted when there are no resolutions")
@@ -139,7 +139,7 @@ func TestBuildIncrementalPrompt_ResolvedSectionEscapesLLMSourcedFields(t *testin
 		},
 	}
 
-	prompt := BuildIncrementalPrompt("", nil, nil, 1, 0, nil, nil, resolved, nil)
+	prompt := BuildIncrementalPrompt("", nil, nil, 1, 0, nil, nil, resolved, nil, "")
 
 	// Raw angle brackets from LLM-sourced fields must not reach the prompt.
 	forbidden := []string{
@@ -170,7 +170,7 @@ func TestBuildIncrementalPrompt_ResolvedSectionHandlesMissingFields(t *testing.T
 	resolved := []ResolvedContext{
 		{Path: "a.go", Line: 10, Reason: "dismissed"}, // no title, description, suggestion, rationale
 	}
-	prompt := BuildIncrementalPrompt("", nil, nil, 1, 0, nil, nil, resolved, nil)
+	prompt := BuildIncrementalPrompt("", nil, nil, 1, 0, nil, nil, resolved, nil, "")
 
 	if !strings.Contains(prompt, "`a.go:10` — (no title)") {
 		t.Error("missing-title placeholder should render")
@@ -211,8 +211,70 @@ func TestBuildPrompt_IncludesLifecycleSection(t *testing.T) {
 	}
 }
 
+// The PR Description Cross-Check section lets the reviewer flag
+// claims in the PR body that the diff contradicts (cost caps, "this
+// PR does NOT do X", etc.). It must appear when a body is provided
+// and be omitted when there isn't one.
+func TestBuildPrompt_IncludesPRBodyCrossCheckWhenBodyPresent(t *testing.T) {
+	pr := &PRData{
+		Number: 1,
+		Title:  "t",
+		Body:   "Cost cap: ~$2-4/run.",
+		Files:  []string{"a.go"},
+		Diff:   "diff",
+	}
+	got := BuildPrompt(pr, nil, 0, nil)
+
+	mustContain := []string{
+		"## PR Description Cross-Check",
+		"`<pr-body>`",
+		"contradicts a specific factual claim",
+		"anchor your finding's `file` and `line`",
+	}
+	for _, s := range mustContain {
+		if !strings.Contains(got, s) {
+			t.Errorf("BuildPrompt missing expected cross-check snippet %q", s)
+		}
+	}
+}
+
+func TestBuildPrompt_OmitsPRBodyCrossCheckWhenBodyAbsent(t *testing.T) {
+	pr := &PRData{Number: 1, Title: "t", Files: []string{"a.go"}, Diff: "diff"} // no Body
+	got := BuildPrompt(pr, nil, 0, nil)
+
+	if strings.Contains(got, "## PR Description Cross-Check") {
+		t.Error("cross-check section should be omitted when PR body is empty")
+	}
+}
+
+func TestBuildIncrementalPrompt_IncludesPRBodyCrossCheckWhenBodyPresent(t *testing.T) {
+	got := BuildIncrementalPrompt("diff --git a/foo b/foo\n", nil, nil, 1, 0, nil, []string{"foo"}, nil, nil, "Cost cap: ~$2-4/run.")
+
+	mustContain := []string{
+		"<pr-body>",
+		"## PR Description Cross-Check",
+		"contradicts a specific factual claim",
+	}
+	for _, s := range mustContain {
+		if !strings.Contains(got, s) {
+			t.Errorf("BuildIncrementalPrompt missing expected cross-check snippet %q", s)
+		}
+	}
+}
+
+func TestBuildIncrementalPrompt_OmitsPRBodyAndCrossCheckWhenEmpty(t *testing.T) {
+	got := BuildIncrementalPrompt("diff --git a/foo b/foo\n", nil, nil, 1, 0, nil, []string{"foo"}, nil, nil, "")
+
+	if strings.Contains(got, "<pr-body>") {
+		t.Error("pr-body tag should be omitted when body is empty")
+	}
+	if strings.Contains(got, "## PR Description Cross-Check") {
+		t.Error("cross-check section should be omitted when body is empty")
+	}
+}
+
 func TestBuildIncrementalPrompt_IncludesLifecycleSection(t *testing.T) {
-	got := BuildIncrementalPrompt("diff --git a/foo b/foo\n", nil, nil, 1, 0, nil, []string{"foo"}, nil, nil)
+	got := BuildIncrementalPrompt("diff --git a/foo b/foo\n", nil, nil, 1, 0, nil, []string{"foo"}, nil, nil, "")
 
 	mustContain := []string{
 		"## Lifecycle Considerations",
