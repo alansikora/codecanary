@@ -165,6 +165,177 @@ func TestAncestorDirs_ShallowestFirstWithStableOrder(t *testing.T) {
 	}
 }
 
+func TestSplitFrontmatter(t *testing.T) {
+	meta, body := splitFrontmatter("---\ndescription: API rules\npaths:\n  - \"apps/api/**\"\n---\nUse the auth middleware.\n")
+	if meta.Description != "API rules" {
+		t.Errorf("description = %q, want %q", meta.Description, "API rules")
+	}
+	if !reflect.DeepEqual(meta.Paths, []string{"apps/api/**"}) {
+		t.Errorf("paths = %v, want [apps/api/**]", meta.Paths)
+	}
+	if strings.TrimSpace(body) != "Use the auth middleware." {
+		t.Errorf("body = %q, want %q", body, "Use the auth middleware.")
+	}
+}
+
+func TestSplitFrontmatter_NoFrontmatter(t *testing.T) {
+	meta, body := splitFrontmatter("Just a plain rule body.\n")
+	if meta.Description != "" || len(meta.Paths) != 0 {
+		t.Errorf("expected empty meta, got %+v", meta)
+	}
+	if body != "Just a plain rule body.\n" {
+		t.Errorf("body = %q, want whole content", body)
+	}
+}
+
+func TestSplitFrontmatter_Unterminated(t *testing.T) {
+	content := "---\ndescription: oops\nno closing fence"
+	meta, body := splitFrontmatter(content)
+	if meta.Description != "" {
+		t.Errorf("expected no meta for unterminated frontmatter, got %+v", meta)
+	}
+	if body != content {
+		t.Errorf("expected whole content as body, got %q", body)
+	}
+}
+
+func TestSplitFrontmatter_DashesInBodyNotTreatedAsFence(t *testing.T) {
+	// A markdown horizontal rule (----) and a --- line in the body must not be
+	// mistaken for the closing fence.
+	content := "---\ndescription: rule\n---\nIntro paragraph.\n\n----\n\nMore text after an hr.\n"
+	meta, body := splitFrontmatter(content)
+	if meta.Description != "rule" {
+		t.Errorf("description = %q, want %q", meta.Description, "rule")
+	}
+	if !strings.Contains(body, "Intro paragraph.") || !strings.Contains(body, "More text after an hr.") {
+		t.Errorf("body was split at the wrong fence: %q", body)
+	}
+}
+
+func TestSplitFrontmatter_DashValueNotTreatedAsFence(t *testing.T) {
+	// A YAML value of "---" on its own indented line is inside the frontmatter,
+	// but the fence detector keys on the trimmed line == "---". Guard the common
+	// case where a value line like "sep: ---" must not end the frontmatter.
+	content := "---\ndescription: rule\nsep: \"---\"\npaths:\n  - \"**/*.go\"\n---\nBody.\n"
+	meta, body := splitFrontmatter(content)
+	if len(meta.Paths) != 1 || meta.Paths[0] != "**/*.go" {
+		t.Errorf("frontmatter ended early; paths = %v", meta.Paths)
+	}
+	if strings.TrimSpace(body) != "Body." {
+		t.Errorf("body = %q, want %q", body, "Body.")
+	}
+}
+
+func TestSplitFrontmatter_IndentedDashesNotTreatedAsFence(t *testing.T) {
+	// An indented `---` inside a YAML block scalar must not end the frontmatter.
+	content := "---\ndescription: |\n  first line\n  ---\n  after the dashes\npaths:\n  - \"**/*.go\"\n---\nBody.\n"
+	meta, body := splitFrontmatter(content)
+	if len(meta.Paths) != 1 || meta.Paths[0] != "**/*.go" {
+		t.Errorf("frontmatter ended early at an indented ---; paths = %v", meta.Paths)
+	}
+	if !strings.Contains(meta.Description, "after the dashes") {
+		t.Errorf("block scalar was cut off: description = %q", meta.Description)
+	}
+	if strings.TrimSpace(body) != "Body." {
+		t.Errorf("body = %q, want %q", body, "Body.")
+	}
+}
+
+func TestSplitFrontmatter_FenceWithTrailingWhitespace(t *testing.T) {
+	// A closing fence with a trailing CR (CRLF file) or spaces is still a fence.
+	meta, body := splitFrontmatter("---\r\ndescription: rule\r\n--- \r\nBody.\r\n")
+	if meta.Description != "rule" {
+		t.Errorf("description = %q, want %q", meta.Description, "rule")
+	}
+	if strings.TrimSpace(body) != "Body." {
+		t.Errorf("body = %q, want %q", body, "Body.")
+	}
+}
+
+func TestReadClaudeRules_ScopeIn(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, filepath.Join(".claude", "rules", "api.md"),
+		"---\ndescription: API rules\npaths:\n  - \"apps/api/**\"\n---\nUse the auth middleware.\n")
+
+	rules := readClaudeRulesFrom(root, []string{"apps/api/handler.go"})
+
+	key := filepath.Join(".claude", "rules", "api.md")
+	content, ok := rules[key]
+	if !ok {
+		t.Fatalf("expected rule %q to be included, got %v", key, keys(rules))
+	}
+	if !strings.Contains(content, "API rules") || !strings.Contains(content, "auth middleware") {
+		t.Errorf("content missing description or body: %q", content)
+	}
+}
+
+func TestReadClaudeRules_ScopeOut(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, filepath.Join(".claude", "rules", "api.md"),
+		"---\npaths:\n  - \"apps/api/**\"\n---\nUse the auth middleware.\n")
+
+	rules := readClaudeRulesFrom(root, []string{"apps/web/page.tsx"})
+	if len(rules) != 0 {
+		t.Errorf("expected no rules for non-matching change, got %v", keys(rules))
+	}
+}
+
+func TestReadClaudeRules_NoPathsAlwaysIncluded(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, filepath.Join(".claude", "rules", "global.md"),
+		"---\ndescription: global rule\n---\nAlways applies.\n")
+
+	rules := readClaudeRulesFrom(root, []string{"anything/at/all.go"})
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule (no paths => always), got %v", keys(rules))
+	}
+}
+
+func TestReadClaudeRules_NoFrontmatterAlwaysIncluded(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, filepath.Join(".claude", "rules", "plain.md"),
+		"No frontmatter here, just conventions.\n")
+
+	rules := readClaudeRulesFrom(root, []string{"src/x.go"})
+	if len(rules) != 1 {
+		t.Fatalf("expected plain rule to always be included, got %v", keys(rules))
+	}
+}
+
+func TestReadClaudeRules_PerFileTruncation(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, filepath.Join(".claude", "rules", "big.md"), strings.Repeat("x", maxRuleBytes+500))
+
+	rules := readClaudeRulesFrom(root, []string{"src/x.go"})
+	content := rules[filepath.Join(".claude", "rules", "big.md")]
+	if !strings.HasSuffix(content, "(truncated)") {
+		t.Errorf("expected truncation marker in oversized rule")
+	}
+	if len(content) > maxRuleBytes+len("\n... (truncated)") {
+		t.Errorf("content not truncated: %d bytes", len(content))
+	}
+}
+
+func TestReadClaudeRules_TotalBudget(t *testing.T) {
+	root := t.TempDir()
+	chunk := strings.Repeat("y", maxRuleBytes-100)
+	for _, n := range []string{"a.md", "b.md", "c.md", "d.md", "e.md", "f.md"} {
+		writeFile(t, root, filepath.Join(".claude", "rules", n), chunk)
+	}
+
+	rules := readClaudeRulesFrom(root, []string{"src/x.go"})
+	total := 0
+	for _, c := range rules {
+		total += len(c)
+	}
+	if total > maxTotalRuleBytes {
+		t.Errorf("total rule bytes %d exceeds budget %d", total, maxTotalRuleBytes)
+	}
+	if len(rules) == 0 {
+		t.Errorf("expected at least one rule within budget")
+	}
+}
+
 func keys(m map[string]string) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

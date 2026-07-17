@@ -106,6 +106,15 @@ func prepareReview(pr *PRData, configPath string) (*reviewContext, error) {
 	}
 
 	projectDocs := ReadProjectDocs(pr.Files)
+	for k, v := range ReadClaudeRules(pr.Files) {
+		if _, exists := projectDocs[k]; exists {
+			// Namespaces normally differ (.claude/rules/ vs CLAUDE.md paths);
+			// guard anyway so a rule can never silently clobber a project doc.
+			fmt.Fprintf(os.Stderr, "Claude rule %q collides with an existing project doc key — skipping\n", k)
+			continue
+		}
+		projectDocs[k] = v
+	}
 	if len(projectDocs) > 0 {
 		fmt.Fprintf(os.Stderr, "Loaded %d project doc(s) for review context\n", len(projectDocs))
 	}

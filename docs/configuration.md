@@ -228,7 +228,24 @@ Add `review.local.yml` to your `.gitignore` so it is not committed:
 
 ## Project docs auto-discovery
 
-CodeCanary automatically reads `CLAUDE.md` files from your repo root, `.claude/` directory, and top-level subdirectories. These are injected into the review prompt as additional context. Per-file cap is 4KB, total cap is 12KB.
+CodeCanary automatically reads `CLAUDE.md` files from the repo root and every ancestor directory of a changed file (so monorepo per-package docs load when a PR touches that package). These are injected into the review prompt as additional context. Per-file cap is 16KB, total cap is 48KB, across up to 10 files.
+
+## Path-scoped rules (`.claude/rules/*.md`)
+
+CodeCanary also reads Claude Code rule files from `.claude/rules/*.md` so you don't have to duplicate conventions into `review.yml`. Each rule file may begin with YAML frontmatter:
+
+```markdown
+---
+description: API endpoints must use the auth middleware
+paths:
+  - "apps/api/**"
+---
+
+All new endpoints under `apps/api` must register the shared auth middleware
+before any handler logic. Reject requests with a 401 when the token is absent.
+```
+
+A rule is included in the review prompt only when a changed file matches one of its `paths` globs — using the same full-path `doublestar` syntax as `review.yml` rule scoping (`**/*.rb`, `apps/api/**`). A rule file with no `paths` frontmatter is always included. Rules have their own byte budget — 8KB per file, 32KB total — independent of the CLAUDE.md caps; oversized rules are truncated with a warning.
 
 ## Draft PRs
 
