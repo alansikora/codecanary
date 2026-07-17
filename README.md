@@ -194,7 +194,7 @@ Keys are stored in your system keychain (macOS Keychain, GNOME Keyring, KDE Wall
 
 1. Fetches PR metadata and diff (via `gh` CLI or local git)
 2. Reads file contents for context (respecting ignore patterns and size limits)
-3. Auto-discovers project docs (CLAUDE.md files) for additional context
+3. Auto-discovers project docs (CLAUDE.md files) and path-scoped `.claude/rules/*.md` for additional context
 4. Calls your configured LLM to analyze the changes
 5. Posts findings as inline PR review comments (or prints to terminal)
 

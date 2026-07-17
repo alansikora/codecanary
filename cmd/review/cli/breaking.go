@@ -32,6 +32,7 @@ type breakingResult struct {
 
 var breakingManifest = []breakingSurface{
 	{"internal/review/config.go", "Config Schema", "Users may need to update `.codecanary/config.yml` field names, types, or values"},
+	{"internal/review/rules.go", "Context Sources", "How CodeCanary discovers `.claude/rules/*.md` context files changed; reviews may load different rules"},
 	{"cmd/review/cli/review.go", "CLI Flags", "CLI flag names or defaults may have changed"},
 	{"cmd/review/cli/root.go", "CLI Flags", "CLI flag names or defaults may have changed"},
 	{"cmd/review/cli/costs.go", "CLI Costs", "`codecanary review costs` behavior may have changed"},

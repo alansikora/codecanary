@@ -37,6 +37,7 @@ If the PR is a setup PR (only adds workflow files with no real code changes), th
 
 - **Config**: Reads `config.yml` (provider, models, budgets, timeouts). If a `review.yml` exists alongside it, its rules/context/ignore fields override the config.
 - **Project docs**: Discovers CLAUDE.md files (root, `.claude/`, top-level directories). Up to 5 files, 4KB each, 12KB total.
+- **Path-scoped rules**: Discovers Claude Code rule files under `.claude/rules/*.md`. Each may carry YAML frontmatter (`description`, `paths`); a rule is included only when a changed file matches one of its `paths` globs (no `paths` = always included). Rules share their own byte budget (8KB per file, 32KB total) separate from the CLAUDE.md caps, and merge into the same project-docs context.
 - **File contents**: Reads changed files from disk with size limits (default 100KB per file, 500KB total). Skips binary files, ignored patterns, and files exceeding limits.
 - **Environment**: Builds a filtered env for LLM subprocesses (only allowed prefixes like `CODECANARY_`, `GITHUB_`, plus essential vars like `PATH`). Injects keychain credentials if not already set.
 

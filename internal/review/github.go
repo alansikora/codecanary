@@ -6,12 +6,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
-
-	"github.com/bmatcuk/doublestar/v4"
 )
 
 // parseRepoSlug splits a "owner/name" repository slug into its two parts.
@@ -35,7 +32,7 @@ const MaxFindingProximity = 20
 var reviewMarkerPrefixes = []string{"<!-- codecanary:review ", "<!-- clanopy:review "}
 
 const (
-	reviewMarkerSuffix = " -->"
+	reviewMarkerSuffix  = " -->"
 	findingMarkerPrefix = "<!-- codecanary:finding "
 	ackMarkerPrefix     = "<!-- codecanary:ack:"
 	legacyAckPrefix     = "<!-- clanopy:ack:"
@@ -56,9 +53,9 @@ type PRData struct {
 
 // ghPRView is the JSON shape returned by gh pr view.
 type ghPRView struct {
-	Title       string `json:"title"`
-	Body        string `json:"body"`
-	Author      struct {
+	Title  string `json:"title"`
+	Body   string `json:"body"`
+	Author struct {
 		Login string `json:"login"`
 	} `json:"author"`
 	BaseRefName string `json:"baseRefName"`
@@ -420,7 +417,7 @@ type graphQLThreadsResponse struct {
 					Nodes []struct {
 						ID         string `json:"id"`
 						IsResolved bool   `json:"isResolved"`
-						Comments struct {
+						Comments   struct {
 							Nodes []struct {
 								Body         string `json:"body"`
 								Path         string `json:"path"`
@@ -1046,7 +1043,7 @@ func FetchFileContents(files []string, ignorePatterns []string, maxPerFile, maxT
 
 	for _, path := range files {
 		// Check ignore patterns.
-		if matchesIgnore(path, ignorePatterns) {
+		if matchesAnyGlob(path, ignorePatterns) {
 			skipped = append(skipped, path)
 			continue
 		}
@@ -1127,19 +1124,4 @@ func isSetupFile(path string) bool {
 	return strings.HasPrefix(path, ".github/workflows/") ||
 		strings.HasPrefix(path, ".codecanary/") || path == ".codecanary.yml" ||
 		strings.HasPrefix(path, ".clanopy/")
-}
-
-// matchesIgnore checks if a path matches any of the ignore glob patterns.
-// Uses doublestar to support ** recursive globs (e.g. "dist/**", "src/**/*.test.*").
-func matchesIgnore(path string, patterns []string) bool {
-	for _, pat := range patterns {
-		if matched, _ := doublestar.Match(pat, path); matched {
-			return true
-		}
-		// Also try matching against just the filename.
-		if matched, _ := doublestar.Match(pat, filepath.Base(path)); matched {
-			return true
-		}
-	}
-	return false
 }
