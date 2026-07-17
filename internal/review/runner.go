@@ -106,6 +106,9 @@ func prepareReview(pr *PRData, configPath string) (*reviewContext, error) {
 	}
 
 	projectDocs := ReadProjectDocs(pr.Files)
+	for k, v := range ReadClaudeRules(pr.Files) {
+		projectDocs[k] = v
+	}
 	if len(projectDocs) > 0 {
 		fmt.Fprintf(os.Stderr, "Loaded %d project doc(s) for review context\n", len(projectDocs))
 	}
