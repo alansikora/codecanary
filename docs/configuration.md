@@ -228,7 +228,7 @@ Add `review.local.yml` to your `.gitignore` so it is not committed:
 
 ## Project docs auto-discovery
 
-CodeCanary automatically reads `CLAUDE.md` files from your repo root, `.claude/` directory, and top-level subdirectories. These are injected into the review prompt as additional context. Per-file cap is 4KB, total cap is 12KB.
+CodeCanary automatically reads `CLAUDE.md` files from the repo root and every ancestor directory of a changed file (so monorepo per-package docs load when a PR touches that package). These are injected into the review prompt as additional context. Per-file cap is 16KB, total cap is 48KB, across up to 10 files.
 
 ## Path-scoped rules (`.claude/rules/*.md`)
 

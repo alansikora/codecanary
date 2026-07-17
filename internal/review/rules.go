@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -16,6 +17,9 @@ const maxRuleBytes = 8192
 
 // maxTotalRuleBytes caps the combined size of all rule files included.
 const maxTotalRuleBytes = 32768
+
+// truncationMarker is appended to a rule whose content exceeds maxRuleBytes.
+const truncationMarker = "\n... (truncated)"
 
 // claudeRule is the YAML frontmatter of a .claude/rules/*.md file — the subset
 // of Claude Code's rule format CodeCanary uses for path scoping.
@@ -47,6 +51,10 @@ func readClaudeRulesFrom(root string, prFiles []string) map[string]string {
 	if err != nil {
 		return rules
 	}
+	// Sort for deterministic budget exhaustion — filepath.Glob's order is not
+	// guaranteed across platforms, so which rules survive a full budget must
+	// not depend on filesystem ordering.
+	sort.Strings(matches)
 
 	totalBytes := 0
 	for _, abs := range matches {
@@ -74,7 +82,10 @@ func readClaudeRulesFrom(root string, prFiles []string) map[string]string {
 			content = meta.Description + "\n\n" + body
 		}
 		if len(content) > maxRuleBytes {
-			content = content[:maxRuleBytes] + "\n... (truncated)"
+			// Reserve room for the marker so a truncated file is exactly
+			// maxRuleBytes — keeps the total-budget accounting exact rather
+			// than letting each truncated file overshoot by the marker length.
+			content = content[:maxRuleBytes-len(truncationMarker)] + truncationMarker
 			fmt.Fprintf(os.Stderr, "Rule %s exceeds %d bytes and was truncated for the review prompt\n", relPath, maxRuleBytes)
 		}
 		if totalBytes+len(content) > maxTotalRuleBytes {
@@ -100,30 +111,47 @@ func anyFileMatches(files, patterns []string) bool {
 }
 
 // splitFrontmatter separates leading `---`-fenced YAML frontmatter from the
-// document body. When the content has no (or malformed) frontmatter, meta is
-// the zero value and body is the whole content.
+// document body. The closing fence must be a line consisting solely of `---`
+// (ignoring surrounding whitespace) — a `---` sequence inside a YAML value or
+// body paragraph is not mistaken for the fence. When the content has no (or
+// malformed/unterminated) frontmatter, meta is the zero value and body is the
+// whole content.
 func splitFrontmatter(content string) (meta claudeRule, body string) {
 	if !strings.HasPrefix(content, "---\n") && !strings.HasPrefix(content, "---\r\n") {
 		return claudeRule{}, content
 	}
 
-	// Drop the opening fence, then find the closing one.
+	// Drop the opening fence line, then scan line by line for a closing fence.
 	rest := content[strings.IndexByte(content, '\n')+1:]
-	end := strings.Index(rest, "\n---")
-	if end == -1 {
+	offset := 0
+	frontEnd := -1
+	bodyStart := len(rest)
+	for offset < len(rest) {
+		nl := strings.IndexByte(rest[offset:], '\n')
+		var line string
+		if nl == -1 {
+			line = rest[offset:]
+		} else {
+			line = rest[offset : offset+nl]
+		}
+		if strings.TrimSpace(line) == "---" {
+			frontEnd = offset
+			if nl != -1 {
+				bodyStart = offset + nl + 1
+			}
+			break
+		}
+		if nl == -1 {
+			break
+		}
+		offset += nl + 1
+	}
+	if frontEnd == -1 {
 		return claudeRule{}, content // unterminated — treat as body
 	}
 
-	front := rest[:end]
-	body = rest[end+len("\n---"):]
-	if nl := strings.IndexByte(body, '\n'); nl != -1 {
-		body = body[nl+1:] // skip to the end of the closing fence line
-	} else {
-		body = ""
-	}
-
-	if err := yaml.Unmarshal([]byte(front), &meta); err != nil {
+	if err := yaml.Unmarshal([]byte(rest[:frontEnd]), &meta); err != nil {
 		return claudeRule{}, content // malformed — treat as body
 	}
-	return meta, strings.TrimLeft(body, "\n")
+	return meta, strings.TrimLeft(rest[bodyStart:], "\n")
 }

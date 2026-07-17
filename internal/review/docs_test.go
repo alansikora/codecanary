@@ -199,6 +199,33 @@ func TestSplitFrontmatter_Unterminated(t *testing.T) {
 	}
 }
 
+func TestSplitFrontmatter_DashesInBodyNotTreatedAsFence(t *testing.T) {
+	// A markdown horizontal rule (----) and a --- line in the body must not be
+	// mistaken for the closing fence.
+	content := "---\ndescription: rule\n---\nIntro paragraph.\n\n----\n\nMore text after an hr.\n"
+	meta, body := splitFrontmatter(content)
+	if meta.Description != "rule" {
+		t.Errorf("description = %q, want %q", meta.Description, "rule")
+	}
+	if !strings.Contains(body, "Intro paragraph.") || !strings.Contains(body, "More text after an hr.") {
+		t.Errorf("body was split at the wrong fence: %q", body)
+	}
+}
+
+func TestSplitFrontmatter_DashValueNotTreatedAsFence(t *testing.T) {
+	// A YAML value of "---" on its own indented line is inside the frontmatter,
+	// but the fence detector keys on the trimmed line == "---". Guard the common
+	// case where a value line like "sep: ---" must not end the frontmatter.
+	content := "---\ndescription: rule\nsep: \"---\"\npaths:\n  - \"**/*.go\"\n---\nBody.\n"
+	meta, body := splitFrontmatter(content)
+	if len(meta.Paths) != 1 || meta.Paths[0] != "**/*.go" {
+		t.Errorf("frontmatter ended early; paths = %v", meta.Paths)
+	}
+	if strings.TrimSpace(body) != "Body." {
+		t.Errorf("body = %q, want %q", body, "Body.")
+	}
+}
+
 func TestReadClaudeRules_ScopeIn(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, filepath.Join(".claude", "rules", "api.md"),
