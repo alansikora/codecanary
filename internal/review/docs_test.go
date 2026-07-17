@@ -226,6 +226,32 @@ func TestSplitFrontmatter_DashValueNotTreatedAsFence(t *testing.T) {
 	}
 }
 
+func TestSplitFrontmatter_IndentedDashesNotTreatedAsFence(t *testing.T) {
+	// An indented `---` inside a YAML block scalar must not end the frontmatter.
+	content := "---\ndescription: |\n  first line\n  ---\n  after the dashes\npaths:\n  - \"**/*.go\"\n---\nBody.\n"
+	meta, body := splitFrontmatter(content)
+	if len(meta.Paths) != 1 || meta.Paths[0] != "**/*.go" {
+		t.Errorf("frontmatter ended early at an indented ---; paths = %v", meta.Paths)
+	}
+	if !strings.Contains(meta.Description, "after the dashes") {
+		t.Errorf("block scalar was cut off: description = %q", meta.Description)
+	}
+	if strings.TrimSpace(body) != "Body." {
+		t.Errorf("body = %q, want %q", body, "Body.")
+	}
+}
+
+func TestSplitFrontmatter_FenceWithTrailingWhitespace(t *testing.T) {
+	// A closing fence with a trailing CR (CRLF file) or spaces is still a fence.
+	meta, body := splitFrontmatter("---\r\ndescription: rule\r\n--- \r\nBody.\r\n")
+	if meta.Description != "rule" {
+		t.Errorf("description = %q, want %q", meta.Description, "rule")
+	}
+	if strings.TrimSpace(body) != "Body." {
+		t.Errorf("body = %q, want %q", body, "Body.")
+	}
+}
+
 func TestReadClaudeRules_ScopeIn(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, filepath.Join(".claude", "rules", "api.md"),

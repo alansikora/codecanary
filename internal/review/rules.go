@@ -111,11 +111,11 @@ func anyFileMatches(files, patterns []string) bool {
 }
 
 // splitFrontmatter separates leading `---`-fenced YAML frontmatter from the
-// document body. The closing fence must be a line consisting solely of `---`
-// (ignoring surrounding whitespace) — a `---` sequence inside a YAML value or
-// body paragraph is not mistaken for the fence. When the content has no (or
-// malformed/unterminated) frontmatter, meta is the zero value and body is the
-// whole content.
+// document body. The closing fence must be an unindented line consisting
+// solely of `---` (trailing whitespace/CR tolerated) — a `---` sequence inside
+// a YAML value, an indented block scalar, or a body paragraph is not mistaken
+// for the fence. When the content has no (or malformed/unterminated)
+// frontmatter, meta is the zero value and body is the whole content.
 func splitFrontmatter(content string) (meta claudeRule, body string) {
 	if !strings.HasPrefix(content, "---\n") && !strings.HasPrefix(content, "---\r\n") {
 		return claudeRule{}, content
@@ -134,7 +134,11 @@ func splitFrontmatter(content string) (meta claudeRule, body string) {
 		} else {
 			line = rest[offset : offset+nl]
 		}
-		if strings.TrimSpace(line) == "---" {
+		// A closing fence is an unindented `---` line (trailing whitespace/CR
+		// tolerated for CRLF files). Trimming *leading* whitespace too would
+		// let an indented `---` inside a YAML block scalar end the frontmatter
+		// prematurely.
+		if strings.TrimRight(line, " \t\r") == "---" {
 			frontEnd = offset
 			if nl != -1 {
 				bodyStart = offset + nl + 1
