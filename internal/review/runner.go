@@ -348,7 +348,7 @@ func Run(opts RunOptions) error {
 		// Tools are review-only — triage stays single-shot to keep cost
 		// predictable. Triage operates on small per-thread prompts that don't
 		// benefit from filesystem lookups.
-		reviewMC.ClaudeReviewTools = cfg.ClaudeReviewTools
+		reviewMC.ClaudeReviewTools = NormalizeClaudeReviewTools(cfg.ClaudeReviewTools)
 		triageMC.ClaudeArgs = cfg.ClaudeArgs
 		triageMC.ClaudePath = claudePath
 	}
