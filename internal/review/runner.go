@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 
@@ -14,17 +15,45 @@ import (
 
 // RunOptions configures a review run.
 type RunOptions struct {
-	Repo       string
-	PRNumber   int
-	ConfigPath string
-	Output     string // "markdown" or "json"
-	Post       bool
-	DryRun     bool
-	ReplyOnly  bool           // evaluate thread replies only, skip new findings
-	ClaudePath string         // override claude CLI binary path (overrides config claude_path)
-	Version    string         // binary version (for telemetry)
-	PR         *PRData        // pre-fetched PRData (used in local mode)
-	Platform   ReviewPlatform // environment adapter (GitHub or local)
+	Repo           string
+	PRNumber       int
+	ConfigPath     string
+	Output         string // "markdown" or "json"
+	Post           bool
+	DryRun         bool
+	ReplyOnly      bool           // evaluate thread replies only, skip new findings
+	ClaudePath     string         // override claude CLI binary path (overrides config claude_path)
+	FailOnSeverity string         // non-zero exit when findings at or above this severity exist
+	Version        string         // binary version (for telemetry)
+	PR             *PRData        // pre-fetched PRData (used in local mode)
+	Platform       ReviewPlatform // environment adapter (GitHub or local)
+}
+
+// FailOnSeverityError is returned when --fail-on is set and findings at or
+// above the given severity threshold are found. It is a distinct type so
+// callers can detect it via errors.As.
+type FailOnSeverityError struct {
+	Severity string
+	Count    int
+}
+
+func (e *FailOnSeverityError) Error() string {
+	return fmt.Sprintf("found %d finding(s) at or above severity %q (--fail-on %s)", e.Count, e.Severity, e.Severity)
+}
+
+// countAtOrAboveSeverity counts the findings that meet or exceed a severity
+// threshold. It spans both new findings and the ones still open from previous
+// reviews: a run that raises nothing new but leaves unresolved findings above
+// the threshold is exactly the state --fail-on exists to catch.
+func countAtOrAboveSeverity(result *ReviewResult, severity string) int {
+	threshold := severityOrder(severity)
+	var count int
+	for _, f := range slices.Concat(result.Findings, result.StillOpen) {
+		if severityOrder(f.Severity) <= threshold {
+			count++
+		}
+	}
+	return count
 }
 
 // allowedEnvPrefixes lists environment variable prefixes passed to the LLM subprocess.
@@ -478,6 +507,15 @@ func Run(opts RunOptions) error {
 	tracker.SetPRSize(linesAdded, linesRemoved, filesChanged)
 	platform.ReportUsage(tracker)
 
+	// 11b. --fail-on: compute whether findings meet the severity threshold.
+	// Deferred until after telemetry so that failing runs still emit usage data.
+	var failOnErr error
+	if opts.FailOnSeverity != "" {
+		if count := countAtOrAboveSeverity(result, opts.FailOnSeverity); count > 0 {
+			failOnErr = &FailOnSeverityError{Severity: opts.FailOnSeverity, Count: count}
+		}
+	}
+
 	// 12. Anonymous telemetry (fire-and-forget).
 	if !opts.DryRun && telemetry.Enabled() {
 		calls := tracker.Calls()
@@ -519,7 +557,7 @@ func Run(opts RunOptions) error {
 		})
 	}
 
-	return nil
+	return failOnErr
 }
 
 // runTriage handles the incremental review: classify previous threads, evaluate

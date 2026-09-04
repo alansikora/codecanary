@@ -128,6 +128,16 @@ func FormatMarkdown(result *ReviewResult) string {
 // so any entry added here becomes an accepted config value.
 var severityLevels = []string{"critical", "bug", "warning", "suggestion", "nitpick"}
 
+// ValidateSeverity reports whether s is one of the canonical severity levels.
+func ValidateSeverity(s string) error {
+	for _, level := range severityLevels {
+		if s == level {
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid severity %q: must be one of: %s", s, strings.Join(severityLevels, ", "))
+}
+
 // countSeverities counts findings by severity across one or more lists.
 func countSeverities(lists ...[]Finding) (counts map[string]int, total int) {
 	counts = map[string]int{}

@@ -101,7 +101,7 @@ First, an incremental diff is computed (`git diff <previousSHA>..HEAD`). Two dif
 | `TriagePreviouslyAcked` | Bot already posted a `<!-- codecanary:ack:* -->` reply and no human reply since | Auto-resolved by Go code (no LLM) -- prior reason carried forward |
 | `TriageSkip` | No activity diff, not outdated, no replies | Skipped (no LLM) |
 | `TriageCodeChanged` | GitHub outdated flag, or file in PR diff | LLM evaluates with file-scoped diff + file snippet |
-| `TriageHasReply` | Human replied (no code changes) | LLM evaluates reply intent |
+| `TriageHasReply` | Human replied (no code changes) | LLM evaluates reply intent with a file snippet around the finding |
 | `TriageCodeChangedReply` | Both code changed and human replied | LLM evaluates both |
 | `TriageCrossFileChange` | Changes in other files only | LLM evaluates with full PR diff |
 | `TriageFileRemovedFromPR` | File no longer in PR | Auto-resolved by Go code (no LLM) -- thread resolved on GitHub |
@@ -180,11 +180,15 @@ After the review is posted (or updated in place), `GithubPlatform.Publish` also 
 
 ### 10. Report usage
 
-**GitHub PR** (`--post`): Writes token counts and cost to `GITHUB_ENV` for downstream workflow steps.
+**GitHub PR** (`--post`): Writes token counts and cost to `GITHUB_ENV` for downstream workflow steps, and appends a per-phase markdown table (phase, model, input/output tokens, cost) to `GITHUB_STEP_SUMMARY` so the run's cost is visible on the Actions job page without opening the logs. Both are no-ops outside GitHub Actions, and the step summary is skipped when the report has no calls.
 
 **Local**: Prints a usage summary table to stderr (model, tokens, cost, duration) if running in a terminal.
 
-### 11. Telemetry
+### 11. Exit status
+
+With `--fail-on <severity>`, `Run()` returns a `FailOnSeverityError` when any finding is at or above that severity in the canonical order (`critical`, `bug`, `warning`, `suggestion`, `nitpick`), making the CLI exit non-zero so CI can gate on review results. The check runs *after* publishing, saving state and reporting usage, so a failing threshold never costs the PR its comments or its telemetry. The flag value is validated up front against `review.ValidateSeverity`, which reads the same `severityLevels` slice that config validation uses.
+
+### 12. Telemetry
 
 If telemetry is enabled (opt-in), fires an anonymous event with aggregate stats: provider, platform, finding counts by severity, token counts, cost, and duration. No code content is sent.
 
