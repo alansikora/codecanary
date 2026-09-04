@@ -80,7 +80,8 @@ Calls `BuildPrompt()` to assemble the full review prompt. The prompt includes (i
 8. Full contents of changed files with line numbers
 9. The unified diff
 10. Lifecycle considerations — checklist for changes that behave differently between the PR branch and the default branch (push triggers scoped to the PR branch, concurrency keys keyed on `github.ref`, test scaffolding to remove before merge). Findings emitted from this section must still anchor `file` and `line` to a diff line; the existing scope guards in `runner.go` enforce that.
-11. Output format instructions (JSON schema, examples, escaping rules)
+11. PR description cross-check — emitted only when the PR has a body. Asks the LLM to flag specific factual claims in the body that the diff contradicts (documented cost caps, "this PR does NOT do X" claims, behavior guarantees that the code doesn't implement). Same diff-anchoring requirement as the lifecycle section.
+12. Output format instructions (JSON schema, examples, escaping rules)
 
 After building, `fitPromptForModel()` checks whether the prompt fits the review model's context window (context window minus max output tokens). If it exceeds the budget, it progressively drops the largest file contents first, then truncates the diff as a last resort.
 

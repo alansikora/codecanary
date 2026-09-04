@@ -701,7 +701,7 @@ func runTriage(
 			fbPlural = ""
 		}
 		Stderrf(ansiBold, "Falling back to full review (%d known issue%s excluded)...\n", len(unresolved), fbPlural)
-		prompt = BuildIncrementalPrompt(pr.Diff, cfg, unresolved, opts.PRNumber, startIndex, pr.FileContents, pr.Files, resolvedCtx, projectDocs)
+		prompt = BuildIncrementalPrompt(pr.Diff, cfg, unresolved, opts.PRNumber, startIndex, pr.FileContents, pr.Files, resolvedCtx, projectDocs, pr.Body)
 	} else if strings.TrimSpace(incrementalDiff) == "" {
 		// No new changes — return previous findings as still-open.
 		Stderrf(ansiGreen, "No new changes since last review\n")
@@ -719,7 +719,7 @@ func runTriage(
 			plural = ""
 		}
 		Stderrf(ansiBold, "Reviewing incremental changes (%d known issue%s excluded)...\n", len(unresolved), plural)
-		prompt = BuildIncrementalPrompt(incrementalDiff, cfg, unresolved, opts.PRNumber, startIndex, incContents, incFiles, resolvedCtx, projectDocs)
+		prompt = BuildIncrementalPrompt(incrementalDiff, cfg, unresolved, opts.PRNumber, startIndex, incContents, incFiles, resolvedCtx, projectDocs, pr.Body)
 	}
 
 	return prompt, fixed, stillOpenFindings

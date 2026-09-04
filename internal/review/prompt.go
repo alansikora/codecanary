@@ -109,6 +109,11 @@ func BuildPrompt(pr *PRData, cfg *ReviewConfig, startIndex int, projectDocs map[
 	// Lifecycle considerations — flag changes that behave differently after merge.
 	writeLifecycleSection(&b)
 
+	// PR description cross-check — flag claims in the body contradicted by the diff.
+	if pr.Body != "" {
+		writePRBodyCrossCheckSection(&b)
+	}
+
 	// Output format instructions.
 	b.WriteString("## Output Format\n")
 	b.WriteString("Return your findings as a JSON array inside a ```json code fence. Each finding must have these fields:\n\n")
@@ -207,12 +212,30 @@ func BuildReevaluatePrompt(threads []ReviewThread, incrementalDiff string) strin
 // BuildIncrementalPrompt reviews only new code, avoiding duplicate reports.
 // startIndex is the number of existing findings so fix_ref numbering continues.
 // resolved provides context about recently resolved findings to prevent ping-ponging.
-func BuildIncrementalPrompt(diff string, cfg *ReviewConfig, knownIssues []ReviewThread, prNumber int, startIndex int, fileContents map[string]string, files []string, resolved []ResolvedContext, projectDocs map[string]string) string {
+// prBody is the PR description (may be empty); when non-empty it is included so
+// the cross-check section can flag contradictions between the description and
+// the incremental diff.
+func BuildIncrementalPrompt(diff string, cfg *ReviewConfig, knownIssues []ReviewThread, prNumber int, startIndex int, fileContents map[string]string, files []string, resolved []ResolvedContext, projectDocs map[string]string, prBody string) string {
 	var b strings.Builder
 
 	b.WriteString("You are a code reviewer. Review ONLY the following incremental changes and report NEW findings.\n")
 	b.WriteString("You will be given the full contents of changed files for context, along with the diff. Only report issues that are directly related to the changes in the diff — do not flag pre-existing issues in unchanged code. Do not report a finding if your analysis concludes that the code is correct and no action is needed — only report findings that require the author to make a change or consider a specific alternative.\n")
 	b.WriteString("Also consider whether the changes could cause side effects in other files that depend on or interact with the modified code (e.g. callers, importers, shared state). If you identify a potential side effect, anchor your finding to the relevant line in the diff and describe the affected downstream code in the description.\n\n")
+
+	// PR description (when available) — needed for the cross-check section
+	// below so the LLM can flag contradictions between the description and
+	// the incremental diff. Emit the same header BuildPrompt uses so the body
+	// arrives labelled rather than as raw text after the preamble; without it
+	// the LLM has no framing for what the block represents and can misattribute
+	// the claims it makes.
+	if prBody != "" {
+		if prNumber > 0 {
+			fmt.Fprintf(&b, "## Pull Request #%d\n", prNumber)
+		} else {
+			b.WriteString("## Pull Request\n")
+		}
+		fmt.Fprintf(&b, "<pr-body>\n%s\n</pr-body>\n\n", escapeAllTags(prBody))
+	}
 
 	// Explicit allowlist of files in this diff.
 	if len(files) > 0 {
@@ -312,6 +335,11 @@ func BuildIncrementalPrompt(diff string, cfg *ReviewConfig, knownIssues []Review
 	// Lifecycle considerations — flag changes that behave differently after merge.
 	writeLifecycleSection(&b)
 
+	// PR description cross-check — flag claims in the body contradicted by the diff.
+	if prBody != "" {
+		writePRBodyCrossCheckSection(&b)
+	}
+
 	// Output format instructions.
 	b.WriteString("## Output Format\n")
 	b.WriteString("Return your findings as a JSON array inside a ```json code fence. Each finding must have these fields:\n\n")
@@ -390,6 +418,23 @@ func writeLifecycleSection(b *strings.Builder) {
 	b.WriteString("- Code paths or values gated on the PR being open or unmerged (e.g. test-only flags, debug switches, sample data, scaffolding) that won't behave the same way on the default branch.\n")
 	b.WriteString("- Documentation, comments, or examples that describe temporary scaffolding the diff also adds — both need to be removed before merge, and missing one leaves a stale reference.\n\n")
 	b.WriteString("For each lifecycle issue, anchor your finding's `file` and `line` to the offending diff line and explain the post-merge consequence in `description`. Do NOT report concerns in unchanged code — only in lines added or modified by this diff.\n\n")
+}
+
+// writePRBodyCrossCheckSection adds a "PR Description Cross-Check" section
+// asking the reviewer to flag specific factual claims in the PR body that the
+// diff contradicts. Should only be called when a PR body is present in the
+// prompt — otherwise the section has nothing to cross-check against.
+//
+// As with the lifecycle section, findings emitted here must still anchor
+// `file` and `line` to a diff line; runner.go's validators enforce that.
+func writePRBodyCrossCheckSection(b *strings.Builder) {
+	b.WriteString("## PR Description Cross-Check\n")
+	b.WriteString("The PR description in `<pr-body>` above often makes specific factual claims about the diff: cost caps, behavior guarantees, feature lists, performance numbers, things the PR explicitly does or does not do. Before completing the review, scan the diff for places where the code directly contradicts a specific factual claim in the description:\n\n")
+	b.WriteString("- A documented cost cap, rate limit, or numeric guarantee that the diff exceeds (e.g. body says \"~$2-4/run\", code uses a setting that produces $5-10).\n")
+	b.WriteString("- A \"this PR does NOT do X\" or \"this is dispatch-only\" claim where X actually appears in the diff.\n")
+	b.WriteString("- A behavior described in the body (e.g. \"fails closed on missing config\") that the diff doesn't implement.\n")
+	b.WriteString("- A list of inputs, outputs, or supported cases that omits something the diff adds, or includes something the diff removes.\n\n")
+	b.WriteString("For each contradiction, anchor your finding's `file` and `line` to the offending diff line and quote the contradicting text from the PR body in `description`. Do NOT flag style differences, tense mismatches, missing tests in the description, or things you wish the description said — only direct factual contradictions where the body and the code disagree on what the code does.\n\n")
 }
 
 // writeProjectDocs adds a "Project Documentation" section to the prompt builder
