@@ -133,7 +133,7 @@ LLM resolution reasons and their effects:
 After triage, the pipeline builds an incremental review prompt using `BuildIncrementalPrompt()`. This is similar to `BuildPrompt()` but:
 
 - Uses the incremental diff (or falls back to full PR diff if the incremental diff failed)
-- Includes a "Known Issues" section listing unresolved threads (prevents duplicating them). Each entry carries the finding's severity icon, severity, rule ID and title alongside `path:line`, so the reviewer can tell two findings on the same line apart; entries fall back to bare `path:line` when the thread body has no recoverable ID or title
+- Includes a "Known Issues" section listing unresolved threads (prevents duplicating them)
 - Includes a "Recently Resolved Issues" section with findings fixed by code changes (prevents re-raising similar issues -- anti-ping-pong)
 - Only includes file contents for files touched in the incremental diff
 
