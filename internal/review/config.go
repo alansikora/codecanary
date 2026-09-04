@@ -2,10 +2,12 @@ package review
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -37,14 +39,15 @@ type ReviewConfig struct {
 	ClaudeArgs   []string          `yaml:"claude_args"`     // extra args passed to the Claude CLI binary (claude provider only)
 	ClaudePath   string            `yaml:"claude_path"`     // path to Claude CLI binary (default: "claude")
 	// ClaudeReviewTools, when non-empty, enables the listed tools for the
-	// review model (claude provider only). Format mirrors the Claude CLI
-	// `--tools` flag: comma-separated tool names (e.g. "Read,Grep,Glob") or
-	// "default" for all built-in tools. Empty (the default) preserves the
-	// historical single-shot behaviour with `--tools ""`. Read-only tools
-	// like `Read,Grep,Glob` let the reviewer verify hypotheses (does this
-	// column exist? is this function called elsewhere?) without writing or
-	// executing anything. Triage stays single-shot regardless — only the
-	// review-model invocation gets tools.
+	// review model (claude provider only): a comma-separated list of tool
+	// names passed to the Claude CLI's `--tools` flag (e.g. "Read,Grep,Glob").
+	// Empty (the default) preserves the historical single-shot behaviour with
+	// `--tools ""`. Only read-only tools are accepted — see claudeReadOnlyTools;
+	// the CLI's "default" is rejected because it enables write and exec tools
+	// too. Read-only tools let the reviewer verify hypotheses (does this column
+	// exist? is this function called elsewhere?) without writing or executing
+	// anything. Triage stays single-shot regardless — only the review-model
+	// invocation gets tools.
 	ClaudeReviewTools string            `yaml:"claude_review_tools"`
 	Evaluation        *EvaluationConfig `yaml:"evaluation"`
 }
@@ -260,6 +263,9 @@ func (c *ReviewConfig) Validate() error {
 				return fmt.Errorf("claude_args: %q is managed by codecanary and cannot be overridden", arg)
 			}
 		}
+		if err := validateClaudeReviewTools(c.ClaudeReviewTools); err != nil {
+			return err
+		}
 	} else if len(c.ClaudeArgs) > 0 || c.ClaudePath != "" {
 		Stderrf(ansiYellow, "Warning: claude_args and claude_path are ignored for provider %q\n", c.Provider)
 	}
@@ -281,6 +287,68 @@ type ReviewPolicy struct {
 	Rules   []Rule   `yaml:"rules"`
 	Context string   `yaml:"context"`
 	Ignore  []string `yaml:"ignore"`
+}
+
+// claudeReadOnlyTools are the Claude CLI tools the reviewer may be granted.
+// The reviewer runs under `pull_request_target` with the PR's own head checked
+// out, so any tool that can write or execute would let PR content act on the
+// runner. Inspection-only tools carry no such reach.
+var claudeReadOnlyTools = map[string]bool{
+	"Read":      true,
+	"Grep":      true,
+	"Glob":      true,
+	"WebFetch":  true,
+	"WebSearch": true,
+}
+
+// parseClaudeReviewTools splits claude_review_tools into its tool names,
+// rejecting flag-shaped values (which would be passed as the `--tools`
+// argument and silently misinterpreted) and tools that can write or execute —
+// including the CLI's "default", which enables all of them. Empty is valid and
+// preserves the single-shot `--tools ""` behaviour.
+//
+// This is the single place that knows the field's format: Validate calls it to
+// reject bad config, and NormalizeClaudeReviewTools calls it to produce the
+// value actually handed to the CLI.
+func parseClaudeReviewTools(tools string) ([]string, error) {
+	if strings.TrimSpace(tools) == "" {
+		return nil, nil
+	}
+	allowed := slices.Sorted(maps.Keys(claudeReadOnlyTools))
+	parts := strings.Split(tools, ",")
+	out := make([]string, 0, len(parts))
+	for _, name := range parts {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return nil, fmt.Errorf("claude_review_tools: empty tool name in %q; use a comma-separated list like \"Read,Grep,Glob\"", tools)
+		}
+		if strings.HasPrefix(name, "-") {
+			return nil, fmt.Errorf("claude_review_tools: %q is a flag, not a tool name; the value is passed as the argument to --tools", name)
+		}
+		if !claudeReadOnlyTools[name] {
+			return nil, fmt.Errorf("claude_review_tools: %q is not a read-only tool; the reviewer runs against untrusted PR code, so only %s are allowed", name, strings.Join(allowed, ", "))
+		}
+		out = append(out, name)
+	}
+	return out, nil
+}
+
+func validateClaudeReviewTools(tools string) error {
+	_, err := parseClaudeReviewTools(tools)
+	return err
+}
+
+// NormalizeClaudeReviewTools returns the canonical `--tools` argument for a
+// validated claude_review_tools value: tool names with surrounding whitespace
+// stripped. Returns "" for an empty or invalid value, which the Claude provider
+// reads as "no tools" — the safe direction, and unreachable in practice because
+// Validate rejects invalid values before the provider is built.
+func NormalizeClaudeReviewTools(tools string) string {
+	parsed, err := parseClaudeReviewTools(tools)
+	if err != nil {
+		return ""
+	}
+	return strings.Join(parsed, ",")
 }
 
 // claudeReservedArgs are flags codecanary always controls; users cannot override them via claude_args.
