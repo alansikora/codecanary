@@ -240,7 +240,7 @@ func TestBuildIncrementalPrompt_KnownIssuesEscapesUntrustedBody(t *testing.T) {
 			t.Errorf("known-issues section leaked unescaped tag %q", s)
 		}
 	}
-	for _, s := range []string{"&lt;inject&gt;", "&lt;/known-issues&gt;"} {
+	for _, s := range []string{"&lt;inject&gt;", "&lt;/inject&gt;", "&lt;/known-issues&gt;"} {
 		if !strings.Contains(got, s) {
 			t.Errorf("known-issues section missing escaped fragment %q", s)
 		}
