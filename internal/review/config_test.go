@@ -149,6 +149,69 @@ func TestValidate_ClaudeArgsNonClaudeProvider(t *testing.T) {
 	}
 }
 
+func TestValidate_ClaudeReviewToolsClaude(t *testing.T) {
+	cfg := &ReviewConfig{
+		Provider: "claude", ReviewModel: "sonnet", TriageModel: "haiku",
+		ClaudeReviewTools: "Read,Grep,Glob",
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// The reviewer runs under pull_request_target with untrusted PR code on
+// disk, so claude_review_tools must not be able to grant it write or exec
+// reach — nor be silently misread as a flag.
+func TestValidate_ClaudeReviewToolsRejectsUnsafeValues(t *testing.T) {
+	cases := []struct {
+		name  string
+		tools string
+		want  string
+	}{
+		{"write tool", "Read,Write", "not a read-only tool"},
+		{"exec tool", "Bash", "not a read-only tool"},
+		{"cli default enables everything", "default", "not a read-only tool"},
+		{"flag-shaped value", "--tools=Bash", "is a flag, not a tool name"},
+		{"empty entry", "Read,,Grep", "empty tool name"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &ReviewConfig{
+				Provider: "claude", ReviewModel: "sonnet", TriageModel: "haiku",
+				ClaudeReviewTools: tc.tools,
+			}
+			err := cfg.Validate()
+			if err == nil {
+				t.Fatalf("expected claude_review_tools=%q to be rejected", tc.tools)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error %q does not mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestValidate_ClaudeReviewToolsAcceptsReadOnlySet(t *testing.T) {
+	cfg := &ReviewConfig{
+		Provider: "claude", ReviewModel: "sonnet", TriageModel: "haiku",
+		ClaudeReviewTools: "Read, Grep ,Glob,WebFetch,WebSearch",
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("read-only tool list should validate (whitespace tolerated): %v", err)
+	}
+}
+
+func TestValidate_ClaudeReviewToolsNonClaudeProvider(t *testing.T) {
+	cfg := &ReviewConfig{
+		Provider: "anthropic", ReviewModel: "claude-sonnet-4-6", TriageModel: "claude-haiku-4-5-20251001",
+		ClaudeReviewTools: "Read,Grep,Glob",
+	}
+	// Should not error — only warns to stderr (claude-only setting).
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("unexpected error for non-claude provider with claude_review_tools: %v", err)
+	}
+}
+
 func TestValidate_ClaudePathNonClaudeProvider(t *testing.T) {
 	cfg := &ReviewConfig{
 		Provider: "anthropic", ReviewModel: "claude-sonnet-4-6", TriageModel: "claude-haiku-4-5-20251001",

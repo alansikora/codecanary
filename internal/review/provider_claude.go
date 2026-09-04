@@ -60,6 +60,11 @@ type claudeCLIProvider struct {
 	env          []string
 	extraArgs    []string // from ClaudeArgs; appended after all managed flags
 	binaryPath   string   // resolved Claude CLI binary path; never empty
+	// reviewTools, when non-empty, replaces the default `--tools ""` arg with
+	// `--tools <reviewTools>` so the LLM can use Read/Grep/Glob etc. to verify
+	// hypotheses during a single Run call. Empty preserves the historical
+	// single-shot behaviour. See ReviewConfig.ClaudeReviewTools.
+	reviewTools string
 }
 
 // claudeAdvisorEnableEnvVar is the Claude CLI env var that opts into the
@@ -87,6 +92,7 @@ func newClaudeCLIProvider(mc *ModelConfig, env []string) ModelProvider {
 		env:          env,
 		extraArgs:    mc.ClaudeArgs,
 		binaryPath:   binaryPath,
+		reviewTools:  mc.ClaudeReviewTools,
 	}
 }
 
@@ -137,18 +143,21 @@ func injectClaudeOAuthToken(env []string) []string {
 	return env
 }
 
-func (p *claudeCLIProvider) Run(ctx context.Context, prompt string, opts RunOpts) (*providerResult, error) {
-	timeout := opts.Timeout
-	if timeout <= 0 {
-		timeout = 10 * time.Minute
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	// --tools "" disables all built-in tools (Bash, Read, Edit, etc.), making
-	// the CLI a single-shot prompt-in/text-out call. See `claude --help`:
+// buildArgs assembles the argv passed to the Claude CLI for a single Run call.
+// Extracted from Run() so tests can verify managed-flag behaviour (especially
+// the `--tools` allowlist) without exec'ing the binary.
+func (p *claudeCLIProvider) buildArgs(opts RunOpts) []string {
+	// `--tools ""` disables all built-in tools (Bash, Read, Edit, etc.),
+	// making the CLI a single-shot prompt-in/text-out call. When the caller
+	// configured `claude_review_tools` (review-model only), pass that
+	// allowlist through instead so the LLM can verify hypotheses (e.g.
+	// `Read,Grep,Glob`) before emitting findings. See `claude --help`:
 	//   --tools: Use "" to disable all tools, "default" to use all tools
-	args := []string{"--print", "--output-format", "json", "--no-session-persistence", "--tools", ""}
+	tools := ""
+	if p.reviewTools != "" {
+		tools = p.reviewTools
+	}
+	args := []string{"--print", "--output-format", "json", "--no-session-persistence", "--tools", tools}
 	if p.model != "" {
 		args = append(args, "--model", p.model)
 	}
@@ -168,6 +177,18 @@ func (p *claudeCLIProvider) Run(ctx context.Context, prompt string, opts RunOpts
 		}
 	}
 	args = append(args, p.extraArgs...)
+	return args
+}
+
+func (p *claudeCLIProvider) Run(ctx context.Context, prompt string, opts RunOpts) (*providerResult, error) {
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = 10 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	args := p.buildArgs(opts)
 	cmd := exec.CommandContext(ctx, p.binaryPath, args...)
 	cmd.Env = p.env
 	cmd.Stdin = strings.NewReader(prompt)

@@ -28,6 +28,10 @@ claude_args: []                 # extra args passed to the Claude CLI (claude pr
 # claude_args:
 #   - "--mcp-config=/path/to/mcp.json"
 claude_path: claude             # path to the Claude CLI binary (default: "claude")
+claude_review_tools: ""         # opt-in tool allowlist for the review call (claude provider only)
+                                # e.g. "Read,Grep,Glob" — lets the reviewer verify hypotheses
+                                # before emitting findings. Empty = no tools (single-shot).
+                                # Read-only tools only: Read, Grep, Glob, WebFetch, WebSearch.
 
 max_budget_usd: 0.50            # per-review spending limit in USD (default: 0 = unlimited)
 timeout_minutes: 5              # per-invocation timeout
@@ -123,6 +127,27 @@ Use `claude_path` to point to a non-default binary (e.g. a beta release):
 ```yaml
 claude_path: /usr/local/bin/claude-beta
 ```
+
+#### Reviewer tool use
+
+By default the Claude CLI is invoked with `--tools ""` so the review is a single-shot prompt-in/text-out call. Set `claude_review_tools` to opt the *review* model into using built-in Claude tools to verify hypotheses (e.g. "does this column exist?", "is this function called elsewhere?") before emitting findings:
+
+```yaml
+provider: claude
+review_model: sonnet
+triage_model: haiku
+claude_review_tools: "Read,Grep,Glob"
+```
+
+The value is a comma-separated list of tool names, passed to the Claude CLI's `--tools` flag. Only read-only tools are accepted — `Read`, `Grep`, `Glob`, `WebFetch`, `WebSearch` — and config validation rejects anything else with an error naming the allowed set.
+
+The CLI's `default` value is **not** accepted, because it enables write and exec tools as well. The reviewer runs under `pull_request_target` with the PR's own head checked out, so a tool that can write or execute would let PR content act on the runner. Read-only tools let the reviewer cross-check claims without that reach.
+
+The triage model stays single-shot regardless: triage runs many small per-thread prompts that don't benefit from filesystem lookups, and keeping it tool-less keeps the cost predictable.
+
+The reviewer's findings still go through the existing scope guards: file allowlist + 20-line proximity validator in `runner.go`. Tool use widens what the reviewer can read, not what it can flag — findings on files outside the PR or far from changed lines are still dropped post-emission.
+
+This setting is ignored for non-claude providers (a warning is printed). Tool use for the direct Anthropic/OpenAI APIs requires multi-turn support that those provider adapters don't implement yet.
 
 ## Models
 
