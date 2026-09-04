@@ -291,6 +291,42 @@ func TestBuildIncrementalPrompt_OmitsPRBodyAndCrossCheckWhenEmpty(t *testing.T) 
 	}
 }
 
+// The Cross-Statement Consistency section catches bugs where adjacent
+// statements look correct individually but the relationship between
+// them is wrong (primary/fallback pairs, acquire/release, init/use
+// ordering, etc.). Must appear in both prompt builders.
+func TestBuildPrompt_IncludesCrossStatementSection(t *testing.T) {
+	pr := &PRData{Number: 1, Title: "t", Files: []string{"a.go"}, Diff: "diff"}
+	got := BuildPrompt(pr, nil, 0, nil)
+
+	mustContain := []string{
+		"## Cross-Statement Consistency",
+		"Primary / fallback pairs",
+		"Acquire / release pairs",
+		"anchor your finding's `file` and `line`",
+	}
+	for _, s := range mustContain {
+		if !strings.Contains(got, s) {
+			t.Errorf("BuildPrompt missing expected cross-statement snippet %q", s)
+		}
+	}
+}
+
+func TestBuildIncrementalPrompt_IncludesCrossStatementSection(t *testing.T) {
+	got := BuildIncrementalPrompt("diff --git a/foo b/foo\n", nil, nil, 1, 0, nil, []string{"foo"}, nil, nil, "")
+
+	mustContain := []string{
+		"## Cross-Statement Consistency",
+		"Primary / fallback pairs",
+		"anchor your finding's `file` and `line`",
+	}
+	for _, s := range mustContain {
+		if !strings.Contains(got, s) {
+			t.Errorf("BuildIncrementalPrompt missing expected cross-statement snippet %q", s)
+		}
+	}
+}
+
 func TestBuildIncrementalPrompt_IncludesLifecycleSection(t *testing.T) {
 	got := BuildIncrementalPrompt("diff --git a/foo b/foo\n", nil, nil, 1, 0, nil, []string{"foo"}, nil, nil, "")
 

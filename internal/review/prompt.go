@@ -114,6 +114,10 @@ func BuildPrompt(pr *PRData, cfg *ReviewConfig, startIndex int, projectDocs map[
 		writePRBodyCrossCheckSection(&b)
 	}
 
+	// Cross-statement consistency — flag mismatches between adjacent statements
+	// that look correct individually.
+	writeCrossStatementSection(&b)
+
 	// Output format instructions.
 	b.WriteString("## Output Format\n")
 	b.WriteString("Return your findings as a JSON array inside a ```json code fence. Each finding must have these fields:\n\n")
@@ -340,6 +344,10 @@ func BuildIncrementalPrompt(diff string, cfg *ReviewConfig, knownIssues []Review
 		writePRBodyCrossCheckSection(&b)
 	}
 
+	// Cross-statement consistency — flag mismatches between adjacent statements
+	// that look correct individually.
+	writeCrossStatementSection(&b)
+
 	// Output format instructions.
 	b.WriteString("## Output Format\n")
 	b.WriteString("Return your findings as a JSON array inside a ```json code fence. Each finding must have these fields:\n\n")
@@ -435,6 +443,28 @@ func writePRBodyCrossCheckSection(b *strings.Builder) {
 	b.WriteString("- A behavior described in the body (e.g. \"fails closed on missing config\") that the diff doesn't implement.\n")
 	b.WriteString("- A list of inputs, outputs, or supported cases that omits something the diff adds, or includes something the diff removes.\n\n")
 	b.WriteString("For each contradiction, anchor your finding's `file` and `line` to the offending diff line and quote the contradicting text from the PR body in `description`. Do NOT flag style differences, tense mismatches, missing tests in the description, or things you wish the description said — only direct factual contradictions where the body and the code disagree on what the code does.\n\n")
+}
+
+// writeCrossStatementSection adds a "Cross-Statement Consistency" section
+// asking the reviewer to verify that adjacent statements in the diff are
+// internally consistent. This catches bugs where each statement is fine in
+// isolation but the relationship between them is wrong — primary/fallback
+// pairs with mismatched conditions, lock-acquire without matching release,
+// init-then-use with the wrong variable, error-path forgets cleanup, etc.
+//
+// Hunk-only or statement-by-statement reading misses these because the
+// defect lives in the gap between statements rather than in any one line.
+// Findings emitted from this section still anchor `file` and `line` to a
+// diff line — runner.go's validators enforce that.
+func writeCrossStatementSection(b *strings.Builder) {
+	b.WriteString("## Cross-Statement Consistency\n")
+	b.WriteString("When the diff modifies two or more related statements, verify that they are internally consistent. The most common defect class here is each statement looking correct on its own while the relationship between them is wrong. Concrete patterns to check:\n\n")
+	b.WriteString("- **Primary / fallback pairs.** A primary path emits when a value is non-empty; the fallback path is meant to trigger when the primary doesn't. Verify the fallback's trigger condition is the *negation* of the primary's emit condition — not a coarser predicate that overlaps with the primary's success case (e.g. primary emits when `result != \"\"`, fallback skips when *any* result event exists; on a result event with empty `.result`, neither runs).\n")
+	b.WriteString("- **Acquire / release pairs.** Locks, transactions, file handles, mutexes. If a path acquires, every reachable exit must release — including error paths and early returns introduced in the diff.\n")
+	b.WriteString("- **Init / use ordering.** A variable is initialised in one statement and used in the next; if the diff reorders, conditionalises, or wraps the init, confirm every use still sees the initialised value.\n")
+	b.WriteString("- **Setup / teardown.** Defer/cleanup statements must match the resource set up immediately above. A diff that adds a new resource without a matching teardown — or removes a setup but leaves the teardown — is a leak.\n")
+	b.WriteString("- **Symmetric updates across files.** When one file changes a contract (function signature, schema, config key, error variant), grep for callers and confirm they were updated in the same diff. Anchor the finding to the line that changed the contract.\n\n")
+	b.WriteString("For each inconsistency, anchor your finding's `file` and `line` to the offending diff line and explain in `description` what the related statement is and why the combination is wrong. Quote both statements briefly. Don't speculate about distant code that isn't in the diff or in the file contents above.\n\n")
 }
 
 // writeProjectDocs adds a "Project Documentation" section to the prompt builder
