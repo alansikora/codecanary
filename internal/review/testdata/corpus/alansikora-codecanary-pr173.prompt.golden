@@ -1,0 +1,2727 @@
+You are a code reviewer. Review the following pull request and report findings.
+You will be given the full contents of changed files for context, along with the diff. Only report issues that are directly related to the changes in the diff — do not flag pre-existing issues in unchanged code. Do not report a finding if your analysis concludes that the code is correct and no action is needed — only report findings that require the author to make a change or consider a specific alternative.
+Also consider whether the changes could cause side effects in other files that depend on or interact with the modified code (e.g. callers, importers, shared state). If you identify a potential side effect, anchor your finding to the relevant line in the diff and describe the affected downstream code in the description.
+
+## Pull Request #173
+<pr-title>feat: prettier commit status context (CodeCanary / review)</pr-title>
+**Author:** alansikora
+<pr-body>
+## Summary
+
+Renames the commit status context posted by `GithubPlatform.Publish` (and `codecanary signoff`) from `codecanary/review` to `CodeCanary / review`. Capital C, spaces around the slash — matches how GitHub renders workflow check runs, so the status reads as cleanly as the existing CI entries in the PR checks list.
+
+No behavior change. Same success/failure logic, same call sites, same pure-helper test coverage.
+
+## Heads-up: clash with the Action's check run
+
+The workflow job `review` in workflow `CodeCanary` also renders as `CodeCanary / review` in the PR checks UI. They're technically separate entities (Check Run vs Commit Status), and the branch-protection status-check picker distinguishes them by source, but they now share an identical display label. Discussed in chat; accepted for now on the theory that the two entries both represent "CodeCanary did its thing for this commit" and a single unified label is fine. Easy to split later by renaming the workflow job id or the status context if it becomes confusing.
+
+## Migration
+
+Existing installs that wired `codecanary/review` into branch-protection rules will need to update the required-check name to `CodeCanary / review` after this merges. Documented in the README and `docs/review-flow.md` alongside the rename.
+
+## Test plan
+
+- [x] `go build ./...`
+- [x] `go vet ./...`
+- [x] `go test ./...`
+- [ ] End-to-end: merge + push, confirm `CodeCanary / review = success` / `failure` lands on HEAD
+- [ ] Confirm branch-protection picker lists the new context
+</pr-body>
+
+## Project Documentation
+The following project documentation describes conventions and standards for this codebase. Use these to inform your review — flag violations of these conventions when relevant.
+
+<project-doc path="CLAUDE.md">
+# CodeCanary
+
+AI-powered code review for GitHub pull requests.
+
+## Project structure
+
+```
+cmd/
+  review/          # Main binary — review CLI + setup wizard
+    main.go        # Entry point
+    cli/           # Cobra commands
+      root.go      # Root "codecanary" command
+      review.go    # codecanary review <pr>
+      findings.go  # codecanary findings <pr> — fetch bot findings for the review skill
+      reply.go     # codecanary reply --url <comment-url> --body <text> — post a reply on a review thread
+      install_skill.go # codecanary install-skill — write embedded Claude skill to disk
+      setup.go     # codecanary setup [local|github]
+      auth.go      # codecanary auth [status|delete]
+internal/
+  review/
+    runner.go            # Core review pipeline — single Run() entry point
+    config.go            # Config loading, validation, defaults
+    # Provider layer (LLM abstraction)
+    provider.go          # ModelProvider interface + factory registry
+    provider_anthropic.go
+    provider_openai.go
+    provider_openrouter.go
+    provider_claude.go   # Claude CLI wrapper
+    provider_compat.go   # Shared types for OpenAI-compatible APIs
+    pricing.go           # Token-based cost estimation
+    # Platform layer (environment abstraction)
+    platform.go          # ReviewPlatform interface
+    platform_github.go   # GitHub Actions implementation
+    platform_local.go    # Local CLI implementation
+    # Supporting modules
+    prompt.go            # Prompt building (review, incremental, per-thread)
+    findings.go          # Finding parsing, filtering, result structures
+    triage.go            # Thread classification + parallel LLM evaluation
+    formatter.go         # JSON/Markdown/Terminal output formatting
+    usage.go             # Token tracking, budget checking
+    github.go            # GitHub API calls (fetch threads, post reviews)
+    comments.go          # PR review comment fetch + finding marker parser + review-check watcher
+    local.go             # Local diff & git operations
+    state.go             # Local state persistence
+    docs.go              # Project doc discovery
+  credentials/     # Credential storage (keychain with file fallback)
+    keyring.go     # Store/Retrieve/Delete — keychain first, ~/.codecanary/credentials.json fallback
+  skills/          # Claude Code skills embedded in the binary via //go:embed
+    skills.go      # Exports CodecanaryFix() returning the skill body
+    codecanary-fix/SKILL.md  # Canonical skill source (duplicated at .claude/skills/codecanary-fix/SKILL.md; parity enforced by skills_test.go)
+  setup/           # Setup wizard logic (huh forms)
+    forms.go       # Shared huh form components
+    validate.go    # API key validation via test calls
+    guidance.go    # Token/permissions guidance text
+    workflow.go    # GitHub Actions workflow template
+    local.go       # RunLocal() — local setup flow
+    github.go      # RunGitHub() — GitHub Actions setup flow
+  auth/            # OAuth PKCE flow, GitHub App installation
+telemetry/         # Telemetry domain (anonymous usage analytics)
+  worker/          # Cloudflare Worker — telemetry ingestion (TypeScript)
+  dashboard/       # Cloudflare Pages — internal analytics dashboard (vanilla JS + Chart.js)
+oidc/              # OIDC domain
+  worker/          # Cloudflare Worker — OIDC token exchange proxy (TypeScript)
+action.yml         # GitHub Action definition (composite action)
+install.sh         # Downloads and installs codecanary binary permanently
+.claude/
+  skills/
+    codecanary-fix/ # Claude Code skill — drives review→fix→push loop using `codecanary findings` + `codecanary reply`
+```
+
+## Binary
+
+- **`codecanary`** — single binary for reviews, setup, and credential management. Installed locally via `install.sh`, also used by the GitHub Action.
+
+## Build
+
+```sh
+go build ./cmd/review    # builds codecanary
+```
+
+Version is set via ldflags: `-X main.version=v{version}`
+
+## Lint
+
+```sh
+golangci-lint run ./...
+```
+
+All code must pass `golangci-lint` with default linters (errcheck, staticcheck, etc.). Run this before committing.
+
+## Key dependencies
+
+- `spf13/cobra` — CLI framework
+- `charmbracelet/huh` — terminal form builder (setup wizard)
+- `zalando/go-keyring` — OS keychain (with file-based fallback for systems without one)
+- `bmatcuk/doublestar` — glob pattern matching for ignore rules
+- `gopkg.in/yaml.v3` — config parsing
+- `golang.org/x/term` — terminal detection
+
+## Architecture
+
+### Core principle: adapters keep the engine agnostic
+
+The review engine (`runner.go`) is provider- and platform-agnostic. It depends only on two interfaces — never on concrete GitHub APIs, LLM SDKs, or environment-specific logic. All environment and provider specifics live behind adapters.
+
+### Provider layer — `ModelProvider` interface (`provider.go`)
+
+Abstracts LLM invocations. The core engine calls `provider.Run(ctx, prompt, opts)` and gets back text + usage metadata. It never knows which LLM backend is being used.
+
+**Implementations**: `anthropic`, `openai`, `openrouter`, `claude` (CLI).
+**Selection**: factory registry in `provider.go` — `NewProviderForRole(mc, env)` returns the right implementation based on `mc.Provider`.
+
+Adding a new LLM provider means: create `provider_<name>.go` and register a `ProviderFactory` (constructor, validation, pricing, default models) via `init()`.
+
+### Platform layer — `ReviewPlatform` interface (`platform.go`)
+
+Abstracts environment-specific operations: loading previous findings, publishing results, saving state, resolving threads, reporting usage.
+
+**Implementations**: `GithubPlatform` (posts to PRs, reads threads via API), `LocalPlatform` (prints to terminal, persists state to `~/.codecanary/repos/<owner>/<repo>/state/<branch>.json` — per-repo scoping keeps branch names like `main` from colliding across repos; falls back to `~/.codecanary/state/<branch>.json` when no git remote is resolvable).
+
+Routing is strict: `codecanary review --post` → `GithubPlatform`; `codecanary review` (no `--post`) → `LocalPlatform`, even when the branch has an open PR. Local is local — the branch diff (with uncommitted changes) is reviewed against the default base, previous findings come from local state, nothing is fetched from or posted to GitHub. The old `GithubPlatform`-with-`Post=false` hybrid is gone; it was the source of the "state written locally, read from GitHub" asymmetry that kept breaking incremental local reviews.
+
+Adding a new platform (e.g., GitLab) means: implement `ReviewPlatform`, wire it in the CLI.
+
+### Unified review pipeline (`runner.go`)
+
+There is a **single `Run()` function** — not separate paths for GitHub vs. local. The pipeline is:
+
+1. Fetch PR data (or local diff)
+2. Load config, project docs, file contents
+3. Create providers via `NewProviderForRole()` (factory, provider-agnostic)
+4. Load previous findings via `platform.LoadPreviousFindings()`
+5. If incremental: triage threads, evaluate via provider, handle resolutions
+6. Build and execute main review prompt
+7. Parse findings, filter non-actionable
+8. `platform.Publish()` → `platform.SaveState()` → `platform.ReportUsage()`
+
+### Other architecture notes
+
+- **Config** is split across two files in `.codecanary/`: `config.yml` (provider, models, budgets, timeouts) and `review.yml` (rules, context, ignore patterns). `review.yml` is optional — if present, its fields override rules/context/ignore in `config.yml`. A personal `review.local.yml` can add rules, context, and ignore patterns on top of `review.yml` (append semantics, not replacement). Legacy `.codecanary.yml` at repo root is still supported with a deprecation warning.
+- **Incremental reviews**: on re-push, triage existing threads (Go-driven classifier in `triage.go`), evaluate changed threads via provider (triage model), then review only new code
+- **Dual marker detection**: reads both `codecanary:review` and legacy `clanopy:review` HTML markers for backward compatibility
+- **Anti-hallucination**: explicit file allowlist, line validation against diff, max finding distance threshold
+- **OIDC worker** (`oidc/worker/`): OIDC token exchange proxy at `oidc.codecanary.sh` — verifies GitHub Actions OIDC token, returns GitHub App installation token
+- **Telemetry worker** (`telemetry/worker/`): anonymous usage ingest at `telemetry.codecanary.sh` — writes to a Cloudflare Analytics Engine dataset
+- **Telemetry dashboard** (`telemetry/dashboard/`): internal analytics view at `dashboard.codecanary.sh` — Cloudflare Pages + Pages Functions, gated by Cloudflare Access. Reads the AE dataset via the SQL HTTP API with a read-only API token (no AE binding, so writes are platform-impossible)
+- **Setup** is a subcommand (`codecanary setup`) using `charmbracelet/huh` forms, with `local` and `github` sub-flows
+- **Credentials** use a single env var `CODECANARY_PROVIDER_SECRET` for all providers. Stored via `go-keyring` (OS keychain) with a file-based fallback (`~/.codecanary/credentials.json`, mode `0600`). `resolveEnv()` in `runner.go` injects the stored credential into the filtered env when not already set.
+
+## Rules
+
+- **Keep the core engine agnostic.** `runner.go`, `triage.go`, `prompt.go`, `findings.go` must never import or reference a specific LLM provider or platform. All provider/platform specifics go behind the `ModelProvider` or `ReviewPlatform` interfaces. No `if provider == "openai"` in core logic.
+- **Use the adapter/provider pattern for new integrations.** New LLM backends → create `provider_<name>.go` with a `ProviderFactory` registration in `init()`. New deployment targets → implement `ReviewPlatform` + wire in CLI. Never fork the pipeline.
+- **One pipeline, not two.** There must be a single `Run()` path. GitHub and local modes differ only in which `ReviewPlatform` implementation is injected — the orchestration logic is shared.
+- **Shared types for similar providers.** OpenAI-compatible APIs share request/response types via `provider_compat.go`. Don't duplicate HTTP client logic across providers.
+- **Don't repeat yourself.** Before writing new code, search the codebase for existing functions, mappings, or logic that already does what you need — then call it instead of reimplementing it. This applies to everything: switch statements, helper functions, validation logic, data mappings, HTTP calls. One source of truth, callers import it. Don't merge scaffolding or unused exports — if it's not called yet, it doesn't ship yet.
+- **File names are ownership boundaries.** A function defined in `local.go` implies it belongs to the local flow; one in `github.go` implies it belongs to GitHub. If a function is called by multiple files in the same package, it belongs in a shared file (e.g., `forms.go` for setup helpers, `platform.go` for platform-shared logic). Never define shared infrastructure in a flow-specific file — move it to the file that matches its actual scope.
+- **Canonical provider registration points.** Provider names live in the factory map in `provider.go`. All providers use `CODECANARY_PROVIDER_SECRET` for credentials (defined in `internal/credentials/keyring.go`). When adding a new provider, register a `ProviderFactory` in `provider.go` and add config validation in `config.go`.
+- **Minimize shell code.** `install.sh` and the GitHub Action (`action.yml`) should be kept as thin as possible. All logic must live in Go.
+- **Workflow template is embedded.** `internal/setup/codecanary.yml` is the single source of truth for the GitHub Actions workflow, embedded via `//go:embed`. `.github/workflows/codecanary.yml` must be identical — `go test ./internal/setup/` enforces this. When changing the workflow, edit either file and copy to the other.
+- **Claude skills are embedded.** `internal/skills/codecanary-fix/SKILL.md` is the single source of truth for the codecanary-fix skill, embedded via `//go:embed` and materialized by `codecanary install-skill`. `.claude/skills/codecanary-fix/SKILL.md` must be identical so Claude Code's project-mode discovery finds it when working in this repo — `go test ./internal/skills/` enforces this. When changing the skill, edit either file and copy to the other.
+- **Keep `docs/review-flow.md` in sync.** This document describes the full review pipeline — every step, the triage flow, platform differences, and key design decisions. When changing `runner.go`, `triage.go`, `prompt.go`, `findings.go`, `github.go`, `local.go`, `platform.go`, or the `ReviewPlatform` implementations, update the doc to reflect the new behavior.
+- Tests exist for config, findings, formatting, and triage. Be careful with refactors — run `go test ./...` and `go vet ./...`.
+
+</project-doc>
+
+## Review Rules
+No specific rules are defined. Perform a general code review covering correctness, security, performance, and maintainability.
+
+## Files in This Diff
+The following files — and ONLY these files — are part of this diff. Every finding you report MUST reference one of these exact paths. Do NOT reference any file that is not in this list.
+
+- `README.md`
+- `cmd/review/cli/signoff.go`
+- `docs/review-flow.md`
+- `internal/review/github.go`
+- `internal/review/platform_github.go`
+
+## Changed File Contents
+Below are the full contents of changed files. Use these to understand surrounding code, types, imports, and control flow. Do NOT report findings on unchanged code — only flag issues directly related to changes in the diff.
+
+### `README.md`
+````
+1: # <img width="75" alt="codecanary" src="https://github.com/user-attachments/assets/bb494aa1-9bb2-486c-a253-ba8a9a2939e4" /> CodeCanary
+2: 
+3: AI-powered code review for GitHub pull requests. Catch bugs, security issues, and quality problems before they land in main.
+4: 
+5: ## Quick Start
+6: 
+7: ```sh
+8: curl -fsSL https://codecanary.sh/install | sh
+9: codecanary setup local
+10: codecanary review
+11: ```
+12: 
+13: That's it. CodeCanary diffs your branch against main and reviews the changes locally.
+14: 
+15: ## Why CodeCanary?
+16: 
+17: - **Fully automated** — runs as a GitHub Action on every push, or locally from the terminal.
+18: - **Multi-provider** — bring your own LLM: Anthropic, OpenAI, OpenRouter, Grok (xAI), or Claude CLI. No vendor lock-in.
+19: - **Incremental reviews** — on re-push, Go-driven triage classifies existing threads at zero LLM cost. Only changed code gets re-evaluated.
+20: - **Conversational** — when authors reply to a finding, CodeCanary re-evaluates in context. It distinguishes code fixes, dismissals, acknowledgments, and rebuttals.
+21: - **Native PR integration** — posts inline comments on exact diff lines, auto-resolves threads when code is fixed, and minimizes stale reviews.
+22: - **Anti-hallucination** — explicit file allowlists, line validation against the diff, and distance thresholds prevent fabricated findings.
+23: - **Cost-efficient** — uses a fast triage model for thread re-evaluation and a full model for review. Tracks per-invocation usage so you see what you spend.
+24: - **Configuration-as-code** — project-specific rules, severity levels, ignore patterns, and context in `.codecanary/config.yml`.
+25: - **Agentic loop** — pairs with Claude Code via the bundled `codecanary-fix` skill to review, triage, fix, and push until the PR is clean.
+26: 
+27: ## Installation
+28: 
+29: ```sh
+30: curl -fsSL https://codecanary.sh/install | sh
+31: ```
+32: 
+33: Installs the `codecanary` binary to `/usr/local/bin` (or `~/.local/bin`). Supports Linux and macOS (amd64/arm64).
+34: 
+35: To self-update later:
+36: 
+37: ```sh
+38: codecanary upgrade
+39: ```
+40: 
+41: ### Canary builds
+42: 
+43: ```sh
+44: curl -fsSL https://codecanary.sh/install | sh -s -- --canary
+45: codecanary upgrade --canary
+46: ```
+47: 
+48: ## Setup
+49: 
+50: ### Local reviews
+51: 
+52: ```sh
+53: codecanary setup local
+54: ```
+55: 
+56: The setup wizard walks you through choosing a provider, entering your API key (stored in your system keychain), and selecting models. It creates a `.codecanary/config.yml` in your repo.
+57: 
+58: Then review your changes:
+59: 
+60: ```sh
+61: codecanary review                # diff against main, print to terminal
+62: codecanary review --post         # same, but also post findings to the PR on GitHub
+63: codecanary review --output json  # machine-readable output
+64: ```
+65: 
+66: Without `--post`, `codecanary review` is always local: it diffs your branch (with uncommitted changes) against the default branch and keeps state in `~/.codecanary/state/<branch>.json` for incremental re-runs. With `--post`, it fetches the PR from GitHub — pass a number or let it auto-detect from the current branch — and posts findings as review comments.
+67: 
+68: ### GitHub Actions
+69: 
+70: ```sh
+71: codecanary setup github
+72: ```
+73: 
+74: This runs the same provider and key selection, then:
+75: 1. Installs the CodeCanary Review GitHub App
+76: 2. Sets your API key as a GitHub repo secret
+77: 3. Creates the workflow (`.github/workflows/codecanary.yml`)
+78: 4. Opens a PR with everything ready to merge
+79: 
+80: Once merged, CodeCanary reviews every PR on open and push. Draft PRs are skipped by default.
+81: 
+82: ### Gating merges on clean reviews
+83: 
+84: CodeCanary can block merges until a review comes back clean. After every review, the bot (and the local `codecanary signoff` command) posts a GitHub commit status under the context `CodeCanary / review`:
+85: 
+86: - `success` — no unresolved findings (everything is either unraised, fixed by code, or handled by the author)
+87: - `failure` — one or more findings remain unresolved, with a description like `"3 unresolved findings"`
+88: 
+89: To turn this into a required check, add `CodeCanary / review` to your repo's required status checks via whichever branch protection mechanism you use (rulesets, classic branch protection rules, etc.). GitHub accepts any context name; if a review has already run, it will also show up in autocomplete.
+90: 
+91: Statuses are keyed by commit SHA, so staling is automatic: a new push has no status until the next review run posts one, which re-blocks the merge button.
+92: 
+93: **Without a workflow.** If your repo doesn't use the GitHub Action, `codecanary signoff` posts the same status from your local machine after a clean `codecanary review`:
+94: 
+95: ```sh
+96: codecanary review     # reviews locally, stores findings in ~/.codecanary/...
+97: # fix anything that came up, commit
+98: codecanary signoff    # posts CodeCanary / review = success on HEAD
+99: ```
+100: 
+101: The command refuses to sign off unless HEAD matches the reviewed SHA and the tree is clean — this prevents attesting a review of code that isn't actually in the commit. It needs `gh` authenticated with `repo:status` scope (default `gh auth login` covers it).
+102: 
+103: Same required-check config works for both paths: the bot satisfies the check on PRs that run the workflow; `codecanary signoff` satisfies it for repos without the workflow, branches where the workflow doesn't run, or PRs from forks where secrets are unavailable.
+104: 
+105: ## CLI Reference
+106: 
+107: | Command | Description |
+108: |---------|-------------|
+109: | `codecanary review [pr-number]` | Review a PR or local diff |
+110: | `codecanary findings [pr-number]` | Fetch bot findings for a PR (markdown or JSON) |
+111: | `codecanary reply --url <URL> --body <text>` | Post a reply on a review-comment thread (used by the skill when skipping) |
+112: | `codecanary signoff` | Post a `CodeCanary / review` commit status from the last local review (see [gating merges](#gating-merges-on-clean-reviews)) |
+113: | `codecanary install-skill` | Install the `codecanary-fix` Claude Code skill |
+114: | `codecanary setup [local\|github]` | Interactive setup wizard |
+115: | `codecanary auth status` | Show stored credential info |
+116: | `codecanary auth delete` | Remove a stored API key |
+117: | `codecanary auth refresh` | Validate and update stored credentials |
+118: | `codecanary upgrade` | Update to the latest release |
+119: 
+120: ### Review flags
+121: 
+122: | Flag | Description |
+123: |------|-------------|
+124: | `--repo, -r` | GitHub repo (owner/name) |
+125: | `--output, -o` | Output format: `terminal`, `markdown`, or `json` (auto-detects TTY) |
+126: | `--post` | Post findings as a PR review comment |
+127: | `--config, -c` | Path to config file (auto-detected if empty) |
+128: | `--reply-only` | Re-evaluate thread replies only, skip new findings |
+129: | `--dry-run` | Show the prompt without calling the LLM |
+130: 
+131: ## Configuration
+132: 
+133: CodeCanary uses `.codecanary/config.yml` in your repo. The `provider` field is required.
+134: 
+135: ### Minimal config
+136: 
+137: ```yaml
+138: version: 1
+139: provider: anthropic
+140: review_model: claude-sonnet-4-6
+141: triage_model: claude-haiku-4-5-20251001
+142: ```
+143: 
+144: ### Config with rules and context
+145: 
+146: ```yaml
+147: version: 1
+148: provider: anthropic
+149: review_model: claude-sonnet-4-6
+150: triage_model: claude-haiku-4-5-20251001
+151: 
+152: context: |
+153:   Go REST API using chi router. Tests use testify.
+154: 
+155: rules:
+156:   - id: error-handling
+157:     description: "Errors must be wrapped with context using fmt.Errorf"
+158:     severity: warning
+159:     paths: ["**/*.go"]
+160: 
+161:   - id: sql-injection
+162:     description: "Database queries must use parameterized statements"
+163:     severity: critical
+164: 
+165: ignore:
+166:   - "dist/**"
+167:   - "*.lock"
+168:   - "vendor/**"
+169: ```
+170: 
+171: Rules support `paths` and `exclude_paths` globs, and five severity levels: `critical`, `bug`, `warning`, `suggestion`, `nitpick`.
+172: 
+173: ### Provider examples
+174: 
+175: **OpenAI** (also works with Azure, Ollama, or any OpenAI-compatible endpoint via `api_base`):
+176: ```yaml
+177: version: 1
+178: provider: openai
+179: review_model: gpt-5.4
+180: triage_model: gpt-5.4-mini
+181: # api_base: https://your-endpoint.com/v1
+182: ```
+183: 
+184: **OpenRouter**:
+185: ```yaml
+186: version: 1
+187: provider: openrouter
+188: review_model: anthropic/claude-sonnet-4-6
+189: triage_model: anthropic/claude-haiku-4-5-20251001
+190: ```
+191: 
+192: **Grok (xAI)**:
+193: ```yaml
+194: version: 1
+195: provider: grok
+196: review_model: grok-4.20-0309-non-reasoning
+197: triage_model: grok-4-1-fast-non-reasoning
+198: ```
+199: 
+200: **Claude CLI** (uses your logged-in `claude` session, no API key needed):
+201: ```yaml
+202: version: 1
+203: provider: claude
+204: review_model: claude-sonnet-4-6
+205: triage_model: haiku
+206: ```
+207: 
+208: You can also create a `.codecanary/review.local.yml` for personal overrides (gitignored) — its rules, context, and ignore patterns are appended to the shared `review.yml`.
+209: 
+210: For the full config reference including budget controls, size limits, timeouts, evaluation context, and the `review.yml` override file, see [docs/configuration.md](docs/configuration.md).
+211: 
+212: ## Credential Management
+213: 
+214: ```sh
+215: codecanary auth status    # show which API keys are stored
+216: codecanary auth delete    # remove a stored API key
+217: codecanary auth refresh   # validate and update credentials
+218: ```
+219: 
+220: Keys are stored in your system keychain (macOS Keychain, GNOME Keyring, KDE Wallet) with a fallback to `~/.codecanary/credentials.json`. Environment variables always override stored credentials.
+221: 
+222: | Provider | What you need | Where to get it |
+223: |----------|--------------|-----------------|
+224: | Anthropic | API key | [console.anthropic.com](https://console.anthropic.com) |
+225: | OpenAI | API key | [platform.openai.com](https://platform.openai.com) |
+226: | OpenRouter | API key | [openrouter.ai](https://openrouter.ai) |
+227: | Grok (xAI) | API key | [console.x.ai](https://console.x.ai) |
+228: | Claude CLI | Logged-in `claude` binary | Run `claude` and complete the login flow |
+229: 
+230: ## How It Works
+231: 
+232: ### First review
+233: 
+234: 1. Fetches PR metadata and diff (via `gh` CLI or local git)
+235: 2. Reads file contents for context (respecting ignore patterns and size limits)
+236: 3. Auto-discovers project docs (CLAUDE.md files) for additional context
+237: 4. Calls your configured LLM to analyze the changes
+238: 5. Posts findings as inline PR review comments (or prints to terminal)
+239: 
+240: ### Incremental reviews (on re-push)
+241: 
+242: 1. **Go-driven triage** classifies existing threads — no LLM calls for unchanged code
+243: 2. **Parallel evaluation** re-checks threads where code changed or the author replied (using the triage model)
+244: 3. **New code review** covers only the incremental diff, excluding known issues
+245: 4. **Auto-resolution** marks threads as resolved when the code fix addresses the finding
+246: 
+247: ### Thread lifecycle
+248: 
+249: | Event | Result |
+250: |-------|--------|
+251: | Code fix detected | Thread auto-resolved |
+252: | Author dismisses | Acknowledged, kept open for re-check |
+253: | Author acknowledges | Noted, kept open |
+254: | Author rebuts | Evaluated for technical merit, kept open |
+255: | No changes | Skipped (zero LLM cost) |
+256: 
+257: ### Safety
+258: 
+259: - **Anti-hallucination**: explicit file allowlist, line number validation against diff, max finding distance threshold
+260: - **Anti-ping-pong**: resolved findings injected as context to prevent re-raising
+261: - **Prompt injection protection**: repository content escaped before inclusion in prompts
+262: 
+263: ## Agentic review loop
+264: 
+265: CodeCanary ships with a [Claude Code](https://docs.claude.com/en/docs/claude-code) skill, `codecanary-fix`, that drives a review → triage → fix → push cycle until the PR is clean. You stay in the loop — every fix is confirmed before it's applied — but the polling, fetching, and CI watching is handled by the CLI.
+266: 
+267: Install the skill once:
+268: 
+269: ```sh
+270: codecanary install-skill
+271: ```
+272: 
+273: This writes the embedded skill to `~/.claude/skills/codecanary-fix/SKILL.md`, where Claude Code discovers it in every session. Re-run the command after `codecanary upgrade` to pick up new versions.
+274: 
+275: Then in Claude Code, ask it to `handle codecanary` on your PR (or invoke `/codecanary-fix` directly) — the skill is auto-discovered and matched to your request via its frontmatter description. Two modes:
+276: 
+277: - **PR mode** (default) — watches the GitHub Actions review check via `codecanary findings --watch`, renders a triage table, asks you to confirm which fixes to apply, commits and pushes, then loops on the next review. Every finding you defer gets a reply posted on its review thread explaining why, via `codecanary reply`.
+278: - **Local mode** — triggered automatically when no PR is detected for the current branch. Single pass against your dirty working tree. Applies approved fixes without committing or pushing.
+279: 
+280: The full skill contract lives at [internal/skills/codecanary-fix/SKILL.md](internal/skills/codecanary-fix/SKILL.md).
+281: 
+282: ## Contributing
+283: 
+284: See [CONTRIBUTING.md](CONTRIBUTING.md) for architecture details and how to add new LLM providers or platforms.
+285: 
+286: ## License
+287: 
+288: MIT
+````
+
+### `cmd/review/cli/signoff.go`
+```
+1: package cli
+2: 
+3: import (
+4: 	"errors"
+5: 	"fmt"
+6: 
+7: 	"github.com/alansikora/codecanary/internal/review"
+8: 	"github.com/spf13/cobra"
+9: )
+10: 
+11: // signoffCmd posts a GitHub commit status on the current HEAD based on the
+12: // most recent local review for the current branch. Inspired by Rails 8.1's
+13: // `gh signoff` (Basecamp): combined with a required status check in branch
+14: // protection, this lets a team gate merges on "a human actually ran
+15: // codecanary locally and it came back clean", without paying for a cloud
+16: // review on every push.
+17: var signoffCmd = &cobra.Command{
+18: 	Use:   "signoff",
+19: 	Short: "Post a GitHub commit status from the last local review",
+20: 	Long: `Post a GitHub commit status on HEAD reflecting the most recent local
+21: codecanary review for the current branch.
+22: 
+23: Requires:
+24:   - you ran 'codecanary review' on this branch
+25:   - the working tree is clean and HEAD matches the reviewed SHA
+26:   - 'gh' is installed and authenticated with repo:status scope
+27: 
+28: Combine with a required 'CodeCanary / review' check in branch protection to
+29: block merges until a clean local review exists for the tip commit.`,
+30: 	RunE: func(cmd *cobra.Command, args []string) error {
+31: 		force, _ := cmd.Flags().GetBool("force")
+32: 
+33: 		slug, err := review.RepoSlug()
+34: 		if err != nil {
+35: 			return err
+36: 		}
+37: 		branch, err := review.CurrentBranch()
+38: 		if err != nil {
+39: 			return err
+40: 		}
+41: 		sha, err := review.HeadSHA()
+42: 		if err != nil {
+43: 			return err
+44: 		}
+45: 
+46: 		state, err := review.LoadLocalState(branch)
+47: 		if err != nil {
+48: 			return fmt.Errorf("loading local state: %w", err)
+49: 		}
+50: 		if state == nil {
+51: 			return fmt.Errorf("no local review found for branch %q — run 'codecanary review' first", branch)
+52: 		}
+53: 
+54: 		if !force {
+55: 			if state.SHA != sha {
+56: 				return fmt.Errorf(
+57: 					"local review was for %s but HEAD is %s — re-run 'codecanary review' (or pass --force)",
+58: 					shortSHA(state.SHA), shortSHA(sha))
+59: 			}
+60: 			dirty, err := review.WorkingTreeDirty()
+61: 			if err != nil {
+62: 				return fmt.Errorf("checking working tree: %w", err)
+63: 			}
+64: 			if dirty {
+65: 				return errors.New(
+66: 					"working tree has uncommitted changes — commit them, " +
+67: 						"run 'git stash --include-untracked' (plain 'git stash' leaves untracked files behind), " +
+68: 						"or pass --force if you know the dirty files are unrelated to the PR")
+69: 			}
+70: 		}
+71: 
+72: 		unresolved := 0
+73: 		for _, f := range state.Findings {
+74: 			if f.Actionable != nil && !*f.Actionable {
+75: 				continue
+76: 			}
+77: 			unresolved++
+78: 		}
+79: 
+80: 		statusState, desc := "success", "0 findings"
+81: 		if unresolved > 0 {
+82: 			statusState = "failure"
+83: 			suffix := "s"
+84: 			if unresolved == 1 {
+85: 				suffix = ""
+86: 			}
+87: 			desc = fmt.Sprintf("%d unresolved finding%s", unresolved, suffix)
+88: 		}
+89: 
+90: 		if err := review.PostReviewCommitStatus(slug, sha, statusState, desc); err != nil {
+91: 			return fmt.Errorf("posting commit status: %w", err)
+92: 		}
+93: 
+94: 		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+95: 			"✓ %s = %s on %s@%s (%s)\n",
+96: 			review.ReviewCommitStatusContext, statusState, slug, shortSHA(sha), desc)
+97: 		return nil
+98: 	},
+99: }
+100: 
+101: func init() {
+102: 	signoffCmd.Flags().Bool("force", false,
+103: 		"Sign off even if HEAD doesn't match the reviewed SHA or the tree is dirty")
+104: 	rootCmd.AddCommand(signoffCmd)
+105: }
+```
+
+### `docs/review-flow.md`
+````
+1: # Review Flow
+2: 
+3: How CodeCanary reviews a pull request, step by step.
+4: 
+5: ## Overview
+6: 
+7: The review pipeline has two modes of operation:
+8: 
+9: - **First review**: Reviews the full PR diff against the base branch.
+10: - **Incremental review**: Re-evaluates previous findings and reviews only new changes since the last review.
+11: 
+12: Both modes run through the same `Run()` function in `runner.go`. The pipeline is platform-agnostic -- GitHub and local modes differ only in which `ReviewPlatform` adapter is injected.
+13: 
+14: ## Platforms
+15: 
+16: Two platforms, routed strictly by `--post`:
+17: 
+18: | Context | Platform | How it runs | State storage | Output |
+19: |---------|----------|-------------|---------------|--------|
+20: | **GitHub PR** | `GithubPlatform` | `codecanary review --post` (locally or in CI) | PR review threads via API | Posts review comments on the PR |
+21: | **Local** | `LocalPlatform` | `codecanary review` (with or without a PR for the branch) | `~/.codecanary/repos/<owner>/<repo>/state/<branch>.json` | Prints to terminal |
+22: 
+23: `codecanary review` without `--post` is always local — even if the branch has an open PR. "Local is local": the branch diff (including uncommitted changes) is reviewed against the default base, and previous findings come from the repo-scoped state file. There is no hybrid mode that reads GitHub but writes local state. Two consecutive local runs go incremental off the saved state (locked in by `TestLocalPlatformIncrementalHandoff` in `state_test.go`).
+24: 
+25: State files are keyed by `owner/repo/branch` so the same branch name across different repos (e.g. `main` in repo A vs. repo B) no longer collides. When the git remote can't be resolved (detached worktree, no remote), state falls back to the legacy `~/.codecanary/state/<branch>.json` path. On first save after the upgrade, any existing legacy file is read once, migrated to the repo-scoped path, and the legacy copy is removed — transparent to the operator.
+26: 
+27: ## Pipeline Steps
+28: 
+29: ### 1. Fetch PR data
+30: 
+31: **GitHub PR** (`--post`): Fetches PR metadata (title, body, author, branches) and diff via `gh pr view` and `gh pr diff`.
+32: 
+33: **Local**: Detects the default branch (`main`, falling back to `master`, or the explicit `--base`) and computes diff from merge-base to HEAD via `git diff $(git merge-base HEAD <default-branch>)..HEAD`. Uncommitted working-tree changes scoped to the branch files are appended to the incremental diff on subsequent runs. Uses current branch name as the title and `git config user.name` as the author.
+34: 
+35: If the PR is a setup PR (only adds workflow files with no real code changes), the review is skipped with an informational comment.
+36: 
+37: ### 2. Prepare review context
+38: 
+39: `prepareReview()` loads everything the review needs:
+40: 
+41: - **Config**: Reads `config.yml` (provider, models, budgets, timeouts). If a `review.yml` exists alongside it, its rules/context/ignore fields override the config. If a `review.local.yml` also exists, its fields are appended (not replaced) on top of `review.yml`.
+42: - **Project docs**: Discovers CLAUDE.md files at the repo root and in every ancestor directory of a changed PR file. Skips `vendor/`, `node_modules/`, hidden dirs, and other build artifacts. Up to 10 files, 16 KB each, 48 KB total. Monorepos commonly keep per-app conventions (e.g. `apps/exchange-api/CLAUDE.md`) — those load automatically when a PR touches files under that directory, so the reviewer sees the conventions specific to the code being changed rather than only the repo-root overview.
+43: - **File contents**: Reads changed files from disk with size limits (default 100KB per file, 500KB total). Skips binary files, ignored patterns, and files exceeding limits. When files are skipped, the diff is also filtered to remove their hunks (via `ScopeDiffToFiles`) and they are removed from the file list. The original unfiltered diff is preserved in `FullDiff` for finding validation.
+44: - **Environment**: Builds a filtered env for LLM subprocesses (only allowed prefixes like `CODECANARY_`, `GITHUB_`, plus essential vars like `PATH`). Injects keychain credentials if not already set.
+45: 
+46: ### 3. Create providers
+47: 
+48: Two `ModelProvider` instances are created from config:
+49: 
+50: - **Review provider**: The main model that reviews code (configured via `review_model` in config). When `advisor_model` is set (anthropic or claude provider only), the review provider also enables Anthropic's server-side advisor tool so a stronger advisor model can weigh in mid-generation — the triage provider never uses advisor, since its classifier turns are too short to benefit.
+51: - **Triage provider**: A cheaper model for re-evaluating previous findings (configured via `triage_model` in config).
+52: 
+53: Each provider is constructed via the factory registry in `provider.go`. The provider name determines which adapter handles the API call (Anthropic, OpenAI, OpenRouter, or Claude CLI).
+54: 
+55: ### 4. Load previous findings
+56: 
+57: The platform adapter loads unresolved findings from the last review:
+58: 
+59: **GitHub PR** (`--post`): Fetches review threads via GraphQL. Filters to CodeCanary findings only (detected by HTML marker comments). Extracts the previous review's HEAD SHA from the most recent review body — clean and all-clear reviews embed this marker too, so the baseline advances even when a push produced no findings. Returns unresolved threads, the SHA, and a count for fix_ref numbering.
+60: 
+61: **Local**: Reads `~/.codecanary/repos/<owner>/<repo>/state/<branch>.json`, which stores the SHA, branch name, and findings array from the previous review. Falls back to `~/.codecanary/state/<branch>.json` when the repo slug can't be resolved or a pre-migration state file is present. Converts saved findings into `ReviewThread` shape for the triage pipeline.
+62: 
+63: If no previous findings exist, this is a first review.
+64: 
+65: ### 5. Triage and build prompt
+66: 
+67: This step diverges based on whether a previous review SHA exists. A previous SHA alone is enough to enter the incremental path — if previous findings were all resolved (no open threads), the incremental diff still scopes the review to commits since the last baseline, avoiding a redundant full re-review.
+68: 
+69: #### First review path
+70: 
+71: Calls `BuildPrompt()` to assemble the full review prompt. The prompt includes (in order):
+72: 
+73: 1. System instructions (reviewer role, diff-only rules, side-effect awareness)
+74: 2. PR metadata (number, title, author, description)
+75: 3. Additional context from config
+76: 4. Project documentation (CLAUDE.md files in `<project-doc>` tags)
+77: 5. Review rules (from config) — filtered to rules whose `paths:` / `exclude_paths:` globs match at least one PR file. Rules scoped to file types not in the diff (e.g. CSS rules on a Ruby-only change) are omitted to keep LLM attention focused. Falls back to a general review instruction when no rules apply.
+78: 6. Ignore patterns
+79: 7. Explicit file allowlist (anti-hallucination)
+80: 8. Full contents of changed files with line numbers
+81: 9. The unified diff
+82: 10. Output format instructions (JSON schema, examples, escaping rules)
+83: 
+84: After building, `fitPromptForModel()` checks whether the prompt fits the review model's context window (context window minus max output tokens). If it exceeds the budget, it progressively drops the largest file contents first, then truncates the diff as a last resort.
+85: 
+86: #### Incremental review path (triage)
+87: 
+88: `runTriage()` handles the incremental case in two phases.
+89: 
+90: **Phase 1 -- Classify and evaluate previous findings**
+91: 
+92: First, an incremental diff is computed (`git diff <previousSHA>..HEAD`). Two diffs serve different purposes:
+93: 
+94: - **Activity diff** (incremental): Determines whether there's new activity to evaluate. If empty, threads with no replies are skipped (no LLM cost).
+95: - **Context diff** (full PR diff): Used for classification and evaluation context. Ensures fixes from earlier pushes are visible even if they predate the incremental window.
+96: 
+97: `ClassifyThreads()` assigns each unresolved thread one of six classifications:
+98: 
+99: | Classification | Condition | Evaluation |
+100: |---|---|---|
+101: | `TriageSkip` | No activity diff, not outdated, no replies | Skipped (no LLM) |
+102: | `TriageCodeChanged` | GitHub outdated flag, or file in PR diff | LLM evaluates with file-scoped diff + file snippet |
+103: | `TriageHasReply` | Human replied (no code changes) | LLM evaluates reply intent |
+104: | `TriageCodeChangedReply` | Both code changed and human replied | LLM evaluates both |
+105: | `TriageCrossFileChange` | Changes in other files only | LLM evaluates with full PR diff |
+106: | `TriageFileRemovedFromPR` | File no longer in PR | Auto-resolved by Go code (no LLM) -- thread resolved on GitHub |
+107: 
+108: Threads classified as `TriageFileRemovedFromPR` are auto-resolved without an LLM call. The Go code sets reason `file_removed` and resolves the thread directly.
+109: 
+110: For remaining threads, `EvaluateThreadsParallel()` runs up to 3 concurrent LLM calls using the triage model. Evaluation uses a **two-level approach** to balance precision and coverage:
+111: 
+112: - **Level 1 (file-scoped)**: The LLM receives the finding, the current file content (presented first), and a file-scoped diff. This catches same-file fixes with minimal noise. Most evaluations resolve here.
+113: - **Level 2 (widened scope)**: Only when level 1 says "not resolved" and the thread is `TriageCodeChanged` (file is in the PR diff). The LLM receives the full PR diff with a prompt primed to look for cross-file fixes. This catches the edge case where the finding's file has unrelated changes but the actual fix is in a different file.
+114: 
+115: For `TriageCrossFileChange`, only the full PR diff is used (no level 1 — there's no file-scoped diff to show).
+116: 
+117: The LLM returns JSON: `{"resolved": true, "reason": "code_change"}` or `{"resolved": false}`.
+118: 
+119: LLM resolution reasons and their effects:
+120: 
+121: | Reason | Effect | Thread stays open? |
+122: |---|---|---|
+123: | `code_change` | Thread resolved on GitHub | No |
+124: | `dismissed` | Ack reply posted | Yes (re-triaged on next push) |
+125: | `acknowledged` | Ack reply posted | Yes |
+126: | `rebutted` | Ack reply posted | Yes |
+127: 
+128: **Phase 2 -- Build prompt for new findings**
+129: 
+130: After triage, the pipeline builds an incremental review prompt using `BuildIncrementalPrompt()`. This is similar to `BuildPrompt()` but:
+131: 
+132: - Uses the incremental diff (or falls back to full PR diff if the incremental diff failed)
+133: - Includes a "Known Issues" section listing unresolved threads (prevents duplicating them)
+134: - Includes a "Recently Resolved Issues" section with findings fixed by code changes (prevents re-raising similar issues -- anti-ping-pong)
+135: - Only includes file contents for files touched in the incremental diff
+136: 
+137: The prompt is then fitted to the context window, same as the first review path.
+138: 
+139: ### 6. LLM call
+140: 
+141: If not a dry run and budget permits, the review prompt is sent to the review provider. The provider handles API communication (Anthropic Messages API, OpenAI Chat Completions, OpenRouter, or Claude CLI).
+142: 
+143: If the response is truncated (hit max output tokens), a warning is logged. The pipeline attempts to salvage complete findings from the truncated JSON by scanning backward for valid objects.
+144: 
+145: ### 7. Process findings
+146: 
+147: `processFindings()` parses and validates the LLM's output:
+148: 
+149: 1. **Parse JSON**: Extracts the findings array from the ```json fence. Falls back to bracket-matching if embedded code blocks break the regex.
+150: 2. **File validation**: Drops findings referencing files not in the PR.
+151: 3. **Line validation**: Drops findings whose line number is more than 20 lines from any changed line in the PR diff. This catches hallucinated line numbers and scope creep.
+152: 4. **Actionable filter**: Removes findings where `actionable: false`.
+153: 5. **Status tagging**: Tags all findings as `"new"` if this is an incremental review.
+154: 
+155: ### 8. Publish results
+156: 
+157: **GitHub PR** (`--post`): Every cycle emits exactly one top-level CodeCanary review, decided by an edit-vs-post rule. `FetchLatestCodecanaryReview` reads the commit SHA from the most recent CodeCanary review's hidden marker:
+158: 
+159: - **Same SHA** (reply-only run, or a duplicate `synchronize` webhook on the same HEAD): the existing body is updated in place with `UpdateReviewBody`. Only the status block between the `<!-- codecanary:status -->` markers is swapped — inline comments and prior findings text are untouched.
+160: - **Different or no SHA** (new commits, or first review on the PR): a fresh review is posted. The body variant depends on the cycle outcome — findings review, all-clear, activity summary (no new findings but cycle activity to surface), or clean review. All variants carry the same status block and baseline SHA marker. Older CodeCanary reviews are minimized (collapsed) before posting.
+161: 
+162: The status block lists non-zero counts for: new findings, resolved by code, file removed, dismissed by author, acknowledged by author, rebutted by author, still unresolved. The block renders nothing when all counts are zero, so clean reviews remain copy-exact.
+163: 
+164: Per-thread ack replies for dismissed/acknowledged/rebutted resolutions are posted earlier in the pipeline (`HandleResolutions`). Dedup is reason-agnostic: if the thread already carries *any* `<!-- codecanary:ack:... -->` marker, no further ack reply is posted. Reasons can shift across triage runs (LLM non-determinism), and all three convey the same outcome ("keeping open"), so one ack per thread is enough. Reply-only runs skip `SaveState` so the empty findings slice doesn't overwrite persisted state.
+165: 
+166: `codecanary findings` applies the same marker to filter deferrals out of its default output: threads with any `codecanary:ack:*` reply are treated as handled and omitted alongside GitHub-resolved threads. Pass `--include-resolved` to see them. This keeps the codecanary-fix skill from re-prompting on findings the operator already deferred.
+167: 
+168: After the review is posted (or updated in place), `GithubPlatform.Publish` also POSTs a `CodeCanary / review` commit status on the reviewed SHA via `PostReviewCommitStatus`. State is `success` when `NewFindings + StillOpen == 0` (everything is either new-and-green, fixed by code, or explicitly handled by the author), and `failure` otherwise. Description is the unresolved count or "all findings resolved" / "no findings". Teams that add `CodeCanary / review` as a required status check in branch protection get auto-gating: merges are blocked until a review run posts a green status on HEAD. Status posting failures are logged as warnings and do not abort Publish — the review itself has already landed. The local `codecanary signoff` command posts a status under the same context, so a team can rely on a single required check that either the bot (pr-loop) or a local reviewer (local-loop) satisfies.
+169: 
+170: **Local**: Prints the formatted result to stdout. Format depends on context: terminal (colored, human-readable), markdown, or JSON.
+171: 
+172: ### 9. Save state
+173: 
+174: **GitHub PR** (`--post`): No-op. State is stored in the review threads themselves (the embedded JSON marker contains the SHA and findings).
+175: 
+176: **Local**: Writes `~/.codecanary/repos/<owner>/<repo>/state/<branch>.json` with the current HEAD SHA, branch name, and combined findings (still-open + new). If a legacy `~/.codecanary/state/<branch>.json` exists from a pre-migration run, it is removed after the new file lands. This enables incremental reviews on the next run.
+177: 
+178: ### 10. Report usage
+179: 
+180: **GitHub PR** (`--post`): Writes token counts and cost to `GITHUB_ENV` for downstream workflow steps.
+181: 
+182: **Local**: Prints a usage summary table to stderr (model, tokens, cost, duration) if running in a terminal.
+183: 
+184: ### 11. Telemetry
+185: 
+186: If telemetry is enabled (opt-in), fires an anonymous event with aggregate stats: provider, platform, finding counts by severity, token counts, cost, and duration. No code content is sent.
+187: 
+188: ## Key Design Decisions
+189: 
+190: **Single pipeline, two platforms.** `Run()` never branches on "am I on GitHub?" The `ReviewPlatform` interface absorbs all environment differences. Adding a new platform (e.g. GitLab) means implementing the interface, not forking the pipeline.
+191: 
+192: **Two diffs for triage.** The incremental diff (changes since last review) decides whether to skip evaluation. The full PR diff (all changes) provides context for evaluation. This prevents the "triage horizon" bug where fixes committed before the triage baseline become invisible.
+193: 
+194: **Two-level triage evaluation.** Same-file evaluations (`TriageCodeChanged`) start with a file-scoped diff (level 1) to reduce noise — the full PR diff can drown out the relevant fix with changes from unrelated files. If level 1 finds no fix, a widened-scope fallback (level 2) sends the full PR diff to catch cross-file fixes. Cross-file evaluations (`TriageCrossFileChange`) go straight to the full diff. The file snippet (current code state) is presented first in all evaluation prompts, so the LLM checks whether the issue still exists before analyzing the diff.
+195: 
+196: **Per-thread evaluation.** Each unresolved thread gets its own LLM call with tailored context, rather than one bulk prompt. This allows fine-grained classification, parallel execution, and per-thread budget control.
+197: 
+198: **Anti-ping-pong.** The incremental prompt includes recently resolved findings so the LLM doesn't re-raise similar issues. Non-code resolutions (dismissed, acknowledged, rebutted) keep threads open for re-triage on future pushes, but post ack replies to avoid duplicate acknowledgments.
+199: 
+200: **Context window fitting.** After building the prompt, the pipeline estimates token count and progressively trims file contents (largest first) then diff to fit the model's context window. This prevents API failures on large PRs.
+201: 
+202: **Finding validation.** All findings are validated against the PR diff regardless of what diff the LLM prompt contained. Line proximity checks (within 20 lines of a changed line) catch hallucinated line numbers and prevent scope creep from rebase noise.
+203: 
+204: ## The codecanary-fix loop
+205: 
+206: The `codecanary-fix` Claude skill wraps the review pipeline in a confirm-and-apply loop. The skill calls `codecanary mode --output json` once at startup; the CLI returns one of three modes based on whether an open PR exists for the current branch and whether a CodeCanary workflow file is detected under `.github/workflows/`:
+207: 
+208: | Mode | PR | Workflow | Findings source | Cycle finalization |
+209: |---|---|---|---|---|
+210: | `pr-loop` | yes | yes | `codecanary findings --watch` (bot posts on push) | commit + push; bot re-runs |
+211: | `local-loop-git` | yes | no | `codecanary review` (local engine) | commit on PR branch, **no push**; operator is asked at session end whether to push accumulated commits |
+212: | `local-loop-nogit` | no | — | `codecanary review` (local engine) | no commits, no pushes; fixes applied in place |
+213: 
+214: Workflow detection is a textual scan for a non-commented `uses: alansikora/codecanary...` step in any workflow file on the current branch. All three modes share the same triage UX (Markdown table, `AskUserQuestion` confirmation). The bot's ack layer (`<!-- codecanary:ack:* -->` markers) handles deferral persistence in `pr-loop`; local modes use an in-memory `DEFERRED_FIX_REFS` set in the skill so operator-skipped findings don't re-surface within a session. `pr-loop` failures (GHA broken, `conclusion: failure`) never silently fall back to a local mode — the operator is asked to investigate.
+````
+
+### `internal/review/github.go`
+```
+1: package review
+2: 
+3: import (
+4: 	"bytes"
+5: 	"encoding/json"
+6: 	"fmt"
+7: 	"os"
+8: 	"os/exec"
+9: 	"path/filepath"
+10: 	"regexp"
+11: 	"strconv"
+12: 	"strings"
+13: 
+14: 	"github.com/bmatcuk/doublestar/v4"
+15: )
+16: 
+17: // runGH runs a gh command and returns stdout; on failure, the returned error
+18: // includes gh's stderr so upstream API messages surface in logs instead of just
+19: // "exit status 1".
+20: func runGH(label string, args ...string) ([]byte, error) {
+21: 	cmd := exec.Command("gh", args...)
+22: 	var stderr bytes.Buffer
+23: 	cmd.Stderr = &stderr
+24: 	out, err := cmd.Output()
+25: 	if err != nil {
+26: 		msg := strings.TrimSpace(stderr.String())
+27: 		if msg == "" {
+28: 			return nil, fmt.Errorf("%s: %w", label, err)
+29: 		}
+30: 		return nil, fmt.Errorf("%s: %s: %w", label, msg, err)
+31: 	}
+32: 	return out, nil
+33: }
+34: 
+35: // parseRepoSlug splits a "owner/name" repository slug into its two parts.
+36: func parseRepoSlug(repo string) (owner, name string, err error) {
+37: 	parts := strings.SplitN(repo, "/", 2)
+38: 	if len(parts) != 2 {
+39: 		return "", "", fmt.Errorf("invalid repo format %q, expected owner/name", repo)
+40: 	}
+41: 	return parts[0], parts[1], nil
+42: }
+43: 
+44: // MaxFindingProximity is the maximum number of lines a finding may be from the
+45: // nearest changed line in the PR diff. Findings beyond this distance are dropped
+46: // (runner.go) or demoted from inline to body (PostReview). This enforces review
+47: // scope — keeping findings anchored to the PR's actual changes — and catches
+48: // hallucinated line numbers. A single constant ensures both checks stay in sync.
+49: const MaxFindingProximity = 20
+50: 
+51: // HTML comment markers for embedding and detecting review data.
+52: // Dual prefixes support both current (codecanary) and legacy (clanopy) markers.
+53: var reviewMarkerPrefixes = []string{"<!-- codecanary:review ", "<!-- clanopy:review "}
+54: 
+55: const (
+56: 	reviewMarkerSuffix = " -->"
+57: 	findingMarkerPrefix = "<!-- codecanary:finding "
+58: 	ackMarkerPrefix     = "<!-- codecanary:ack:"
+59: 	legacyAckPrefix     = "<!-- clanopy:ack:"
+60: )
+61: 
+62: // PRData holds PR metadata and diff.
+63: type PRData struct {
+64: 	Number       int
+65: 	Title        string
+66: 	Body         string
+67: 	Author       string
+68: 	BaseBranch   string
+69: 	HeadBranch   string
+70: 	Diff         string
+71: 	FullDiff     string            // unfiltered diff for finding validation (set by prepareReview)
+72: 	Files        []string
+73: 	FileContents map[string]string // path -> full file content
+74: }
+75: 
+76: // ValidationDiff returns the unfiltered diff for finding validation. When
+77: // files were skipped during prepareReview, FullDiff holds the original diff
+78: // while Diff is filtered for the LLM prompt.
+79: func (pr *PRData) ValidationDiff() string {
+80: 	if pr.FullDiff != "" {
+81: 		return pr.FullDiff
+82: 	}
+83: 	return pr.Diff
+84: }
+85: 
+86: // ghPRView is the JSON shape returned by gh pr view.
+87: type ghPRView struct {
+88: 	Title       string `json:"title"`
+89: 	Body        string `json:"body"`
+90: 	Author      struct {
+91: 		Login string `json:"login"`
+92: 	} `json:"author"`
+93: 	BaseRefName string `json:"baseRefName"`
+94: 	HeadRefName string `json:"headRefName"`
+95: 	Files       []struct {
+96: 		Path string `json:"path"`
+97: 	} `json:"files"`
+98: }
+99: 
+100: // FetchPR gets PR metadata and diff using the gh CLI.
+101: func FetchPR(repo string, number int) (*PRData, error) {
+102: 	numStr := fmt.Sprintf("%d", number)
+103: 
+104: 	// Fetch PR metadata as JSON.
+105: 	viewOut, err := runGH("gh pr view", "pr", "view", numStr,
+106: 		"--repo", repo,
+107: 		"--json", "title,body,author,baseRefName,headRefName,files",
+108: 	)
+109: 	if err != nil {
+110: 		return nil, err
+111: 	}
+112: 
+113: 	var view ghPRView
+114: 	if err := json.Unmarshal(viewOut, &view); err != nil {
+115: 		return nil, fmt.Errorf("parsing gh pr view output: %w", err)
+116: 	}
+117: 
+118: 	// Fetch the diff. This hits GitHub's pull request diff API
+119: 	// (GET /repos/{owner}/{repo}/pulls/{n} with Accept: application/vnd.github.v3.diff).
+120: 	diffOut, err := runGH("gh pr diff", "pr", "diff", numStr, "--repo", repo)
+121: 	if err != nil {
+122: 		return nil, fmt.Errorf("%w (GitHub pull request diff API; if this looks like a transient 5xx/timeout, retrying the job may help)", err)
+123: 	}
+124: 
+125: 	files := make([]string, len(view.Files))
+126: 	for i, f := range view.Files {
+127: 		files[i] = f.Path
+128: 	}
+129: 
+130: 	return &PRData{
+131: 		Number:     number,
+132: 		Title:      view.Title,
+133: 		Body:       view.Body,
+134: 		Author:     view.Author.Login,
+135: 		BaseBranch: view.BaseRefName,
+136: 		HeadBranch: view.HeadRefName,
+137: 		Diff:       string(diffOut),
+138: 		Files:      files,
+139: 	}, nil
+140: }
+141: 
+142: // PostComment posts a review comment on a PR.
+143: func PostComment(repo string, number int, body string) error {
+144: 	numStr := fmt.Sprintf("%d", number)
+145: 	cmd := exec.Command("gh", "pr", "comment", numStr,
+146: 		"--repo", repo,
+147: 		"--body", body,
+148: 	)
+149: 	if out, err := cmd.CombinedOutput(); err != nil {
+150: 		return fmt.Errorf("gh pr comment: %w\n%s", err, string(out))
+151: 	}
+152: 	return nil
+153: }
+154: 
+155: // reviewPayload is the JSON structure for the GitHub PR review API.
+156: type reviewPayload struct {
+157: 	Event    string          `json:"event"`
+158: 	Body     string          `json:"body"`
+159: 	Comments []reviewComment `json:"comments"`
+160: 	CommitID string          `json:"commit_id,omitempty"`
+161: }
+162: 
+163: // reviewComment is a single inline comment in a PR review.
+164: type reviewComment struct {
+165: 	Path string `json:"path"`
+166: 	Line int    `json:"line"`
+167: 	Body string `json:"body"`
+168: }
+169: 
+170: // countDiffLines counts the number of added and removed lines in a unified diff.
+171: func countDiffLines(diff string) (added, removed int) {
+172: 	for _, line := range strings.Split(diff, "\n") {
+173: 		if strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---") {
+174: 			continue
+175: 		}
+176: 		if strings.HasPrefix(line, "+") {
+177: 			added++
+178: 		} else if strings.HasPrefix(line, "-") {
+179: 			removed++
+180: 		}
+181: 	}
+182: 	return
+183: }
+184: 
+185: // diffLineMap maps each file to its sorted list of valid line numbers from the diff.
+186: type diffLineMap map[string][]int
+187: 
+188: // parseDiffLines extracts valid line numbers per file from a unified diff.
+189: func parseDiffLines(diff string) diffLineMap {
+190: 	valid := make(diffLineMap)
+191: 	var currentFile string
+192: 	var lineNum int
+193: 
+194: 	for _, line := range strings.Split(diff, "\n") {
+195: 		if strings.HasPrefix(line, "+++ b/") {
+196: 			currentFile = line[6:]
+197: 			continue
+198: 		}
+199: 		if strings.HasPrefix(line, "@@ ") {
+200: 			// Parse hunk header: @@ -old,count +new,count @@
+201: 			if idx := strings.Index(line, "+"); idx >= 0 {
+202: 				rest := line[idx+1:]
+203: 				if comma := strings.IndexAny(rest, ", "); comma >= 0 {
+204: 					rest = rest[:comma]
+205: 				}
+206: 				_, _ = fmt.Sscanf(rest, "%d", &lineNum)
+207: 			}
+208: 			continue
+209: 		}
+210: 		if currentFile == "" || lineNum == 0 {
+211: 			continue
+212: 		}
+213: 		if strings.HasPrefix(line, "-") {
+214: 			continue
+215: 		}
+216: 		if strings.HasPrefix(line, "+") {
+217: 			valid[currentFile] = append(valid[currentFile], lineNum)
+218: 			lineNum++
+219: 			continue
+220: 		}
+221: 		if strings.HasPrefix(line, " ") {
+222: 			lineNum++
+223: 			continue
+224: 		}
+225: 	}
+226: 	return valid
+227: }
+228: 
+229: // nearestLine returns the closest valid diff line for a file:line pair.
+230: // Returns the line itself if valid, the nearest valid line in that file,
+231: // or 0 if the file is not in the diff at all.
+232: func (d diffLineMap) nearestLine(file string, line int) int {
+233: 	lines, ok := d[file]
+234: 	if !ok || len(lines) == 0 {
+235: 		return 0
+236: 	}
+237: 	best := lines[0]
+238: 	bestDist := abs(line - best)
+239: 	for _, l := range lines[1:] {
+240: 		dist := abs(line - l)
+241: 		if dist < bestDist {
+242: 			best = l
+243: 			bestDist = dist
+244: 		}
+245: 	}
+246: 	return best
+247: }
+248: 
+249: func abs(x int) int {
+250: 	if x < 0 {
+251: 		return -x
+252: 	}
+253: 	return x
+254: }
+255: 
+256: // PostReview posts a PR review with inline comments using the GitHub API.
+257: // Findings with file and line information become inline comments; others are
+258: // included in the review body. The summary block is appended to the body so
+259: // the status dashboard appears on every CodeCanary top-level review.
+260: func PostReview(repo string, prNumber int, result *ReviewResult, diff string, commitSHA string, summary ReviewSummary) error {
+261: 	// Sort findings by severity before formatting.
+262: 	sortFindings(result.Findings)
+263: 
+264: 	// Parse the diff to find valid line positions for inline comments.
+265: 	validLines := parseDiffLines(diff)
+266: 
+267: 	// A finding can be inlined if its file is in the diff and the nearest
+268: 	// valid line is within a reasonable distance. Without a bound, findings
+269: 	// about code far from the diff get silently snapped to unrelated lines.
+270: 	canInline := func(f Finding) bool {
+271: 		if f.File == "" || f.Line <= 0 {
+272: 			return false
+273: 		}
+274: 		nearest := validLines.nearestLine(f.File, f.Line)
+275: 		return nearest > 0 && abs(f.Line-nearest) <= MaxFindingProximity
+276: 	}
+277: 
+278: 	comments := make([]reviewComment, 0)
+279: 	for _, f := range result.Findings {
+280: 		if canInline(f) {
+281: 			comments = append(comments, reviewComment{
+282: 				Path: f.File,
+283: 				Line: validLines.nearestLine(f.File, f.Line),
+284: 				Body: FormatFindingComment(&f),
+285: 			})
+286: 		}
+287: 	}
+288: 
+289: 	body := withSummary(FormatReviewBody(result, canInline), summary)
+290: 
+291: 	payload := reviewPayload{
+292: 		Event:    "COMMENT",
+293: 		Body:     body,
+294: 		Comments: comments,
+295: 		CommitID: commitSHA,
+296: 	}
+297: 
+298: 	payloadJSON, err := json.Marshal(payload)
+299: 	if err != nil {
+300: 		return fmt.Errorf("marshaling review payload: %w", err)
+301: 	}
+302: 
+303: 	owner, name, err := parseRepoSlug(repo)
+304: 	if err != nil {
+305: 		return err
+306: 	}
+307: 
+308: 	// No fallback — if this fails, the apiError carries stderr and response
+309: 	// body so the caller surfaces full diagnostics for debugging.
+310: 	apiPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, name, prNumber)
+311: 	_, err = ghAPIPOST(apiPath, payloadJSON)
+312: 	return err
+313: }
+314: 
+315: // ReviewCommitStatusContext is the commit-status context the review bot
+316: // writes when a review run completes. Using a stable string lets teams
+317: // require it in branch protection — "CodeCanary / review must be green
+318: // before merge." Matches the context used by `codecanary signoff`, so
+319: // both the bot (on PRs with the workflow) and a local signoff can
+320: // satisfy the same required check.
+321: const ReviewCommitStatusContext = "CodeCanary / review"
+322: 
+323: // PostReviewCommitStatus POSTs a commit status on the given SHA summarising
+324: // the review outcome. state is "success" when all findings are resolved or
+325: // handled by the author, "failure" otherwise. Description is shown on the
+326: // PR checks list, so keep it short and human-readable. Errors are returned
+327: // so the caller can log them — a failed status post should not abort the
+328: // larger Publish flow, since the review itself has already been posted.
+329: func PostReviewCommitStatus(repo, sha, state, description string) error {
+330: 	if sha == "" {
+331: 		return fmt.Errorf("commit status requires a SHA")
+332: 	}
+333: 	owner, name, err := parseRepoSlug(repo)
+334: 	if err != nil {
+335: 		return err
+336: 	}
+337: 	payload := map[string]string{
+338: 		"state":       state,
+339: 		"context":     ReviewCommitStatusContext,
+340: 		"description": description,
+341: 	}
+342: 	payloadJSON, err := json.Marshal(payload)
+343: 	if err != nil {
+344: 		return fmt.Errorf("marshaling commit status payload: %w", err)
+345: 	}
+346: 	apiPath := fmt.Sprintf("repos/%s/%s/statuses/%s", owner, name, sha)
+347: 	_, err = ghAPIPOST(apiPath, payloadJSON)
+348: 	return err
+349: }
+350: 
+351: // FetchReviewFromPR extracts cached review data from a PR review's hidden HTML tag.
+352: func FetchReviewFromPR(repo string, prNumber int) (*ReviewResult, error) {
+353: 	owner, name, err := parseRepoSlug(repo)
+354: 	if err != nil {
+355: 		return nil, err
+356: 	}
+357: 
+358: 	apiPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, name, prNumber)
+359: 	out, err := exec.Command("gh", "api", apiPath).Output()
+360: 	if err != nil {
+361: 		return nil, fmt.Errorf("fetching PR reviews: %w", err)
+362: 	}
+363: 
+364: 	var reviews []ghReview
+365: 	if err := json.Unmarshal(out, &reviews); err != nil {
+366: 		return nil, fmt.Errorf("parsing PR reviews: %w", err)
+367: 	}
+368: 
+369: 	prefixes := reviewMarkerPrefixes
+370: 	const suffix = " -->"
+371: 
+372: 	// Search from most recent to oldest.
+373: 	for i := len(reviews) - 1; i >= 0; i-- {
+374: 		body := reviews[i].Body
+375: 		for _, prefix := range prefixes {
+376: 			idx := strings.Index(body, prefix)
+377: 			if idx < 0 {
+378: 				continue
+379: 			}
+380: 			start := idx + len(prefix)
+381: 			endIdx := strings.Index(body[start:], suffix)
+382: 			if endIdx < 0 {
+383: 				continue
+384: 			}
+385: 			jsonData := body[start : start+endIdx]
+386: 			var result ReviewResult
+387: 			if err := json.Unmarshal([]byte(jsonData), &result); err != nil {
+388: 				continue
+389: 			}
+390: 			return &result, nil
+391: 		}
+392: 	}
+393: 
+394: 	return nil, fmt.Errorf("no review data found in PR #%d reviews", prNumber)
+395: }
+396: 
+397: // FetchFindingFromPR searches all reviews on a PR for a specific fix_ref.
+398: // Unlike FetchReviewFromPR (which returns the latest review), this searches every
+399: // review so that fix_ref links from older review rounds still resolve correctly.
+400: func FetchFindingFromPR(repo string, prNumber int, fixRef string) (*Finding, error) {
+401: 	owner, name, err := parseRepoSlug(repo)
+402: 	if err != nil {
+403: 		return nil, err
+404: 	}
+405: 
+406: 	apiPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, name, prNumber)
+407: 	out, err := exec.Command("gh", "api", apiPath).Output()
+408: 	if err != nil {
+409: 		return nil, fmt.Errorf("fetching PR reviews: %w", err)
+410: 	}
+411: 
+412: 	var reviews []ghReview
+413: 	if err := json.Unmarshal(out, &reviews); err != nil {
+414: 		return nil, fmt.Errorf("parsing PR reviews: %w", err)
+415: 	}
+416: 
+417: 	prefixes := reviewMarkerPrefixes
+418: 	const suffix = " -->"
+419: 
+420: 	for _, rev := range reviews {
+421: 		for _, prefix := range prefixes {
+422: 			idx := strings.Index(rev.Body, prefix)
+423: 			if idx < 0 {
+424: 				continue
+425: 			}
+426: 			start := idx + len(prefix)
+427: 			endIdx := strings.Index(rev.Body[start:], suffix)
+428: 			if endIdx < 0 {
+429: 				continue
+430: 			}
+431: 			var result ReviewResult
+432: 			if err := json.Unmarshal([]byte(rev.Body[start:start+endIdx]), &result); err != nil {
+433: 				continue
+434: 			}
+435: 			for i := range result.Findings {
+436: 				if result.Findings[i].FixRef == fixRef {
+437: 					return &result.Findings[i], nil
+438: 				}
+439: 			}
+440: 		}
+441: 	}
+442: 
+443: 	return nil, fmt.Errorf("fix_ref %q not found in any review on PR #%d", fixRef, prNumber)
+444: }
+445: 
+446: // DetectRepo gets owner/name from the current git remote.
+447: func DetectRepo() (string, error) {
+448: 	out, err := exec.Command("gh", "repo", "view",
+449: 		"--json", "nameWithOwner",
+450: 		"--jq", ".nameWithOwner",
+451: 	).Output()
+452: 	if err != nil {
+453: 		return "", fmt.Errorf("gh repo view: %w", err)
+454: 	}
+455: 	return strings.TrimSpace(string(out)), nil
+456: }
+457: 
+458: // DetectPRNumber detects the PR number for the current branch using gh.
+459: // If repo is non-empty, it is passed as --repo to scope the lookup.
+460: func DetectPRNumber(repo string) (int, error) {
+461: 	args := []string{"pr", "view", "--json", "number", "--jq", ".number"}
+462: 	if repo != "" {
+463: 		args = append(args, "--repo", repo)
+464: 	}
+465: 	out, err := exec.Command("gh", args...).Output()
+466: 	if err != nil {
+467: 		return 0, fmt.Errorf("no open pull request found for the current branch")
+468: 	}
+469: 	num, err := strconv.Atoi(strings.TrimSpace(string(out)))
+470: 	if err != nil {
+471: 		return 0, fmt.Errorf("unexpected PR number from gh: %w", err)
+472: 	}
+473: 	return num, nil
+474: }
+475: 
+476: // ThreadReply represents a reply to a review thread (i.e. any comment after the first).
+477: type ThreadReply struct {
+478: 	Author string
+479: 	Body   string
+480: }
+481: 
+482: // ReviewThread represents a review thread from a PR.
+483: type ReviewThread struct {
+484: 	ID       string
+485: 	Path     string
+486: 	Line     int
+487: 	Body     string
+488: 	Author   string // login of the first comment author (the bot for review threads)
+489: 	Outdated bool   // true if GitHub marked the comment position as outdated (code changed)
+490: 	Resolved bool
+491: 	Replies  []ThreadReply
+492: }
+493: 
+494: // graphQLThreadsResponse is the JSON shape returned by the review threads query.
+495: type graphQLThreadsResponse struct {
+496: 	Data struct {
+497: 		Repository struct {
+498: 			PullRequest struct {
+499: 				ReviewThreads struct {
+500: 					Nodes []struct {
+501: 						ID         string `json:"id"`
+502: 						IsResolved bool   `json:"isResolved"`
+503: 						Comments struct {
+504: 							Nodes []struct {
+505: 								Body         string `json:"body"`
+506: 								Path         string `json:"path"`
+507: 								Line         int    `json:"line"`
+508: 								OriginalLine int    `json:"originalLine"`
+509: 								Outdated     bool   `json:"outdated"`
+510: 								Author       struct {
+511: 									Login string `json:"login"`
+512: 								} `json:"author"`
+513: 							} `json:"nodes"`
+514: 						} `json:"comments"`
+515: 					} `json:"nodes"`
+516: 				} `json:"reviewThreads"`
+517: 			} `json:"pullRequest"`
+518: 		} `json:"repository"`
+519: 	} `json:"data"`
+520: }
+521: 
+522: // FetchReviewThreads gets all review threads from a PR via GraphQL.
+523: func FetchReviewThreads(repo string, prNumber int) ([]ReviewThread, error) {
+524: 	owner, name, err := parseRepoSlug(repo)
+525: 	if err != nil {
+526: 		return nil, err
+527: 	}
+528: 
+529: 	query := `query($owner:String!,$name:String!,$pr:Int!){
+530:   repository(owner:$owner,name:$name){
+531:     pullRequest(number:$pr){
+532:       reviewThreads(first:100){
+533:         nodes{
+534:           id
+535:           isResolved
+536:           comments(first:100){
+537:             nodes{body path line originalLine outdated author{login}}
+538:           }
+539:         }
+540:       }
+541:     }
+542:   }
+543: }`
+544: 
+545: 	cmd := exec.Command("gh", "api", "graphql",
+546: 		"-f", "query="+query,
+547: 		"-f", fmt.Sprintf("owner=%s", owner),
+548: 		"-f", fmt.Sprintf("name=%s", name),
+549: 		"-F", fmt.Sprintf("pr=%d", prNumber),
+550: 	)
+551: 	out, err := cmd.Output()
+552: 	if err != nil {
+553: 		return nil, fmt.Errorf("gh api graphql: %w", err)
+554: 	}
+555: 
+556: 	var resp graphQLThreadsResponse
+557: 	if err := json.Unmarshal(out, &resp); err != nil {
+558: 		return nil, fmt.Errorf("parsing graphql response: %w", err)
+559: 	}
+560: 
+561: 	var threads []ReviewThread
+562: 	for _, node := range resp.Data.Repository.PullRequest.ReviewThreads.Nodes {
+563: 		if len(node.Comments.Nodes) == 0 {
+564: 			continue
+565: 		}
+566: 		comment := node.Comments.Nodes[0]
+567: 
+568: 		// Filter to review threads only (new marker + legacy markers for backward compat).
+569: 		if !strings.Contains(comment.Body, findingMarkerPrefix) &&
+570: 			!strings.Contains(comment.Body, "codecanary fix") &&
+571: 			!strings.Contains(comment.Body, "clanopy fix") {
+572: 			continue
+573: 		}
+574: 
+575: 		var replies []ThreadReply
+576: 		for _, c := range node.Comments.Nodes[1:] {
+577: 			replies = append(replies, ThreadReply{
+578: 				Author: c.Author.Login,
+579: 				Body:   c.Body,
+580: 			})
+581: 		}
+582: 
+583: 		line := comment.Line
+584: 		if comment.Outdated && line == 0 && comment.OriginalLine > 0 {
+585: 			line = comment.OriginalLine
+586: 		}
+587: 
+588: 		threads = append(threads, ReviewThread{
+589: 			ID:       node.ID,
+590: 			Path:     comment.Path,
+591: 			Line:     line,
+592: 			Body:     comment.Body,
+593: 			Author:   comment.Author.Login,
+594: 			Outdated: comment.Outdated,
+595: 			Resolved: node.IsResolved,
+596: 			Replies:  replies,
+597: 		})
+598: 	}
+599: 
+600: 	return threads, nil
+601: }
+602: 
+603: // ResolveThread resolves a review thread via GraphQL mutation.
+604: func ResolveThread(threadID string) error {
+605: 	cmd := exec.Command("gh", "api", "graphql",
+606: 		"-f", "query=mutation($threadId:ID!){resolveReviewThread(input:{threadId:$threadId}){thread{isResolved}}}",
+607: 		"-f", fmt.Sprintf("threadId=%s", threadID),
+608: 	)
+609: 	if out, err := cmd.CombinedOutput(); err != nil {
+610: 		return fmt.Errorf("gh api graphql resolve: %w\n%s", err, string(out))
+611: 	}
+612: 	return nil
+613: }
+614: 
+615: // ReplyToThread posts a reply on a review thread via GraphQL.
+616: func ReplyToThread(threadID, body string) error {
+617: 	cmd := exec.Command("gh", "api", "graphql",
+618: 		"-f", "query=mutation($threadId:ID!,$body:String!){addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$threadId,body:$body}){comment{id}}}",
+619: 		"-f", fmt.Sprintf("threadId=%s", threadID),
+620: 		"-f", fmt.Sprintf("body=%s", body),
+621: 	)
+622: 	if out, err := cmd.CombinedOutput(); err != nil {
+623: 		return fmt.Errorf("gh api graphql reply: %w\n%s", err, string(out))
+624: 	}
+625: 	return nil
+626: }
+627: 
+628: // ghReview is the JSON shape for a PR review from the REST API.
+629: type ghReview struct {
+630: 	ID     int64  `json:"id"`
+631: 	NodeID string `json:"node_id"`
+632: 	Body   string `json:"body"`
+633: }
+634: 
+635: // LatestCodecanaryReview captures the identity and body of the most recent
+636: // CodeCanary top-level review, together with the commit SHA embedded in its
+637: // hidden marker. Returned by FetchLatestCodecanaryReview for the
+638: // "edit if same SHA, otherwise post new" publish decision.
+639: type LatestCodecanaryReview struct {
+640: 	ID   int64
+641: 	SHA  string
+642: 	Body string
+643: }
+644: 
+645: // FetchLatestCodecanaryReview returns the most recent top-level review on
+646: // the PR that carries a CodeCanary marker, along with the commit SHA
+647: // embedded in that marker. Returns (nil, nil) when no matching review
+648: // exists. A non-nil error is returned only for transport/parsing failures.
+649: func FetchLatestCodecanaryReview(repo string, prNumber int) (*LatestCodecanaryReview, error) {
+650: 	owner, name, err := parseRepoSlug(repo)
+651: 	if err != nil {
+652: 		return nil, err
+653: 	}
+654: 
+655: 	apiPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, name, prNumber)
+656: 	out, err := exec.Command("gh", "api", apiPath).Output()
+657: 	if err != nil {
+658: 		return nil, fmt.Errorf("fetching PR reviews: %w", err)
+659: 	}
+660: 
+661: 	var reviews []ghReview
+662: 	if err := json.Unmarshal(out, &reviews); err != nil {
+663: 		return nil, fmt.Errorf("parsing PR reviews: %w", err)
+664: 	}
+665: 
+666: 	// Walk newest → oldest so we return the latest CodeCanary review.
+667: 	for i := len(reviews) - 1; i >= 0; i-- {
+668: 		rev := reviews[i]
+669: 		for _, prefix := range reviewMarkerPrefixes {
+670: 			idx := strings.Index(rev.Body, prefix)
+671: 			if idx < 0 {
+672: 				continue
+673: 			}
+674: 			start := idx + len(prefix)
+675: 			endIdx := strings.Index(rev.Body[start:], reviewMarkerSuffix)
+676: 			if endIdx < 0 {
+677: 				continue
+678: 			}
+679: 			jsonData := rev.Body[start : start+endIdx]
+680: 			var payload struct {
+681: 				SHA string `json:"sha"`
+682: 			}
+683: 			// Ignore unmarshal errors so old reviews that embed a richer
+684: 			// ReviewResult (also containing a "sha" field) still match.
+685: 			_ = json.Unmarshal([]byte(jsonData), &payload)
+686: 			return &LatestCodecanaryReview{
+687: 				ID:   rev.ID,
+688: 				SHA:  payload.SHA,
+689: 				Body: rev.Body,
+690: 			}, nil
+691: 		}
+692: 	}
+693: 
+694: 	return nil, nil
+695: }
+696: 
+697: // UpdateReviewBody replaces the body of an existing PR review via the
+698: // GitHub REST API. Used when a reply-only run (or a duplicate synchronize
+699: // webhook on the same HEAD) needs to refresh the latest CodeCanary review's
+700: // counts instead of posting a new top-level comment.
+701: func UpdateReviewBody(repo string, prNumber int, reviewID int64, body string) error {
+702: 	owner, name, err := parseRepoSlug(repo)
+703: 	if err != nil {
+704: 		return err
+705: 	}
+706: 
+707: 	payload, err := json.Marshal(struct {
+708: 		Body string `json:"body"`
+709: 	}{Body: body})
+710: 	if err != nil {
+711: 		return fmt.Errorf("marshaling update payload: %w", err)
+712: 	}
+713: 
+714: 	apiPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews/%d", owner, name, prNumber, reviewID)
+715: 	_, err = ghAPIRequest("PUT", apiPath, payload)
+716: 	return err
+717: }
+718: 
+719: // ghAPIRequest is a generic gh api wrapper that preserves the temp-file
+720: // pattern used by ghAPIPOST (avoids stdin pipe truncation on large bodies).
+721: func ghAPIRequest(method, apiPath string, payloadJSON []byte) ([]byte, error) {
+722: 	dir, err := os.MkdirTemp("", "codecanary-*")
+723: 	if err != nil {
+724: 		return nil, fmt.Errorf("creating temp dir: %w", err)
+725: 	}
+726: 	defer func() { _ = os.RemoveAll(dir) }()
+727: 
+728: 	tmpFile, err := os.CreateTemp(dir, "payload.json")
+729: 	if err != nil {
+730: 		return nil, fmt.Errorf("creating temp file: %w", err)
+731: 	}
+732: 	if _, err := tmpFile.Write(payloadJSON); err != nil {
+733: 		_ = tmpFile.Close()
+734: 		return nil, fmt.Errorf("writing payload to temp file: %w", err)
+735: 	}
+736: 	_ = tmpFile.Close()
+737: 
+738: 	cmd := exec.Command("gh", "api", apiPath, "--method", method, "--input", tmpFile.Name())
+739: 	var stdout, stderr bytes.Buffer
+740: 	cmd.Stdout = &stdout
+741: 	cmd.Stderr = &stderr
+742: 	if err := cmd.Run(); err != nil {
+743: 		return stdout.Bytes(), &apiError{Err: err, Stderr: stderr.String(), Response: stdout.String()}
+744: 	}
+745: 	return stdout.Bytes(), nil
+746: }
+747: 
+748: // FetchPreviousReviewSHA gets the SHA from the last review's hidden data.
+749: func FetchPreviousReviewSHA(repo string, prNumber int) string {
+750: 	owner, name, err := parseRepoSlug(repo)
+751: 	if err != nil {
+752: 		return ""
+753: 	}
+754: 
+755: 	apiPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, name, prNumber)
+756: 	out, err := exec.Command("gh", "api", apiPath).Output()
+757: 	if err != nil {
+758: 		return ""
+759: 	}
+760: 
+761: 	var reviews []ghReview
+762: 	if err := json.Unmarshal(out, &reviews); err != nil {
+763: 		return ""
+764: 	}
+765: 
+766: 	prefixes := reviewMarkerPrefixes
+767: 	const suffix = " -->"
+768: 
+769: 	// Search from most recent to oldest.
+770: 	for i := len(reviews) - 1; i >= 0; i-- {
+771: 		body := reviews[i].Body
+772: 		for _, prefix := range prefixes {
+773: 			idx := strings.Index(body, prefix)
+774: 			if idx < 0 {
+775: 				continue
+776: 			}
+777: 			start := idx + len(prefix)
+778: 			endIdx := strings.Index(body[start:], suffix)
+779: 			if endIdx < 0 {
+780: 				continue
+781: 			}
+782: 			jsonData := body[start : start+endIdx]
+783: 			var result ReviewResult
+784: 			if err := json.Unmarshal([]byte(jsonData), &result); err != nil {
+785: 				continue
+786: 			}
+787: 			if result.SHA != "" {
+788: 				return result.SHA
+789: 			}
+790: 		}
+791: 	}
+792: 
+793: 	return ""
+794: }
+795: 
+796: // FilesFromDiff extracts the list of file paths touched in a unified diff.
+797: func FilesFromDiff(diff string) []string {
+798: 	var files []string
+799: 	seen := make(map[string]bool)
+800: 	for _, line := range strings.Split(diff, "\n") {
+801: 		if strings.HasPrefix(line, "+++ b/") {
+802: 			path := strings.TrimRight(line[6:], "\r")
+803: 			if !seen[path] {
+804: 				seen[path] = true
+805: 				files = append(files, path)
+806: 			}
+807: 		}
+808: 	}
+809: 	return files
+810: }
+811: 
+812: // ScopeDiffToFiles filters a unified diff to only include hunks for files in
+813: // the allowed set. This prevents rebase noise (main-branch changes) from
+814: // leaking into incremental reviews.
+815: func ScopeDiffToFiles(diff string, allowedFiles map[string]bool) string {
+816: 	if len(allowedFiles) == 0 {
+817: 		return diff
+818: 	}
+819: 
+820: 	lines := strings.Split(diff, "\n")
+821: 	var result []string
+822: 	blockStart := -1
+823: 	blockAllowed := false
+824: 
+825: 	for i := 0; i < len(lines); i++ {
+826: 		if strings.HasPrefix(lines[i], "diff --git") {
+827: 			// Flush previous block if allowed.
+828: 			if blockStart >= 0 && blockAllowed {
+829: 				result = append(result, lines[blockStart:i]...)
+830: 			}
+831: 			blockStart = i
+832: 			blockAllowed = false
+833: 
+834: 			// Look ahead for +++ b/<path> to determine if this block is allowed.
+835: 			for j := i + 1; j < len(lines) && !strings.HasPrefix(lines[j], "diff --git"); j++ {
+836: 				if strings.HasPrefix(lines[j], "+++ b/") {
+837: 					path := strings.TrimRight(lines[j][6:], "\r")
+838: 					if allowedFiles[path] {
+839: 						blockAllowed = true
+840: 					}
+841: 					break
+842: 				}
+843: 			}
+844: 			continue
+845: 		}
+846: 	}
+847: 
+848: 	// Flush last block.
+849: 	if blockStart >= 0 && blockAllowed {
+850: 		result = append(result, lines[blockStart:]...)
+851: 	}
+852: 
+853: 	if len(result) == 0 {
+854: 		return ""
+855: 	}
+856: 	return strings.Join(result, "\n")
+857: }
+858: 
+859: // validSHA matches a full-length lowercase hex Git SHA.
+860: var validSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
+861: 
+862: // GetIncrementalDiff gets the diff since a given SHA.
+863: func GetIncrementalDiff(baseSHA string) (string, error) {
+864: 	if !validSHA.MatchString(baseSHA) {
+865: 		return "", fmt.Errorf("invalid SHA format: %q", baseSHA)
+866: 	}
+867: 	out, err := exec.Command("git", "diff", baseSHA+"..HEAD").Output()
+868: 	if err != nil {
+869: 		return "", fmt.Errorf("git diff: %w", err)
+870: 	}
+871: 	return string(out), nil
+872: }
+873: 
+874: // PostCleanReview posts a review when the first review finds no issues. The
+875: // commitSHA is embedded in a hidden marker so future runs treat it as the
+876: // baseline for incremental reviews, avoiding a redundant full re-review on the
+877: // next push.
+878: func PostCleanReview(repo string, prNumber int, commitSHA string, summary ReviewSummary) error {
+879: 	return postSimpleReview(repo, prNumber, buildCleanReviewBody(commitSHA, summary))
+880: }
+881: 
+882: // PostAllClearReview posts a review when all previous findings have been
+883: // resolved. If minimizeFailed is true, a note is appended warning about
+884: // visible old reviews. The commitSHA is embedded in a hidden marker so future
+885: // runs treat it as the baseline for incremental reviews; without it, the next
+886: // push would fall back to reviewing the entire PR again.
+887: func PostAllClearReview(repo string, prNumber int, commitSHA string, minimizeFailed bool, summary ReviewSummary) error {
+888: 	return postSimpleReview(repo, prNumber, buildAllClearReviewBody(commitSHA, minimizeFailed, summary))
+889: }
+890: 
+891: // PostActivityReview posts a review when no new findings were raised but
+892: // there is cycle activity worth surfacing (dismissals, acknowledgments,
+893: // rebuttals, still-open threads). This keeps every commit push producing a
+894: // visible top-level status comment instead of silently logging.
+895: func PostActivityReview(repo string, prNumber int, commitSHA string, summary ReviewSummary) error {
+896: 	return postSimpleReview(repo, prNumber, buildActivityReviewBody(commitSHA, summary))
+897: }
+898: 
+899: // buildCleanReviewBody renders the full Markdown body posted by
+900: // PostCleanReview. Split out from the poster so tests can assert the exact
+901: // string that lands on GitHub without having to mock gh.
+902: func buildCleanReviewBody(commitSHA string, summary ReviewSummary) string {
+903: 	return withSummary("CodeCanary reviewed this PR \u2014 no issues found.", summary) + embedBaselineMarker(commitSHA)
+904: }
+905: 
+906: // buildAllClearReviewBody renders the full Markdown body posted by
+907: // PostAllClearReview. Split out for the same reason as buildCleanReviewBody.
+908: func buildAllClearReviewBody(commitSHA string, minimizeFailed bool, summary ReviewSummary) string {
+909: 	body := "## \U0001F425 CodeCanary\n\n\u2705 All previous findings have been addressed. No new issues found. \u2728"
+910: 	if minimizeFailed {
+911: 		body += "\n\n> \u26A0\uFE0F Some previous review comments could not be minimized and may still be visible."
+912: 	}
+913: 	return withSummary(body, summary) + embedBaselineMarker(commitSHA)
+914: }
+915: 
+916: // buildActivityReviewBody renders the body for a commit push that raised no
+917: // new findings but has cycle activity (dismissals/acknowledgments/rebuttals
+918: // or still-open threads carried forward).
+919: func buildActivityReviewBody(commitSHA string, summary ReviewSummary) string {
+920: 	body := "## \U0001F425 CodeCanary\n\nReviewed this push \u2014 no new issues found."
+921: 	return withSummary(body, summary) + embedBaselineMarker(commitSHA)
+922: }
+923: 
+924: // withSummary appends the status summary block to a review body. The block
+925: // is skipped when the summary has no non-zero counts, so existing clean/
+926: // all-clear bodies render identically when nothing happened.
+927: func withSummary(body string, summary ReviewSummary) string {
+928: 	block := renderSummaryBlock(summary)
+929: 	if block == "" {
+930: 		return body
+931: 	}
+932: 	return body + block
+933: }
+934: 
+935: // embedBaselineMarker returns a hidden HTML comment containing the commitSHA
+936: // so FetchPreviousReviewSHA can use this review as the incremental baseline.
+937: // Returns an empty string if commitSHA is empty (local mode, dry run). The
+938: // marker carries only the SHA — FetchPreviousReviewSHA is the sole reader and
+939: // it only needs that field.
+940: func embedBaselineMarker(commitSHA string) string {
+941: 	if commitSHA == "" {
+942: 		return ""
+943: 	}
+944: 	data, err := json.Marshal(struct {
+945: 		SHA string `json:"sha"`
+946: 	}{SHA: commitSHA})
+947: 	if err != nil {
+948: 		return ""
+949: 	}
+950: 	return fmt.Sprintf("\n%s%s%s\n", reviewMarkerPrefixes[0], string(data), reviewMarkerSuffix)
+951: }
+952: 
+953: func postSimpleReview(repo string, prNumber int, body string) error {
+954: 	owner, repoName, err := parseRepoSlug(repo)
+955: 	if err != nil {
+956: 		return err
+957: 	}
+958: 
+959: 	payload := reviewPayload{
+960: 		Event:    "COMMENT",
+961: 		Body:     body,
+962: 		Comments: make([]reviewComment, 0),
+963: 	}
+964: 
+965: 	payloadJSON, err := json.Marshal(payload)
+966: 	if err != nil {
+967: 		return fmt.Errorf("marshaling payload: %w", err)
+968: 	}
+969: 
+970: 	_, err = ghAPIPOST(fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, repoName, prNumber), payloadJSON)
+971: 	return err
+972: }
+973: 
+974: // apiError is returned by ghAPIPOST so callers can inspect the stderr output
+975: // from gh (which contains the HTTP status line) separately from the response body.
+976: type apiError struct {
+977: 	Err      error
+978: 	Stderr   string
+979: 	Response string
+980: }
+981: 
+982: func (e *apiError) Error() string {
+983: 	return fmt.Sprintf("gh api: %v\nstderr: %s\nresponse: %s", e.Err, e.Stderr, e.Response)
+984: }
+985: 
+986: func (e *apiError) Unwrap() error { return e.Err }
+987: 
+988: // ghAPIPOST sends a JSON payload to the GitHub API via gh, using a temp file
+989: // to avoid stdin pipe issues that can cause "unexpected end of JSON input"
+990: // errors on large payloads.
+991: func ghAPIPOST(apiPath string, payloadJSON []byte) ([]byte, error) {
+992: 	dir, err := os.MkdirTemp("", "codecanary-*")
+993: 	if err != nil {
+994: 		return nil, fmt.Errorf("creating temp dir: %w", err)
+995: 	}
+996: 	defer func() { _ = os.RemoveAll(dir) }()
+997: 
+998: 	tmpFile, err := os.CreateTemp(dir, "payload.json")
+999: 	if err != nil {
+1000: 		return nil, fmt.Errorf("creating temp file: %w", err)
+1001: 	}
+1002: 
+1003: 	if _, err := tmpFile.Write(payloadJSON); err != nil {
+1004: 		_ = tmpFile.Close()
+1005: 		return nil, fmt.Errorf("writing payload to temp file: %w", err)
+1006: 	}
+1007: 	_ = tmpFile.Close()
+1008: 
+1009: 	cmd := exec.Command("gh", "api", apiPath, "--method", "POST", "--input", tmpFile.Name())
+1010: 	var stdout, stderr bytes.Buffer
+1011: 	cmd.Stdout = &stdout
+1012: 	cmd.Stderr = &stderr
+1013: 	if err := cmd.Run(); err != nil {
+1014: 		return stdout.Bytes(), &apiError{Err: err, Stderr: stderr.String(), Response: stdout.String()}
+1015: 	}
+1016: 	return stdout.Bytes(), nil
+1017: }
+1018: 
+1019: // FindReviewNodeIDs returns the node_ids of all reviews on a PR.
+1020: func FindReviewNodeIDs(repo string, prNumber int) ([]string, error) {
+1021: 	owner, name, err := parseRepoSlug(repo)
+1022: 	if err != nil {
+1023: 		return nil, err
+1024: 	}
+1025: 
+1026: 	apiPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, name, prNumber)
+1027: 	out, err := exec.Command("gh", "api", apiPath).Output()
+1028: 	if err != nil {
+1029: 		return nil, fmt.Errorf("fetching PR reviews: %w", err)
+1030: 	}
+1031: 
+1032: 	var reviews []ghReview
+1033: 	if err := json.Unmarshal(out, &reviews); err != nil {
+1034: 		return nil, fmt.Errorf("parsing PR reviews: %w", err)
+1035: 	}
+1036: 
+1037: 	prefixes := reviewMarkerPrefixes
+1038: 
+1039: 	var nodeIDs []string
+1040: 	for _, rev := range reviews {
+1041: 		for _, prefix := range prefixes {
+1042: 			if strings.Contains(rev.Body, prefix) {
+1043: 				nodeIDs = append(nodeIDs, rev.NodeID)
+1044: 				break
+1045: 			}
+1046: 		}
+1047: 	}
+1048: 
+1049: 	return nodeIDs, nil
+1050: }
+1051: 
+1052: // threadHeaderLine returns the first non-empty, non-HTML-comment line from
+1053: // a thread body. This is the header line containing severity and finding ID.
+1054: func threadHeaderLine(body string) string {
+1055: 	for _, line := range strings.SplitN(body, "\n", 5) {
+1056: 		line = strings.TrimSpace(line)
+1057: 		if line == "" || strings.HasPrefix(line, "<!--") {
+1058: 			continue
+1059: 		}
+1060: 		return line
+1061: 	}
+1062: 	return ""
+1063: }
+1064: 
+1065: // FindingIDFromThread extracts the finding ID from a thread body.
+1066: // Thread bodies follow the format: 🟠 **bug** — `finding-id`
+1067: func FindingIDFromThread(body string) string {
+1068: 	firstLine := threadHeaderLine(body)
+1069: 	// The separator is " — `" (space, em-dash U+2014, space, backtick).
+1070: 	marker := " \u2014 `"
+1071: 	start := strings.Index(firstLine, marker)
+1072: 	if start < 0 {
+1073: 		return ""
+1074: 	}
+1075: 	start += len(marker)
+1076: 	end := strings.Index(firstLine[start:], "`")
+1077: 	if end < 0 {
+1078: 		return ""
+1079: 	}
+1080: 	return firstLine[start : start+end]
+1081: }
+1082: 
+1083: // severityFromThreadBody extracts the severity string from a thread body.
+1084: // Thread bodies follow the format: {icon} **severity** — `id`
+1085: var threadSeverityRe = regexp.MustCompile(`\*\*(\w+)\*\*`)
+1086: 
+1087: func severityFromThreadBody(body string) string {
+1088: 	firstLine := threadHeaderLine(body)
+1089: 	if m := threadSeverityRe.FindStringSubmatch(firstLine); len(m) > 1 {
+1090: 		return strings.ToLower(m[1])
+1091: 	}
+1092: 	return "warning"
+1093: }
+1094: 
+1095: // findingFromEmbeddedJSON tries to parse a Finding from the JSON embedded in the
+1096: // codecanary:finding HTML comment marker. Returns the finding and true if successful.
+1097: func findingFromEmbeddedJSON(body string) (Finding, bool) {
+1098: 	prefix := findingMarkerPrefix
+1099: 	suffix := reviewMarkerSuffix
+1100: 	start := strings.Index(body, prefix)
+1101: 	if start < 0 {
+1102: 		return Finding{}, false
+1103: 	}
+1104: 	start += len(prefix)
+1105: 	end := strings.Index(body[start:], suffix)
+1106: 	if end < 0 {
+1107: 		return Finding{}, false
+1108: 	}
+1109: 	raw := body[start : start+end]
+1110: 	if len(raw) == 0 || raw[0] != '{' {
+1111: 		return Finding{}, false
+1112: 	}
+1113: 	var f Finding
+1114: 	if err := json.Unmarshal([]byte(raw), &f); err != nil {
+1115: 		return Finding{}, false
+1116: 	}
+1117: 	return f, true
+1118: }
+1119: 
+1120: // parseThreadBody extracts the description and suggestion from a thread comment
+1121: // body. This is the fallback parser for older comments that don't embed JSON.
+1122: func parseThreadBody(body string) (description, suggestion string) {
+1123: 	lines := strings.Split(body, "\n")
+1124: 
+1125: 	// Skip leading HTML markers and the header line (icon **sev** — `id`).
+1126: 	contentStart := 0
+1127: 	pastHeader := false
+1128: 	for i, line := range lines {
+1129: 		trimmed := strings.TrimSpace(line)
+1130: 		if trimmed == "" {
+1131: 			continue
+1132: 		}
+1133: 		if strings.HasPrefix(trimmed, "<!--") {
+1134: 			continue
+1135: 		}
+1136: 		if !pastHeader {
+1137: 			// First non-empty non-marker line is the header — skip it.
+1138: 			pastHeader = true
+1139: 			contentStart = i + 1
+1140: 			continue
+1141: 		}
+1142: 		contentStart = i
+1143: 		break
+1144: 	}
+1145: 
+1146: 	if contentStart >= len(lines) {
+1147: 		return "", ""
+1148: 	}
+1149: 
+1150: 	// Split content into description and suggestion.
+1151: 	var descLines []string
+1152: 	var suggLines []string
+1153: 	inSuggestion := false
+1154: 	suggestionPrefix := "> **Suggestion**: "
+1155: 
+1156: 	for _, line := range lines[contentStart:] {
+1157: 		trimmed := strings.TrimSpace(line)
+1158: 		if strings.HasPrefix(trimmed, suggestionPrefix) {
+1159: 			inSuggestion = true
+1160: 			suggLines = append(suggLines, strings.TrimPrefix(trimmed, suggestionPrefix))
+1161: 			continue
+1162: 		}
+1163: 		if inSuggestion {
+1164: 			// Continuation of suggestion (blockquote lines).
+1165: 			if strings.HasPrefix(trimmed, "> ") {
+1166: 				suggLines = append(suggLines, strings.TrimPrefix(trimmed, "> "))
+1167: 			} else if trimmed == ">" {
+1168: 				suggLines = append(suggLines, "")
+1169: 			} else {
+1170: 				suggLines = append(suggLines, line)
+1171: 			}
+1172: 			continue
+1173: 		}
+1174: 		descLines = append(descLines, line)
+1175: 	}
+1176: 
+1177: 	description = strings.TrimSpace(strings.Join(descLines, "\n"))
+1178: 	suggestion = strings.TrimSpace(strings.Join(suggLines, "\n"))
+1179: 	return description, suggestion
+1180: }
+1181: 
+1182: // FindingFromThread extracts a Finding from a ReviewThread. It first tries to
+1183: // parse the embedded JSON (new format), then falls back to body parsing.
+1184: func FindingFromThread(t ReviewThread) Finding {
+1185: 	// Try embedded JSON first (lossless roundtrip).
+1186: 	if f, ok := findingFromEmbeddedJSON(t.Body); ok {
+1187: 		f.File = t.Path
+1188: 		f.Line = t.Line
+1189: 		f.Status = "still open"
+1190: 		return f
+1191: 	}
+1192: 
+1193: 	// Fallback: parse the markdown body.
+1194: 	desc, suggestion := parseThreadBody(t.Body)
+1195: 	return Finding{
+1196: 		ID:          FindingIDFromThread(t.Body),
+1197: 		File:        t.Path,
+1198: 		Line:        t.Line,
+1199: 		Severity:    severityFromThreadBody(t.Body),
+1200: 		Title:       firstSentence(desc),
+1201: 		Description: desc,
+1202: 		Suggestion:  suggestion,
+1203: 		Status:      "still open",
+1204: 	}
+1205: }
+1206: 
+1207: // firstSentence returns the first sentence (or first line) of text as a title.
+1208: func firstSentence(text string) string {
+1209: 	if text == "" {
+1210: 		return ""
+1211: 	}
+1212: 	// Use first line.
+1213: 	line := text
+1214: 	if idx := strings.IndexByte(text, '\n'); idx >= 0 {
+1215: 		line = text[:idx]
+1216: 	}
+1217: 	line = strings.TrimSpace(line)
+1218: 	// Truncate to 120 runes if very long.
+1219: 	runes := []rune(line)
+1220: 	if len(runes) > 120 {
+1221: 		return string(runes[:117]) + "..."
+1222: 	}
+1223: 	return line
+1224: }
+1225: 
+1226: // ReviewInfo represents a review with its node ID and finding IDs.
+1227: type ReviewInfo struct {
+1228: 	NodeID     string
+1229: 	FindingIDs []string
+1230: }
+1231: 
+1232: // FindReviews returns reviews with their parsed finding IDs.
+1233: func FindReviews(repo string, prNumber int) ([]ReviewInfo, error) {
+1234: 	owner, name, err := parseRepoSlug(repo)
+1235: 	if err != nil {
+1236: 		return nil, err
+1237: 	}
+1238: 
+1239: 	apiPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, name, prNumber)
+1240: 	out, err := exec.Command("gh", "api", apiPath).Output()
+1241: 	if err != nil {
+1242: 		return nil, fmt.Errorf("fetching PR reviews: %w", err)
+1243: 	}
+1244: 
+1245: 	var reviews []ghReview
+1246: 	if err := json.Unmarshal(out, &reviews); err != nil {
+1247: 		return nil, fmt.Errorf("parsing PR reviews: %w", err)
+1248: 	}
+1249: 
+1250: 	prefixes := reviewMarkerPrefixes
+1251: 	const suffix = " -->"
+1252: 
+1253: 	var result []ReviewInfo
+1254: 	for _, rev := range reviews {
+1255: 		for _, prefix := range prefixes {
+1256: 			idx := strings.Index(rev.Body, prefix)
+1257: 			if idx < 0 {
+1258: 				continue
+1259: 			}
+1260: 			start := idx + len(prefix)
+1261: 			endIdx := strings.Index(rev.Body[start:], suffix)
+1262: 			if endIdx < 0 {
+1263: 				continue
+1264: 			}
+1265: 			jsonData := rev.Body[start : start+endIdx]
+1266: 			var rr ReviewResult
+1267: 			if err := json.Unmarshal([]byte(jsonData), &rr); err != nil {
+1268: 				continue
+1269: 			}
+1270: 			var ids []string
+1271: 			for _, f := range rr.Findings {
+1272: 				ids = append(ids, f.ID)
+1273: 			}
+1274: 			result = append(result, ReviewInfo{
+1275: 				NodeID:     rev.NodeID,
+1276: 				FindingIDs: ids,
+1277: 			})
+1278: 			break
+1279: 		}
+1280: 	}
+1281: 
+1282: 	return result, nil
+1283: }
+1284: 
+1285: // MinimizeComment hides a comment on GitHub using the minimizeComment GraphQL mutation.
+1286: func MinimizeComment(nodeID string) error {
+1287: 	cmd := exec.Command("gh", "api", "graphql",
+1288: 		"-f", "query=mutation($id:ID!){minimizeComment(input:{subjectId:$id,classifier:RESOLVED}){minimizedComment{isMinimized}}}",
+1289: 		"-F", "id="+nodeID,
+1290: 	)
+1291: 	if out, err := cmd.CombinedOutput(); err != nil {
+1292: 		return fmt.Errorf("gh api graphql minimize: %w\n%s", err, string(out))
+1293: 	}
+1294: 	return nil
+1295: }
+1296: 
+1297: // FetchFileContents reads the full contents of changed files from disk.
+1298: // It skips files that are too large, binary, deleted, or match ignore patterns.
+1299: // Returns a map of path->content and a list of skipped file paths.
+1300: func FetchFileContents(files []string, ignorePatterns []string, maxPerFile, maxTotal int) (map[string]string, []string) {
+1301: 	contents := make(map[string]string)
+1302: 	var skipped []string
+1303: 	totalSize := 0
+1304: 
+1305: 	for _, path := range files {
+1306: 		// Check ignore patterns.
+1307: 		if matchesIgnore(path, ignorePatterns) {
+1308: 			skipped = append(skipped, path)
+1309: 			continue
+1310: 		}
+1311: 
+1312: 		data, err := os.ReadFile(path)
+1313: 		if err != nil {
+1314: 			// File may have been deleted in this PR — skip gracefully.
+1315: 			continue
+1316: 		}
+1317: 
+1318: 		// Skip binary files (null bytes in first 512 bytes).
+1319: 		peek := data
+1320: 		if len(peek) > 512 {
+1321: 			peek = peek[:512]
+1322: 		}
+1323: 		if bytes.ContainsRune(peek, 0) {
+1324: 			skipped = append(skipped, path)
+1325: 			continue
+1326: 		}
+1327: 
+1328: 		size := len(data)
+1329: 
+1330: 		// Skip files exceeding per-file limit.
+1331: 		if size > maxPerFile {
+1332: 			skipped = append(skipped, path)
+1333: 			continue
+1334: 		}
+1335: 
+1336: 		// Stop if total budget would be exceeded.
+1337: 		if totalSize+size > maxTotal {
+1338: 			skipped = append(skipped, path)
+1339: 			continue
+1340: 		}
+1341: 
+1342: 		contents[path] = string(data)
+1343: 		totalSize += size
+1344: 	}
+1345: 
+1346: 	return contents, skipped
+1347: }
+1348: 
+1349: // isSetupPR detects whether this is the initial setup PR.
+1350: // Returns true only when a new workflow file referencing codecanary is added AND
+1351: // the PR contains no other files beyond expected setup artifacts (workflow +
+1352: // config), so that PRs bundling real code changes are never silently skipped.
+1353: func isSetupPR(diff string, files []string) bool {
+1354: 	// All files must be known setup paths.
+1355: 	for _, f := range files {
+1356: 		if !isSetupFile(f) {
+1357: 			return false
+1358: 		}
+1359: 	}
+1360: 
+1361: 	// At least one newly added workflow file must reference codecanary.
+1362: 	lines := strings.Split(diff, "\n")
+1363: 	for i := 0; i < len(lines)-1; i++ {
+1364: 		if lines[i] != "--- /dev/null" {
+1365: 			continue
+1366: 		}
+1367: 		plusLine := lines[i+1]
+1368: 		if !strings.HasPrefix(plusLine, "+++ b/.github/workflows/") {
+1369: 			continue
+1370: 		}
+1371: 		for j := i + 2; j < len(lines); j++ {
+1372: 			if strings.HasPrefix(lines[j], "--- ") || strings.HasPrefix(lines[j], "diff --git") {
+1373: 				break
+1374: 			}
+1375: 			if strings.HasPrefix(lines[j], "+") && (strings.Contains(lines[j], "codecanary") || strings.Contains(lines[j], "clanopy")) {
+1376: 				return true
+1377: 			}
+1378: 		}
+1379: 	}
+1380: 	return false
+1381: }
+1382: 
+1383: // isSetupFile returns true if the file path is a known setup artifact.
+1384: func isSetupFile(path string) bool {
+1385: 	return strings.HasPrefix(path, ".github/workflows/") ||
+1386: 		strings.HasPrefix(path, ".codecanary/") || path == ".codecanary.yml" ||
+1387: 		strings.HasPrefix(path, ".clanopy/")
+1388: }
+1389: 
+1390: // matchesIgnore checks if a path matches any of the ignore glob patterns.
+1391: // Uses doublestar to support ** recursive globs (e.g. "dist/**", "src/**/*.test.*").
+1392: func matchesIgnore(path string, patterns []string) bool {
+1393: 	for _, pat := range patterns {
+1394: 		if matched, _ := doublestar.Match(pat, path); matched {
+1395: 			return true
+1396: 		}
+1397: 		// Also try matching against just the filename.
+1398: 		if matched, _ := doublestar.Match(pat, filepath.Base(path)); matched {
+1399: 			return true
+1400: 		}
+1401: 	}
+1402: 	return false
+1403: }
+```
+
+### `internal/review/platform_github.go`
+```
+1: package review
+2: 
+3: import (
+4: 	"fmt"
+5: 	"os"
+6: 	"strings"
+7: )
+8: 
+9: // allResolved checks if all review threads have been resolved by code changes.
+10: // Threads resolved by other reasons (dismissed, acknowledged, rebutted) are kept
+11: // open and do not count as resolved.
+12: func allResolved(threads []ReviewThread, fixed []fixedThread) bool {
+13: 	fixedSet := make(map[int]bool, len(fixed))
+14: 	for _, f := range fixed {
+15: 		if isTrueResolution(f.Reason) {
+16: 			fixedSet[f.Index] = true
+17: 		}
+18: 	}
+19: 	for i := range threads {
+20: 		if !fixedSet[i] {
+21: 			return false
+22: 		}
+23: 	}
+24: 	return true
+25: }
+26: 
+27: // resolvedFindingIDs builds the set of finding IDs that are resolved.
+28: // It combines threads already resolved on GitHub with threads just fixed by code changes.
+29: // Threads resolved by other reasons (dismissed, acknowledged, rebutted) are not included
+30: // since they are kept open for re-triage.
+31: func resolvedFindingIDs(allThreads, unresolved []ReviewThread, fixed []fixedThread) map[string]bool {
+32: 	resolved := make(map[string]bool)
+33: 	for _, t := range allThreads {
+34: 		if t.Resolved {
+35: 			if id := FindingIDFromThread(t.Body); id != "" {
+36: 				resolved[id] = true
+37: 			}
+38: 		}
+39: 	}
+40: 	fixedSet := make(map[int]bool, len(fixed))
+41: 	for _, f := range fixed {
+42: 		if isTrueResolution(f.Reason) {
+43: 			fixedSet[f.Index] = true
+44: 		}
+45: 	}
+46: 	for i, t := range unresolved {
+47: 		if fixedSet[i] {
+48: 			if id := FindingIDFromThread(t.Body); id != "" {
+49: 				resolved[id] = true
+50: 			}
+51: 		}
+52: 	}
+53: 	return resolved
+54: }
+55: 
+56: // minimizeFullyResolvedReviews minimizes reviews whose findings are all resolved.
+57: func minimizeFullyResolvedReviews(repo string, prNumber int, resolvedIDs map[string]bool) {
+58: 	reviews, err := FindReviews(repo, prNumber)
+59: 	if err != nil {
+60: 		fmt.Fprintf(os.Stderr, "Warning: could not fetch reviews for minimization: %v\n", err)
+61: 		return
+62: 	}
+63: 	minimized := 0
+64: 	for _, rev := range reviews {
+65: 		allResolved := len(rev.FindingIDs) > 0
+66: 		for _, fid := range rev.FindingIDs {
+67: 			if !resolvedIDs[fid] {
+68: 				allResolved = false
+69: 				break
+70: 			}
+71: 		}
+72: 		if !allResolved {
+73: 			continue
+74: 		}
+75: 		if err := MinimizeComment(rev.NodeID); err != nil {
+76: 			fmt.Fprintf(os.Stderr, "Warning: could not minimize review: %v\n", err)
+77: 		} else {
+78: 			minimized++
+79: 		}
+80: 	}
+81: 	if minimized > 0 {
+82: 		fmt.Fprintf(os.Stderr, "Minimized %d previous review(s)\n", minimized)
+83: 	}
+84: }
+85: 
+86: // acknowledgmentMessage returns a reply body for non-code-change resolutions.
+87: // Each message includes a hidden HTML marker for dedup detection.
+88: func acknowledgmentMessage(reason string) string {
+89: 	marker := fmt.Sprintf("%s%s -->", ackMarkerPrefix, reason)
+90: 	switch reason {
+91: 	case "dismissed":
+92: 		return marker + "\nAuthor dismissed this finding. Keeping open \u2014 will re-check if related code changes."
+93: 	case "acknowledged":
+94: 		return marker + "\nAuthor acknowledged this finding. Keeping open \u2014 will re-check on future pushes."
+95: 	case "rebutted":
+96: 		return marker + "\nAuthor provided a technical rebuttal. Keeping open \u2014 will re-check if related code changes."
+97: 	default:
+98: 		return fmt.Sprintf("%sunknown -->", ackMarkerPrefix) + "\nFinding acknowledged. Keeping open \u2014 will re-check on future pushes."
+99: 	}
+100: }
+101: 
+102: // hasAcknowledgmentReply reports whether the thread already carries any
+103: // codecanary ack reply. Dedup is intentionally reason-agnostic: all three
+104: // ack reasons (dismissed/rebutted/acknowledged) keep the thread open and
+105: // convey the same outcome to the author, and triage classification across
+106: // runs is not deterministic — so checking only the same reason let a
+107: // rebutted ack get followed by a dismissed ack on the next run, stacking
+108: // two replies on one skip. One ack per thread is enough.
+109: func hasAcknowledgmentReply(t ReviewThread) bool {
+110: 	for _, r := range t.Replies {
+111: 		if strings.Contains(r.Body, ackMarkerPrefix) || strings.Contains(r.Body, legacyAckPrefix) {
+112: 			return true
+113: 		}
+114: 	}
+115: 	return false
+116: }
+117: 
+118: // GithubPlatform implements ReviewPlatform for GitHub PR mode. It always
+119: // posts to the PR; "local preview" against a GitHub PR is no longer a thing —
+120: // `codecanary review` without --post uses LocalPlatform.
+121: type GithubPlatform struct {
+122: 	Repo     string
+123: 	PRNumber int
+124: 	DryRun   bool
+125: }
+126: 
+127: func (g *GithubPlatform) LoadPreviousFindings() ([]ReviewThread, string, int) {
+128: 	allThreads, err := FetchReviewThreads(g.Repo, g.PRNumber)
+129: 	if err != nil {
+130: 		fmt.Fprintf(os.Stderr, "Warning: could not fetch review threads: %v\n", err)
+131: 		return nil, "", 0
+132: 	}
+133: 	startIndex := len(allThreads)
+134: 	var unresolved []ReviewThread
+135: 	for _, t := range allThreads {
+136: 		if !t.Resolved {
+137: 			unresolved = append(unresolved, t)
+138: 		}
+139: 	}
+140: 	previousSHA := FetchPreviousReviewSHA(g.Repo, g.PRNumber)
+141: 	return unresolved, previousSHA, startIndex
+142: }
+143: 
+144: func (g *GithubPlatform) ExcludedAuthor(threads []ReviewThread) string {
+145: 	if len(threads) > 0 {
+146: 		if login := threads[0].Author; login != "" {
+147: 			return login
+148: 		}
+149: 		fmt.Fprintf(os.Stderr, "Warning: could not determine bot login from thread author\n")
+150: 	}
+151: 	return ""
+152: }
+153: 
+154: func (g *GithubPlatform) HandleResolutions(threads []ReviewThread, fixed []fixedThread) {
+155: 	for _, f := range fixed {
+156: 		if f.Index < 0 || f.Index >= len(threads) {
+157: 			continue
+158: 		}
+159: 		t := threads[f.Index]
+160: 		label := threadLabel(t)
+161: 		if isTrueResolution(f.Reason) {
+162: 			// Post an explanatory comment for file_removed before resolving.
+163: 			if f.Reason == "file_removed" {
+164: 				msg := "File removed from PR — resolving."
+165: 				if err := ReplyToThread(t.ID, msg); err != nil {
+166: 					fmt.Fprintf(os.Stderr, "  ! %s — failed to post file-removed comment: %v\n", label, err)
+167: 				}
+168: 			}
+169: 			if err := ResolveThread(t.ID); err != nil {
+170: 				if strings.Contains(err.Error(), "Resource not accessible") {
+171: 					fmt.Fprintf(os.Stderr, "  ~ %s (auto-resolve unavailable: token lacks permission)\n", label)
+172: 				} else {
+173: 					fmt.Fprintf(os.Stderr, "  ! %s — resolved, but failed to update thread: %v\n", label, err)
+174: 				}
+175: 			}
+176: 		} else {
+177: 			if !hasAcknowledgmentReply(t) {
+178: 				msg := acknowledgmentMessage(f.Reason)
+179: 				if err := ReplyToThread(t.ID, msg); err != nil {
+180: 					fmt.Fprintf(os.Stderr, "  ! %s — failed to post acknowledgment: %v\n", label, err)
+181: 				}
+182: 			}
+183: 		}
+184: 	}
+185: }
+186: 
+187: func (g *GithubPlatform) Publish(result *ReviewResult, pr *PRData, threads []ReviewThread, fixed []fixedThread) error {
+188: 	summary := computeReviewSummary(threads, fixed, result.Findings)
+189: 
+190: 	// Decide edit-vs-post: if the latest CodeCanary review on the PR carries
+191: 	// the current HEAD SHA in its marker, this is either a reply-only run or
+192: 	// a duplicate synchronize webhook — refresh that review in place rather
+193: 	// than stacking another top-level comment.
+194: 	latest, latestErr := FetchLatestCodecanaryReview(g.Repo, g.PRNumber)
+195: 	if latestErr != nil {
+196: 		fmt.Fprintf(os.Stderr, "Warning: could not fetch latest review for dedup: %v\n", latestErr)
+197: 	}
+198: 	if latest != nil && result.SHA != "" && latest.SHA == result.SHA {
+199: 		updated := replaceSummaryBlock(latest.Body, summary)
+200: 		if updated == latest.Body {
+201: 			Stderrf(ansiGreen, "Latest review already current for %s — no update needed\n", shortSHA(result.SHA))
+202: 			return nil
+203: 		}
+204: 		if err := UpdateReviewBody(g.Repo, g.PRNumber, latest.ID, updated); err != nil {
+205: 			return fmt.Errorf("updating review body: %w", err)
+206: 		}
+207: 		Stderrf(ansiGreen, "Updated latest review on PR #%d\n", g.PRNumber)
+208: 		g.postReviewCommitStatus(result.SHA, summary)
+209: 		return nil
+210: 	}
+211: 
+212: 	// Minimize previous reviews before posting a fresh one.
+213: 	minimizeFailed := false
+214: 	if len(threads) > 0 {
+215: 		if nodeIDs, err := FindReviewNodeIDs(g.Repo, g.PRNumber); err == nil {
+216: 			if allResolved(threads, fixed) {
+217: 				for _, nodeID := range nodeIDs {
+218: 					if err := MinimizeComment(nodeID); err != nil {
+219: 						fmt.Fprintf(os.Stderr, "Warning: could not minimize review: %v\n", err)
+220: 						minimizeFailed = true
+221: 					}
+222: 				}
+223: 				if len(nodeIDs) > 0 && !minimizeFailed {
+224: 					fmt.Fprintf(os.Stderr, "Minimized %d previous review(s)\n", len(nodeIDs))
+225: 				}
+226: 			} else {
+227: 				allThreads, err := FetchReviewThreads(g.Repo, g.PRNumber)
+228: 				if err != nil {
+229: 					fmt.Fprintf(os.Stderr, "Warning: could not fetch review threads for minimization: %v\n", err)
+230: 				} else {
+231: 					resolvedIDs := resolvedFindingIDs(allThreads, threads, fixed)
+232: 					minimizeFullyResolvedReviews(g.Repo, g.PRNumber, resolvedIDs)
+233: 				}
+234: 			}
+235: 		} else {
+236: 			fmt.Fprintf(os.Stderr, "Warning: could not fetch reviews for minimization: %v\n", err)
+237: 			minimizeFailed = true
+238: 		}
+239: 	}
+240: 
+241: 	// POST path — pick the body shape that fits the cycle outcome. Every
+242: 	// branch emits a top-level review so each push lands a visible status
+243: 	// comment on the PR.
+244: 	switch {
+245: 	case len(result.Findings) > 0:
+246: 		if err := PostReview(g.Repo, g.PRNumber, result, pr.ValidationDiff(), result.SHA, summary); err != nil {
+247: 			return fmt.Errorf("posting review: %w", err)
+248: 		}
+249: 		Stderrf(ansiGreen, "Review posted to PR #%d\n", g.PRNumber)
+250: 	case len(threads) > 0 && allResolved(threads, fixed):
+251: 		if err := PostAllClearReview(g.Repo, g.PRNumber, result.SHA, minimizeFailed, summary); err != nil {
+252: 			return fmt.Errorf("posting all-clear review: %w", err)
+253: 		}
+254: 		Stderrf(ansiGreen, "All clear! No issues remaining.\n")
+255: 	case len(threads) > 0:
+256: 		if err := PostActivityReview(g.Repo, g.PRNumber, result.SHA, summary); err != nil {
+257: 			return fmt.Errorf("posting activity review: %w", err)
+258: 		}
+259: 		Stderrf(ansiGreen, "Posted activity summary to PR #%d\n", g.PRNumber)
+260: 	default:
+261: 		if err := PostCleanReview(g.Repo, g.PRNumber, result.SHA, summary); err != nil {
+262: 			return fmt.Errorf("posting review: %w", err)
+263: 		}
+264: 		Stderrf(ansiGreen, "Review posted to PR #%d\n", g.PRNumber)
+265: 	}
+266: 
+267: 	g.postReviewCommitStatus(result.SHA, summary)
+268: 	return nil
+269: }
+270: 
+271: func (g *GithubPlatform) SaveState(_ *ReviewResult, _ []Finding, _ bool) error {
+272: 	// No-op: GitHub mode stores state in PR review threads (embedded JSON
+273: 	// markers carry the SHA and findings). Local state files are owned by
+274: 	// LocalPlatform — this keeps the two adapters from fighting over the
+275: 	// same ~/.codecanary/state/<branch>.json file.
+276: 	return nil
+277: }
+278: 
+279: func (g *GithubPlatform) GetIncrementalDiff(baseSHA string, _ []string) (string, error) {
+280: 	return GetIncrementalDiff(baseSHA)
+281: }
+282: 
+283: func (g *GithubPlatform) ReportUsage(tracker *UsageTracker) {
+284: 	report := tracker.Report(g.Repo, g.PRNumber)
+285: 	if len(report.Calls) > 0 {
+286: 		if err := WriteUsageEnv(report); err != nil {
+287: 			fmt.Fprintf(os.Stderr, "Warning: could not write usage env: %v\n", err)
+288: 		}
+289: 	}
+290: }
+291: 
+292: // postReviewCommitStatus POSTs a `CodeCanary / review` commit status on the
+293: // reviewed SHA. state=success when no unresolved findings remain for the
+294: // PR (new findings this cycle + threads still open with no classification
+295: // both at zero); state=failure otherwise. Teams can require this check in
+296: // branch protection to gate merges on a clean review.
+297: //
+298: // Skipped silently when the SHA is empty (non-pr-loop contexts that
+299: // accidentally share the adapter). Failures are logged as warnings — the
+300: // review itself has already been published, so a flaky status post should
+301: // not abort the whole Publish flow.
+302: func (g *GithubPlatform) postReviewCommitStatus(sha string, summary ReviewSummary) {
+303: 	if sha == "" {
+304: 		return
+305: 	}
+306: 	state, desc := commitStatusFromSummary(summary)
+307: 	if err := PostReviewCommitStatus(g.Repo, sha, state, desc); err != nil {
+308: 		fmt.Fprintf(os.Stderr, "Warning: could not post %s commit status: %v\n",
+309: 			ReviewCommitStatusContext, err)
+310: 		return
+311: 	}
+312: 	Stderrf(ansiGreen, "Posted %s = %s on %s (%s)\n",
+313: 		ReviewCommitStatusContext, state, shortSHA(sha), desc)
+314: }
+315: 
+316: // commitStatusFromSummary maps a ReviewSummary to the (state, description)
+317: // pair sent to the commit status API. Pulled out so the mapping is
+318: // unit-testable without network access.
+319: //
+320: // An "unresolved" count combines new findings this cycle with threads that
+321: // were already open and remain unclassified — either kind should fail the
+322: // required check. Everything classified by triage (resolved by code, file
+323: // removed, dismissed, acknowledged, rebutted) counts as handled.
+324: func commitStatusFromSummary(summary ReviewSummary) (state, desc string) {
+325: 	unresolved := summary.NewFindings + summary.StillOpen
+326: 	if unresolved > 0 {
+327: 		suffix := "s"
+328: 		if unresolved == 1 {
+329: 			suffix = ""
+330: 		}
+331: 		return "failure", fmt.Sprintf("%d unresolved finding%s", unresolved, suffix)
+332: 	}
+333: 	if summary.ResolvedByCode+summary.FileRemoved+summary.Dismissed+summary.Acknowledged+summary.Rebutted > 0 {
+334: 		return "success", "all findings resolved"
+335: 	}
+336: 	return "success", "no findings"
+337: }
+```
+
+## Diff
+````diff
+diff --git a/README.md b/README.md
+index b0d4ab1..d15aad7 100644
+--- a/README.md
++++ b/README.md
+@@ -81,12 +81,12 @@ Once merged, CodeCanary reviews every PR on open and push. Draft PRs are skipped
+ 
+ ### Gating merges on clean reviews
+ 
+-CodeCanary can block merges until a review comes back clean. After every review, the bot (and the local `codecanary signoff` command) posts a GitHub commit status under the context `codecanary/review`:
++CodeCanary can block merges until a review comes back clean. After every review, the bot (and the local `codecanary signoff` command) posts a GitHub commit status under the context `CodeCanary / review`:
+ 
+ - `success` — no unresolved findings (everything is either unraised, fixed by code, or handled by the author)
+ - `failure` — one or more findings remain unresolved, with a description like `"3 unresolved findings"`
+ 
+-To turn this into a required check, add `codecanary/review` to your repo's required status checks via whichever branch protection mechanism you use (rulesets, classic branch protection rules, etc.). GitHub accepts any context name; if a review has already run, it will also show up in autocomplete.
++To turn this into a required check, add `CodeCanary / review` to your repo's required status checks via whichever branch protection mechanism you use (rulesets, classic branch protection rules, etc.). GitHub accepts any context name; if a review has already run, it will also show up in autocomplete.
+ 
+ Statuses are keyed by commit SHA, so staling is automatic: a new push has no status until the next review run posts one, which re-blocks the merge button.
+ 
+@@ -95,7 +95,7 @@ Statuses are keyed by commit SHA, so staling is automatic: a new push has no sta
+ ```sh
+ codecanary review     # reviews locally, stores findings in ~/.codecanary/...
+ # fix anything that came up, commit
+-codecanary signoff    # posts codecanary/review = success on HEAD
++codecanary signoff    # posts CodeCanary / review = success on HEAD
+ ```
+ 
+ The command refuses to sign off unless HEAD matches the reviewed SHA and the tree is clean — this prevents attesting a review of code that isn't actually in the commit. It needs `gh` authenticated with `repo:status` scope (default `gh auth login` covers it).
+@@ -109,7 +109,7 @@ Same required-check config works for both paths: the bot satisfies the check on
+ | `codecanary review [pr-number]` | Review a PR or local diff |
+ | `codecanary findings [pr-number]` | Fetch bot findings for a PR (markdown or JSON) |
+ | `codecanary reply --url <URL> --body <text>` | Post a reply on a review-comment thread (used by the skill when skipping) |
+-| `codecanary signoff` | Post a `codecanary/review` commit status from the last local review (see [gating merges](#gating-merges-on-clean-reviews)) |
++| `codecanary signoff` | Post a `CodeCanary / review` commit status from the last local review (see [gating merges](#gating-merges-on-clean-reviews)) |
+ | `codecanary install-skill` | Install the `codecanary-fix` Claude Code skill |
+ | `codecanary setup [local\|github]` | Interactive setup wizard |
+ | `codecanary auth status` | Show stored credential info |
+diff --git a/cmd/review/cli/signoff.go b/cmd/review/cli/signoff.go
+index 82a1c57..3621db9 100644
+--- a/cmd/review/cli/signoff.go
++++ b/cmd/review/cli/signoff.go
+@@ -25,7 +25,7 @@ Requires:
+   - the working tree is clean and HEAD matches the reviewed SHA
+   - 'gh' is installed and authenticated with repo:status scope
+ 
+-Combine with a required 'codecanary/review' check in branch protection to
++Combine with a required 'CodeCanary / review' check in branch protection to
+ block merges until a clean local review exists for the tip commit.`,
+ 	RunE: func(cmd *cobra.Command, args []string) error {
+ 		force, _ := cmd.Flags().GetBool("force")
+diff --git a/docs/review-flow.md b/docs/review-flow.md
+index 3f398d3..3973019 100644
+--- a/docs/review-flow.md
++++ b/docs/review-flow.md
+@@ -165,7 +165,7 @@ Per-thread ack replies for dismissed/acknowledged/rebutted resolutions are poste
+ 
+ `codecanary findings` applies the same marker to filter deferrals out of its default output: threads with any `codecanary:ack:*` reply are treated as handled and omitted alongside GitHub-resolved threads. Pass `--include-resolved` to see them. This keeps the codecanary-fix skill from re-prompting on findings the operator already deferred.
+ 
+-After the review is posted (or updated in place), `GithubPlatform.Publish` also POSTs a `codecanary/review` commit status on the reviewed SHA via `PostReviewCommitStatus`. State is `success` when `NewFindings + StillOpen == 0` (everything is either new-and-green, fixed by code, or explicitly handled by the author), and `failure` otherwise. Description is the unresolved count or "all findings resolved" / "no findings". Teams that add `codecanary/review` as a required status check in branch protection get auto-gating: merges are blocked until a review run posts a green status on HEAD. Status posting failures are logged as warnings and do not abort Publish — the review itself has already landed. The local `codecanary signoff` command posts a status under the same context, so a team can rely on a single required check that either the bot (pr-loop) or a local reviewer (local-loop) satisfies.
++After the review is posted (or updated in place), `GithubPlatform.Publish` also POSTs a `CodeCanary / review` commit status on the reviewed SHA via `PostReviewCommitStatus`. State is `success` when `NewFindings + StillOpen == 0` (everything is either new-and-green, fixed by code, or explicitly handled by the author), and `failure` otherwise. Description is the unresolved count or "all findings resolved" / "no findings". Teams that add `CodeCanary / review` as a required status check in branch protection get auto-gating: merges are blocked until a review run posts a green status on HEAD. Status posting failures are logged as warnings and do not abort Publish — the review itself has already landed. The local `codecanary signoff` command posts a status under the same context, so a team can rely on a single required check that either the bot (pr-loop) or a local reviewer (local-loop) satisfies.
+ 
+ **Local**: Prints the formatted result to stdout. Format depends on context: terminal (colored, human-readable), markdown, or JSON.
+ 
+diff --git a/internal/review/github.go b/internal/review/github.go
+index b626a82..80b0015 100644
+--- a/internal/review/github.go
++++ b/internal/review/github.go
+@@ -314,11 +314,11 @@ func PostReview(repo string, prNumber int, result *ReviewResult, diff string, co
+ 
+ // ReviewCommitStatusContext is the commit-status context the review bot
+ // writes when a review run completes. Using a stable string lets teams
+-// require it in branch protection — "codecanary/review must be green
++// require it in branch protection — "CodeCanary / review must be green
+ // before merge." Matches the context used by `codecanary signoff`, so
+ // both the bot (on PRs with the workflow) and a local signoff can
+ // satisfy the same required check.
+-const ReviewCommitStatusContext = "codecanary/review"
++const ReviewCommitStatusContext = "CodeCanary / review"
+ 
+ // PostReviewCommitStatus POSTs a commit status on the given SHA summarising
+ // the review outcome. state is "success" when all findings are resolved or
+diff --git a/internal/review/platform_github.go b/internal/review/platform_github.go
+index 01843e2..37c4f7f 100644
+--- a/internal/review/platform_github.go
++++ b/internal/review/platform_github.go
+@@ -289,7 +289,7 @@ func (g *GithubPlatform) ReportUsage(tracker *UsageTracker) {
+ 	}
+ }
+ 
+-// postReviewCommitStatus POSTs a `codecanary/review` commit status on the
++// postReviewCommitStatus POSTs a `CodeCanary / review` commit status on the
+ // reviewed SHA. state=success when no unresolved findings remain for the
+ // PR (new findings this cycle + threads still open with no classification
+ // both at zero); state=failure otherwise. Teams can require this check in
+````
+
+## Output Format
+Return your findings as a JSON array inside a ```json code fence. Each finding must have these fields:
+
+- `id` (string): The rule ID that was violated, or a short kebab-case identifier for general findings.
+- `file` (string): The file path where the issue was found. **Must be one of the exact paths listed in "Files in This Diff" above.** If a file path does not appear in that list, do NOT reference it. If your finding relates to a file not in the diff (e.g. a downstream consequence), set `file` and `line` to the diff location that triggers the issue and mention the affected file in `description`.
+- `line` (int): The line number in the file. **Must be a line that was added or modified in the diff** (a `+` line in the diff hunk). If your finding is about a side effect on a distant line, set `line` to the diff line that *causes* the issue and describe the affected location in `description`.
+- `severity` (string): One of "critical", "bug", "warning", "suggestion", or "nitpick".
+  - "critical": Security vulnerabilities, data loss, crashes.
+  - "bug": A logic error that causes incorrect runtime behavior for real inputs. Missing test coverage, unused parameters, typos in identifiers that happen to compile, or "what if a future caller…" concerns do NOT qualify — use "suggestion" or "nitpick" for those. If you cannot name the concrete input and the concrete wrong output, it is not a bug.
+  - "warning": Potential issues, performance problems, code smells.
+  - "suggestion": Better patterns, readability improvements.
+  - "nitpick": Minor style, naming, formatting.
+- `title` (string): A short title for the finding.
+- `description` (string): A concise explanation of the issue — 2-3 sentences max. State what is wrong and why it matters. Do not repeat the code or walk through the logic step by step.
+- `suggestion` (string, optional): A concise suggested fix — 1-2 sentences of prose, then a code block if helpful. Do not explain what the code block does. For suggestions about broader patterns or improvements beyond the current PR scope, recommend opening a separate PR — do not imply they should fix it here.
+- `fix_ref` (string): A reference ID in the format `173-<index>` where index starts at 1 (e.g. `173-1`, `173-2`).
+- `actionable` (boolean): Set to `false` if your analysis concludes the code is correct and no change is needed. Set to `true` if the finding requires the author to act. **Prefer returning an empty array over emitting findings with `actionable: false`.**
+
+**IMPORTANT — JSON escaping:** When your description or suggestion references code containing backslash sequences (e.g. `\n`, `\t`, `\"`), you MUST double-escape the backslash in the JSON string value. For example, to mention `fmt.Print("\n")` in a JSON string, write `fmt.Print("\\n")`. A single `\n` in JSON is a newline character, not the literal text `\n`.
+
+**Do not include findings where your conclusion is that the code is correct or no action is needed.** If you evaluate something and determine it is fine, omit it entirely rather than reporting it. Specifically: if you begin analyzing a potential issue but then realize the code handles it correctly, do NOT emit a finding that walks through the concern and then concludes "this is actually fine" or "no bug here" — simply drop it. Every finding you emit must represent a real, actionable problem.
+
+**Check against project documentation before emitting.** The "Project Documentation" section above defines conventions for this codebase (e.g. "don't add error handling for scenarios that can't happen", "keep the core engine agnostic"). Before emitting a finding, verify it does not contradict those conventions. If your suggested fix would violate a project-doc rule, drop the finding — the author has already made that tradeoff deliberately.
+
+**Label uncertainty from external behavior.** If your finding's validity depends on the behavior of a third-party API, webhook payload shape, framework internal, or other system you cannot verify from the diff, file contents, and project docs above, you MUST (a) cap severity at "suggestion" and (b) state the assumption in `description` (e.g. "Assumes `github.event.pull_request.number` is unset on `pull_request_review_comment` events — verify against GitHub's webhook docs before acting."). A finding that asserts external behavior as fact without this label is a false-positive risk.
+
+**CRITICAL: Do NOT invent or hallucinate file paths, function names, or code that does not appear in the diff or the provided file contents. If a file or function is not shown above, do not reference it.**
+
+If there are no findings, return an empty array: `[]`.
+
+Example:
+```json
+[
+  {
+    "id": "rule-id",
+    "file": "src/main.go",
+    "line": 42,
+    "severity": "warning",
+    "title": "Short title",
+    "description": "The value is used after the error check, so a non-nil error silently proceeds with stale data.",
+    "suggestion": "Return early on error.\n\n```go\nif err != nil {\n    return err\n}\n```",
+    "fix_ref": "173-1",
+    "actionable": true
+  }
+]
+```
