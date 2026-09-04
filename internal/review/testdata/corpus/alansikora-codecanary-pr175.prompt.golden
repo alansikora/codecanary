@@ -1,0 +1,1860 @@
+You are a code reviewer. Review the following pull request and report findings.
+You will be given the full contents of changed files for context, along with the diff. Only report issues that are directly related to the changes in the diff — do not flag pre-existing issues in unchanged code. Do not report a finding if your analysis concludes that the code is correct and no action is needed — only report findings that require the author to make a change or consider a specific alternative.
+Also consider whether the changes could cause side effects in other files that depend on or interact with the modified code (e.g. callers, importers, shared state). If you identify a potential side effect, anchor your finding to the relevant line in the diff and describe the affected downstream code in the description.
+
+## Pull Request #175
+<pr-title>fix(triage): include PreviouslyAcked in countNonSkipped</pr-title>
+**Author:** alansikora
+<pr-body>
+Follow-up to #174.
+
+## Summary
+
+The first sticky-ack fix worked at the triage layer (logs showed `[sticky] ... carried forward`) but the published summary still said **Still unresolved: 2** — confirmed in production on thetechfx/bedrock#1671 right after v0.6.23 shipped.
+
+Root cause: `countNonSkipped` excluded `TriagePreviouslyAcked`. When *every* remaining thread is sticky-ack, `needsEval` came back as zero, the runner skipped `EvaluateThreadsParallel` entirely, the fast path I added there never fired, no `fixedThread` was emitted, and `computeReviewSummary` lumped the threads into `StillOpen`.
+
+Including PreviouslyAcked in `countNonSkipped` restores the round trip: eval runs, the fast path returns the prior reason without an LLM call, `toFixedThreads` collects the resolutions, and the summary lands them in Acknowledged/Rebutted/Dismissed.
+
+## Test plan
+
+- [x] `go test ./...`
+- [x] New regression test `TestCountNonSkipped_IncludesPreviouslyAcked`
+- [ ] Re-trigger a review on bedrock#1671 with v0.6.24 to confirm the summary flips to "Acknowledged by author: 2"
+</pr-body>
+
+## Project Documentation
+The following project documentation describes conventions and standards for this codebase. Use these to inform your review — flag violations of these conventions when relevant.
+
+<project-doc path="CLAUDE.md">
+# CodeCanary
+
+AI-powered code review for GitHub pull requests.
+
+## Project structure
+
+```
+cmd/
+  review/          # Main binary — review CLI + setup wizard
+    main.go        # Entry point
+    cli/           # Cobra commands
+      root.go      # Root "codecanary" command
+      review.go    # codecanary review <pr>
+      findings.go  # codecanary findings <pr> — fetch bot findings for the review skill
+      reply.go     # codecanary reply --url <comment-url> --body <text> — post a reply on a review thread
+      install_skill.go # codecanary install-skill — write embedded Claude skill to disk
+      setup.go     # codecanary setup [local|github]
+      auth.go      # codecanary auth [status|delete]
+internal/
+  review/
+    runner.go            # Core review pipeline — single Run() entry point
+    config.go            # Config loading, validation, defaults
+    # Provider layer (LLM abstraction)
+    provider.go          # ModelProvider interface + factory registry
+    provider_anthropic.go
+    provider_openai.go
+    provider_openrouter.go
+    provider_claude.go   # Claude CLI wrapper
+    provider_compat.go   # Shared types for OpenAI-compatible APIs
+    pricing.go           # Token-based cost estimation
+    # Platform layer (environment abstraction)
+    platform.go          # ReviewPlatform interface
+    platform_github.go   # GitHub Actions implementation
+    platform_local.go    # Local CLI implementation
+    # Supporting modules
+    prompt.go            # Prompt building (review, incremental, per-thread)
+    findings.go          # Finding parsing, filtering, result structures
+    triage.go            # Thread classification + parallel LLM evaluation
+    formatter.go         # JSON/Markdown/Terminal output formatting
+    usage.go             # Token tracking, budget checking
+    github.go            # GitHub API calls (fetch threads, post reviews)
+    comments.go          # PR review comment fetch + finding marker parser + review-check watcher
+    local.go             # Local diff & git operations
+    state.go             # Local state persistence
+    docs.go              # Project doc discovery
+  credentials/     # Credential storage (keychain with file fallback)
+    keyring.go     # Store/Retrieve/Delete — keychain first, ~/.codecanary/credentials.json fallback
+  skills/          # Claude Code skills embedded in the binary via //go:embed
+    skills.go      # Exports CodecanaryFix() returning the skill body
+    codecanary-fix/SKILL.md  # Canonical skill source (duplicated at .claude/skills/codecanary-fix/SKILL.md; parity enforced by skills_test.go)
+  setup/           # Setup wizard logic (huh forms)
+    forms.go       # Shared huh form components
+    validate.go    # API key validation via test calls
+    guidance.go    # Token/permissions guidance text
+    workflow.go    # GitHub Actions workflow template
+    local.go       # RunLocal() — local setup flow
+    github.go      # RunGitHub() — GitHub Actions setup flow
+  auth/            # OAuth PKCE flow, GitHub App installation
+telemetry/         # Telemetry domain (anonymous usage analytics)
+  worker/          # Cloudflare Worker — telemetry ingestion (TypeScript)
+  dashboard/       # Cloudflare Pages — internal analytics dashboard (vanilla JS + Chart.js)
+oidc/              # OIDC domain
+  worker/          # Cloudflare Worker — OIDC token exchange proxy (TypeScript)
+action.yml         # GitHub Action definition (composite action)
+install.sh         # Downloads and installs codecanary binary permanently
+.claude/
+  skills/
+    codecanary-fix/ # Claude Code skill — drives review→fix→push loop using `codecanary findings` + `codecanary reply`
+```
+
+## Binary
+
+- **`codecanary`** — single binary for reviews, setup, and credential management. Installed locally via `install.sh`, also used by the GitHub Action.
+
+## Build
+
+```sh
+go build ./cmd/review    # builds codecanary
+```
+
+Version is set via ldflags: `-X main.version=v{version}`
+
+## Lint
+
+```sh
+golangci-lint run ./...
+```
+
+All code must pass `golangci-lint` with default linters (errcheck, staticcheck, etc.). Run this before committing.
+
+## Key dependencies
+
+- `spf13/cobra` — CLI framework
+- `charmbracelet/huh` — terminal form builder (setup wizard)
+- `zalando/go-keyring` — OS keychain (with file-based fallback for systems without one)
+- `bmatcuk/doublestar` — glob pattern matching for ignore rules
+- `gopkg.in/yaml.v3` — config parsing
+- `golang.org/x/term` — terminal detection
+
+## Architecture
+
+### Core principle: adapters keep the engine agnostic
+
+The review engine (`runner.go`) is provider- and platform-agnostic. It depends only on two interfaces — never on concrete GitHub APIs, LLM SDKs, or environment-specific logic. All environment and provider specifics live behind adapters.
+
+### Provider layer — `ModelProvider` interface (`provider.go`)
+
+Abstracts LLM invocations. The core engine calls `provider.Run(ctx, prompt, opts)` and gets back text + usage metadata. It never knows which LLM backend is being used.
+
+**Implementations**: `anthropic`, `openai`, `openrouter`, `claude` (CLI).
+**Selection**: factory registry in `provider.go` — `NewProviderForRole(mc, env)` returns the right implementation based on `mc.Provider`.
+
+Adding a new LLM provider means: create `provider_<name>.go` and register a `ProviderFactory` (constructor, validation, pricing, default models) via `init()`.
+
+### Platform layer — `ReviewPlatform` interface (`platform.go`)
+
+Abstracts environment-specific operations: loading previous findings, publishing results, saving state, resolving threads, reporting usage.
+
+**Implementations**: `GithubPlatform` (posts to PRs, reads threads via API), `LocalPlatform` (prints to terminal, persists state to `~/.codecanary/repos/<owner>/<repo>/state/<branch>.json` — per-repo scoping keeps branch names like `main` from colliding across repos; falls back to `~/.codecanary/state/<branch>.json` when no git remote is resolvable).
+
+Routing is strict: `codecanary review --post` → `GithubPlatform`; `codecanary review` (no `--post`) → `LocalPlatform`, even when the branch has an open PR. Local is local — the branch diff (with uncommitted changes) is reviewed against the default base, previous findings come from local state, nothing is fetched from or posted to GitHub. The old `GithubPlatform`-with-`Post=false` hybrid is gone; it was the source of the "state written locally, read from GitHub" asymmetry that kept breaking incremental local reviews.
+
+Adding a new platform (e.g., GitLab) means: implement `ReviewPlatform`, wire it in the CLI.
+
+### Unified review pipeline (`runner.go`)
+
+There is a **single `Run()` function** — not separate paths for GitHub vs. local. The pipeline is:
+
+1. Fetch PR data (or local diff)
+2. Load config, project docs, file contents
+3. Create providers via `NewProviderForRole()` (factory, provider-agnostic)
+4. Load previous findings via `platform.LoadPreviousFindings()`
+5. If incremental: triage threads, evaluate via provider, handle resolutions
+6. Build and execute main review prompt
+7. Parse findings, filter non-actionable
+8. `platform.Publish()` → `platform.SaveState()` → `platform.ReportUsage()`
+
+### Other architecture notes
+
+- **Config** is split across two files in `.codecanary/`: `config.yml` (provider, models, budgets, timeouts) and `review.yml` (rules, context, ignore patterns). `review.yml` is optional — if present, its fields override rules/context/ignore in `config.yml`. A personal `review.local.yml` can add rules, context, and ignore patterns on top of `review.yml` (append semantics, not replacement). Legacy `.codecanary.yml` at repo root is still supported with a deprecation warning.
+- **Incremental reviews**: on re-push, triage existing threads (Go-driven classifier in `triage.go`), evaluate changed threads via provider (triage model), then review only new code
+- **Dual marker detection**: reads both `codecanary:review` and legacy `clanopy:review` HTML markers for backward compatibility
+- **Anti-hallucination**: explicit file allowlist, line validation against diff, max finding distance threshold
+- **OIDC worker** (`oidc/worker/`): OIDC token exchange proxy at `oidc.codecanary.sh` — verifies GitHub Actions OIDC token, returns GitHub App installation token
+- **Telemetry worker** (`telemetry/worker/`): anonymous usage ingest at `telemetry.codecanary.sh` — writes to a Cloudflare Analytics Engine dataset
+- **Telemetry dashboard** (`telemetry/dashboard/`): internal analytics view at `dashboard.codecanary.sh` — Cloudflare Pages + Pages Functions, gated by Cloudflare Access. Reads the AE dataset via the SQL HTTP API with a read-only API token (no AE binding, so writes are platform-impossible)
+- **Setup** is a subcommand (`codecanary setup`) using `charmbracelet/huh` forms, with `local` and `github` sub-flows
+- **Credentials** use a single env var `CODECANARY_PROVIDER_SECRET` for all providers. Stored via `go-keyring` (OS keychain) with a file-based fallback (`~/.codecanary/credentials.json`, mode `0600`). `resolveEnv()` in `runner.go` injects the stored credential into the filtered env when not already set.
+
+## Rules
+
+- **Keep the core engine agnostic.** `runner.go`, `triage.go`, `prompt.go`, `findings.go` must never import or reference a specific LLM provider or platform. All provider/platform specifics go behind the `ModelProvider` or `ReviewPlatform` interfaces. No `if provider == "openai"` in core logic.
+- **Use the adapter/provider pattern for new integrations.** New LLM backends → create `provider_<name>.go` with a `ProviderFactory` registration in `init()`. New deployment targets → implement `ReviewPlatform` + wire in CLI. Never fork the pipeline.
+- **One pipeline, not two.** There must be a single `Run()` path. GitHub and local modes differ only in which `ReviewPlatform` implementation is injected — the orchestration logic is shared.
+- **Shared types for similar providers.** OpenAI-compatible APIs share request/response types via `provider_compat.go`. Don't duplicate HTTP client logic across providers.
+- **Don't repeat yourself.** Before writing new code, search the codebase for existing functions, mappings, or logic that already does what you need — then call it instead of reimplementing it. This applies to everything: switch statements, helper functions, validation logic, data mappings, HTTP calls. One source of truth, callers import it. Don't merge scaffolding or unused exports — if it's not called yet, it doesn't ship yet.
+- **File names are ownership boundaries.** A function defined in `local.go` implies it belongs to the local flow; one in `github.go` implies it belongs to GitHub. If a function is called by multiple files in the same package, it belongs in a shared file (e.g., `forms.go` for setup helpers, `platform.go` for platform-shared logic). Never define shared infrastructure in a flow-specific file — move it to the file that matches its actual scope.
+- **Canonical provider registration points.** Provider names live in the factory map in `provider.go`. All providers use `CODECANARY_PROVIDER_SECRET` for credentials (defined in `internal/credentials/keyring.go`). When adding a new provider, register a `ProviderFactory` in `provider.go` and add config validation in `config.go`.
+- **Minimize shell code.** `install.sh` and the GitHub Action (`action.yml`) should be kept as thin as possible. All logic must live in Go.
+- **Workflow template is embedded.** `internal/setup/codecanary.yml` is the single source of truth for the GitHub Actions workflow, embedded via `//go:embed`. `.github/workflows/codecanary.yml` must be identical — `go test ./internal/setup/` enforces this. When changing the workflow, edit either file and copy to the other.
+- **Claude skills are embedded.** `internal/skills/codecanary-fix/SKILL.md` is the single source of truth for the codecanary-fix skill, embedded via `//go:embed` and materialized by `codecanary install-skill`. `.claude/skills/codecanary-fix/SKILL.md` must be identical so Claude Code's project-mode discovery finds it when working in this repo — `go test ./internal/skills/` enforces this. When changing the skill, edit either file and copy to the other.
+- **Keep `docs/review-flow.md` in sync.** This document describes the full review pipeline — every step, the triage flow, platform differences, and key design decisions. When changing `runner.go`, `triage.go`, `prompt.go`, `findings.go`, `github.go`, `local.go`, `platform.go`, or the `ReviewPlatform` implementations, update the doc to reflect the new behavior.
+- Tests exist for config, findings, formatting, and triage. Be careful with refactors — run `go test ./...` and `go vet ./...`.
+
+</project-doc>
+
+## Review Rules
+No specific rules are defined. Perform a general code review covering correctness, security, performance, and maintainability.
+
+## Files in This Diff
+The following files — and ONLY these files — are part of this diff. Every finding you report MUST reference one of these exact paths. Do NOT reference any file that is not in this list.
+
+- `internal/review/triage.go`
+- `internal/review/triage_test.go`
+
+## Changed File Contents
+Below are the full contents of changed files. Use these to understand surrounding code, types, imports, and control flow. Do NOT report findings on unchanged code — only flag issues directly related to changes in the diff.
+
+### `internal/review/triage.go`
+````
+1: package review
+2: 
+3: import (
+4: 	"context"
+5: 	"encoding/json"
+6: 	"fmt"
+7: 	"os"
+8: 	"sort"
+9: 	"strconv"
+10: 	"strings"
+11: 	"sync"
+12: )
+13: 
+14: // ThreadClassification is the triage result for a single unresolved thread.
+15: type ThreadClassification int
+16: 
+17: const (
+18: 	TriageSkip               ThreadClassification = iota // no code changes at all
+19: 	TriageCodeChanged                                    // diff touches finding location (outdated)
+20: 	TriageHasReply                                       // thread has human replies
+21: 	TriageCodeChangedReply                               // both code changed AND has replies
+22: 	TriageCrossFileChange                                // diff has changes but NOT in this thread's file
+23: 	TriageFileRemovedFromPR                              // file no longer in the PR
+24: 	TriagePreviouslyAcked                                // bot already ack'd a deferral; no new human reply since
+25: )
+26: 
+27: // TriagedThread pairs a ReviewThread with its classification and context.
+28: type TriagedThread struct {
+29: 	Thread         ReviewThread
+30: 	Index          int // original index in the unresolved slice
+31: 	Class          ThreadClassification
+32: 	FileDiff       string // file-scoped diff (level 1) or full diff (cross-file)
+33: 	FullDiff       string // full PR diff for widened-scope fallback; empty when not applicable
+34: 	FileSnippet    string // windowed file content around finding + diff hunks
+35: 	BotLogin       string // login of the review bot, for filtering replies
+36: 	PriorAckReason string // for TriagePreviouslyAcked: the previously-recorded reason (acknowledged/rebutted/dismissed)
+37: }
+38: 
+39: // ThreadResolution is the result of a per-thread Claude evaluation.
+40: type ThreadResolution struct {
+41: 	Index     int
+42: 	Resolved  bool
+43: 	Reason    string // "code_change", "acknowledged", "rebutted", "dismissed"
+44: 	Rationale string // one-sentence narrative from the evaluator, surfaced in the incremental review to prevent ping-ponging
+45: 	Error     error
+46: }
+47: 
+48: // ExtractFileDiff extracts all diff hunks for a specific file from a unified diff.
+49: func ExtractFileDiff(fullDiff, filePath string) string {
+50: 	lines := strings.Split(fullDiff, "\n")
+51: 	var result []string
+52: 	capturing := false
+53: 
+54: 	for i := 0; i < len(lines); i++ {
+55: 		// Detect start of a new file in the diff.
+56: 		if strings.HasPrefix(lines[i], "diff --git") {
+57: 			if capturing {
+58: 				// We were capturing — new file starts, stop.
+59: 				break
+60: 			}
+61: 			// Search ahead for the "+++ b/<path>" header line.
+62: 			// The offset varies (index line, mode lines, etc.) so scan
+63: 			// forward instead of using a fixed offset.
+64: 			for j := i + 1; j < len(lines) && !strings.HasPrefix(lines[j], "diff --git"); j++ {
+65: 				if strings.HasPrefix(lines[j], "+++ b/"+filePath) {
+66: 					capturing = true
+67: 					result = append(result, lines[i])
+68: 					break
+69: 				}
+70: 			}
+71: 			continue
+72: 		}
+73: 		if capturing {
+74: 			result = append(result, lines[i])
+75: 		}
+76: 	}
+77: 
+78: 	return strings.Join(result, "\n")
+79: }
+80: 
+81: // lineRange represents an inclusive range of 1-based line numbers.
+82: type lineRange struct{ start, end int }
+83: 
+84: // parseHunkNewRanges extracts the new-file line ranges from unified diff hunk headers.
+85: // Each @@ -X,Y +N,M @@ header yields a range [N, N+M-1].
+86: func parseHunkNewRanges(diffText string) []lineRange {
+87: 	var ranges []lineRange
+88: 	for _, line := range strings.Split(diffText, "\n") {
+89: 		if !strings.HasPrefix(line, "@@ ") {
+90: 			continue
+91: 		}
+92: 		// Find +N or +N,M in the hunk header.
+93: 		idx := strings.Index(line, "+")
+94: 		if idx < 0 {
+95: 			continue
+96: 		}
+97: 		rest := line[idx+1:]
+98: 		// Trim everything after the space/comma/@@ that ends the range spec.
+99: 		if sp := strings.IndexAny(rest, " @"); sp >= 0 {
+100: 			rest = rest[:sp]
+101: 		}
+102: 		parts := strings.SplitN(rest, ",", 2)
+103: 		start, err := strconv.Atoi(parts[0])
+104: 		if err != nil {
+105: 			continue
+106: 		}
+107: 		count := 1
+108: 		if len(parts) == 2 {
+109: 			if c, err := strconv.Atoi(parts[1]); err == nil {
+110: 				if c == 0 {
+111: 					continue // pure deletion hunk — no new lines
+112: 				}
+113: 				if c > 0 {
+114: 					count = c
+115: 				}
+116: 			}
+117: 		}
+118: 		ranges = append(ranges, lineRange{start: start, end: start + count - 1})
+119: 	}
+120: 	return ranges
+121: }
+122: 
+123: // mergeRanges merges overlapping or adjacent line ranges, sorted by start.
+124: func mergeRanges(ranges []lineRange) []lineRange {
+125: 	if len(ranges) == 0 {
+126: 		return nil
+127: 	}
+128: 	sort.Slice(ranges, func(i, j int) bool { return ranges[i].start < ranges[j].start })
+129: 	merged := []lineRange{ranges[0]}
+130: 	for _, r := range ranges[1:] {
+131: 		last := &merged[len(merged)-1]
+132: 		if r.start <= last.end+1 {
+133: 			if r.end > last.end {
+134: 				last.end = r.end
+135: 			}
+136: 		} else {
+137: 			merged = append(merged, r)
+138: 		}
+139: 	}
+140: 	return merged
+141: }
+142: 
+143: // ExtractFileSnippet extracts a windowed snippet from file content centered around
+144: // the finding line and expanded to cover diff hunk ranges. Returns an empty string
+145: // if content is empty. findingLine is 1-based. diffText is the file-scoped diff
+146: // (used to parse hunk ranges; may be empty for cross-file cases). maxLines caps the
+147: // total snippet length.
+148: func ExtractFileSnippet(content string, findingLine int, diffText string, maxLines int) string {
+149: 	if content == "" {
+150: 		return ""
+151: 	}
+152: 	lines := strings.Split(content, "\n")
+153: 	totalLines := len(lines)
+154: 
+155: 	// Build interesting ranges: finding line ± 50, each hunk range ± 30.
+156: 	const findingPad = 50
+157: 	const hunkPad = 30
+158: 
+159: 	var ranges []lineRange
+160: 	if findingLine > 0 {
+161: 		ranges = append(ranges, lineRange{
+162: 			start: max(1, findingLine-findingPad),
+163: 			end:   min(totalLines, findingLine+findingPad),
+164: 		})
+165: 	}
+166: 	for _, hr := range parseHunkNewRanges(diffText) {
+167: 		ranges = append(ranges, lineRange{
+168: 			start: max(1, hr.start-hunkPad),
+169: 			end:   min(totalLines, hr.end+hunkPad),
+170: 		})
+171: 	}
+172: 	if len(ranges) == 0 {
+173: 		// Fallback: center on line 1 if nothing else.
+174: 		ranges = append(ranges, lineRange{start: 1, end: min(totalLines, maxLines)})
+175: 	}
+176: 
+177: 	merged := mergeRanges(ranges)
+178: 
+179: 	// If total exceeds maxLines, prioritize the range containing the finding line,
+180: 	// then include other ranges in order until the budget is exhausted.
+181: 	total := 0
+182: 	for _, r := range merged {
+183: 		total += r.end - r.start + 1
+184: 	}
+185: 	if total > maxLines {
+186: 		// Find which merged range contains the finding line.
+187: 		// When findingLine is invalid (<= 0), default to the first range.
+188: 		findingIdx := 0
+189: 		if findingLine > 0 {
+190: 			for i, r := range merged {
+191: 				if findingLine >= r.start && findingLine <= r.end {
+192: 					findingIdx = i
+193: 					break
+194: 				}
+195: 			}
+196: 		}
+197: 		// Start with the finding range, then add others.
+198: 		budget := maxLines
+199: 		kept := make([]bool, len(merged))
+200: 		kept[findingIdx] = true
+201: 		size := merged[findingIdx].end - merged[findingIdx].start + 1
+202: 		if size > budget && findingLine > 0 {
+203: 			// Truncate the finding range around the finding line.
+204: 			half := budget / 2
+205: 			merged[findingIdx] = lineRange{
+206: 				start: max(1, findingLine-half),
+207: 				end:   min(totalLines, findingLine+half),
+208: 			}
+209: 			size = merged[findingIdx].end - merged[findingIdx].start + 1
+210: 		} else if size > budget {
+211: 			// No valid finding line — just take the first maxLines of the range.
+212: 			merged[findingIdx] = lineRange{
+213: 				start: merged[findingIdx].start,
+214: 				end:   min(totalLines, merged[findingIdx].start+budget-1),
+215: 			}
+216: 			size = merged[findingIdx].end - merged[findingIdx].start + 1
+217: 		}
+218: 		budget -= size
+219: 		for i, r := range merged {
+220: 			if kept[i] {
+221: 				continue
+222: 			}
+223: 			rSize := r.end - r.start + 1
+224: 			if rSize <= budget {
+225: 				kept[i] = true
+226: 				budget -= rSize
+227: 			}
+228: 		}
+229: 		var trimmed []lineRange
+230: 		for i, r := range merged {
+231: 			if kept[i] {
+232: 				trimmed = append(trimmed, r)
+233: 			}
+234: 		}
+235: 		merged = trimmed
+236: 	}
+237: 
+238: 	// Format with line numbers, inserting omission markers between gaps.
+239: 	var b strings.Builder
+240: 	for i, r := range merged {
+241: 		if i > 0 {
+242: 			gap := r.start - merged[i-1].end - 1
+243: 			fmt.Fprintf(&b, "... (%d lines omitted) ...\n", gap)
+244: 		}
+245: 		for ln := r.start; ln <= r.end && ln <= totalLines; ln++ {
+246: 			fmt.Fprintf(&b, "%d: %s\n", ln, lines[ln-1])
+247: 		}
+248: 	}
+249: 	return b.String()
+250: }
+251: 
+252: // ClassifyThreads triages unresolved threads using GitHub's outdated flag and reply presence.
+253: //
+254: // Two diffs serve different purposes:
+255: //   - activityDiff: the incremental diff (changes since last review). Used to decide whether
+256: //     to skip evaluation — when empty, non-outdated threads with no replies are TriageSkip.
+257: //   - contextDiff: the full PR diff (all changes). Used to determine the correct classification
+258: //     (TriageCodeChanged vs TriageCrossFileChange) and to extract FileDiff/FileSnippet for the
+259: //     evaluation prompt. This ensures fixes from earlier pushes are visible to the evaluator.
+260: //
+261: // prFiles is the current set of files in the PR; threads on files no longer in the PR
+262: // are classified as TriageFileRemovedFromPR and auto-resolved without an LLM call.
+263: // fileContents provides current file contents for building context snippets in triage prompts.
+264: func ClassifyThreads(threads []ReviewThread, activityDiff, contextDiff, botLogin string, prFiles []string, fileContents map[string]string) []TriagedThread {
+265: 	prFileSet := make(map[string]bool, len(prFiles))
+266: 	for _, f := range prFiles {
+267: 		prFileSet[f] = true
+268: 	}
+269: 
+270: 	result := make([]TriagedThread, len(threads))
+271: 
+272: 	for i, t := range threads {
+273: 		// File no longer in the PR — auto-resolve without LLM.
+274: 		// When prFiles is empty (e.g. upstream fetch returned no file list),
+275: 		// we skip this check to avoid incorrectly resolving all threads.
+276: 		if len(prFileSet) > 0 && !prFileSet[t.Path] {
+277: 			result[i] = TriagedThread{
+278: 				Thread: t,
+279: 				Index:  i,
+280: 				Class:  TriageFileRemovedFromPR,
+281: 			}
+282: 			continue
+283: 		}
+284: 
+285: 		hasReply := hasNewHumanReply(t, botLogin)
+286: 		outdated := t.Outdated
+287: 		deleted := fileDeletedInDiff(contextDiff, t.Path)
+288: 
+289: 		// Sticky-ack: when the bot already recorded a deferral and the
+290: 		// author has not added a fresh reply since, preserve the prior
+291: 		// classification instead of rerunning triage. This prevents the
+292: 		// "Acknowledged by author: 2" → "Still unresolved: 2" regression
+293: 		// that happened on subsequent pushes when no new signal was present.
+294: 		var priorAck string
+295: 		if !hasReply {
+296: 			priorAck = parsePriorAckReason(t, botLogin)
+297: 		}
+298: 
+299: 		var class ThreadClassification
+300: 		switch {
+301: 		case priorAck != "":
+302: 			class = TriagePreviouslyAcked
+303: 		case deleted:
+304: 			// File was deleted — evaluate with full diff so Claude can check
+305: 			// whether the code moved to a replacement file with the fix applied.
+306: 			class = TriageCrossFileChange
+307: 		case outdated && hasReply:
+308: 			class = TriageCodeChangedReply
+309: 		case outdated:
+310: 			class = TriageCodeChanged
+311: 		case hasReply:
+312: 			class = TriageHasReply
+313: 		default:
+314: 			// No GitHub outdated flag, no replies. Use the incremental diff to
+315: 			// decide whether there is new activity worth evaluating.
+316: 			if activityDiff == "" {
+317: 				// No changes since last review — nothing new to evaluate.
+318: 				class = TriageSkip
+319: 			} else if fileInDiff(contextDiff, t.Path) {
+320: 				// File was changed in the PR — classify as code-changed so the
+321: 				// evaluator sees the file-scoped diff (which may include fixes
+322: 				// from earlier pushes that the incremental diff missed).
+323: 				class = TriageCodeChanged
+324: 			} else {
+325: 				// Code changed in other files — evaluate in case the fix is cross-file.
+326: 				class = TriageCrossFileChange
+327: 			}
+328: 		}
+329: 
+330: 		// Use file-scoped diff for same-file evaluations to reduce noise.
+331: 		// The full PR diff can drown out the relevant fix with changes from
+332: 		// unrelated files, causing false "not resolved" verdicts. Cross-file
+333: 		// evaluations keep the full diff since the fix is in a different file.
+334: 		var fileDiff, fullDiff string
+335: 		switch class {
+336: 		case TriageCodeChanged, TriageCodeChangedReply:
+337: 			fileDiff = ExtractFileDiff(contextDiff, t.Path)
+338: 			fullDiff = contextDiff // retained for widened-scope fallback
+339: 		case TriageCrossFileChange:
+340: 			fileDiff = contextDiff
+341: 		}
+342: 
+343: 		// Build a windowed file snippet for code-change evaluations.
+344: 		// Reuse fileDiff (already file-scoped) for snippet range calculation
+345: 		// so hunk line numbers from other files don't pull in wrong sections.
+346: 		var fileSnippet string
+347: 		if content, ok := fileContents[t.Path]; ok {
+348: 			switch class {
+349: 			case TriageCodeChanged, TriageCodeChangedReply:
+350: 				fileSnippet = ExtractFileSnippet(content, t.Line, fileDiff, 300)
+351: 			case TriageCrossFileChange:
+352: 				// Show finding's file context even though the diff is in other files.
+353: 				fileSnippet = ExtractFileSnippet(content, t.Line, "", 200)
+354: 			}
+355: 		}
+356: 
+357: 		result[i] = TriagedThread{
+358: 			Thread:         t,
+359: 			Index:          i,
+360: 			Class:          class,
+361: 			FileDiff:       fileDiff,
+362: 			FullDiff:       fullDiff,
+363: 			FileSnippet:    fileSnippet,
+364: 			BotLogin:       botLogin,
+365: 			PriorAckReason: priorAck,
+366: 		}
+367: 	}
+368: 
+369: 	return result
+370: }
+371: 
+372: // parsePriorAckReason returns the reason recorded in the most recent
+373: // codecanary ack reply on the thread (acknowledged/rebutted/dismissed),
+374: // or "" if no ack reply is present. Handles both the current marker
+375: // (<!-- codecanary:ack:<reason> -->) and the legacy clanopy form.
+376: func parsePriorAckReason(t ReviewThread, botLogin string) string {
+377: 	var latest string
+378: 	for _, r := range t.Replies {
+379: 		if r.Author != botLogin {
+380: 			continue
+381: 		}
+382: 		if reason := extractAckReason(r.Body); reason != "" {
+383: 			latest = reason
+384: 		}
+385: 	}
+386: 	return latest
+387: }
+388: 
+389: // extractAckReason pulls the reason value out of a codecanary ack marker.
+390: // Returns "" when the body has no marker. Unknown reasons are returned
+391: // as-is so callers can decide how to handle them; in practice the bot
+392: // only writes "acknowledged", "rebutted", "dismissed", or "unknown".
+393: func extractAckReason(body string) string {
+394: 	for _, prefix := range []string{ackMarkerPrefix, legacyAckPrefix} {
+395: 		idx := strings.Index(body, prefix)
+396: 		if idx < 0 {
+397: 			continue
+398: 		}
+399: 		rest := body[idx+len(prefix):]
+400: 		end := strings.Index(rest, " -->")
+401: 		if end < 0 {
+402: 			end = strings.Index(rest, "-->")
+403: 			if end < 0 {
+404: 				continue
+405: 			}
+406: 		}
+407: 		return strings.TrimSpace(rest[:end])
+408: 	}
+409: 	return ""
+410: }
+411: 
+412: // fileInDiff checks if the diff contains changes to the given file path.
+413: func fileInDiff(diff, path string) bool {
+414: 	target := "+++ b/" + path
+415: 	return strings.Contains(diff, target+"\n") || strings.Contains(diff, target+"\t") || strings.HasSuffix(diff, target)
+416: }
+417: 
+418: // fileDeletedInDiff checks if the diff shows the given file was deleted.
+419: // A deleted file has "--- a/<path>" followed by "+++ /dev/null".
+420: func fileDeletedInDiff(diff, path string) bool {
+421: 	marker := "--- a/" + path
+422: 	idx := strings.Index(diff, marker)
+423: 	if idx < 0 {
+424: 		return false
+425: 	}
+426: 	// Ensure full path match (not a prefix of a longer filename).
+427: 	rest := diff[idx+len(marker):]
+428: 	if len(rest) > 0 && rest[0] != '\n' && rest[0] != '\r' {
+429: 		return false
+430: 	}
+431: 	nl := strings.Index(rest, "\n")
+432: 	if nl < 0 {
+433: 		return false
+434: 	}
+435: 	nextLine := ""
+436: 	rest = rest[nl+1:]
+437: 	if eol := strings.Index(rest, "\n"); eol >= 0 {
+438: 		nextLine = rest[:eol]
+439: 	} else {
+440: 		nextLine = rest
+441: 	}
+442: 	return nextLine == "+++ /dev/null"
+443: }
+444: 
+445: // hasHumanReply checks if a thread has at least one reply from a non-bot author.
+446: func hasHumanReply(t ReviewThread, botLogin string) bool {
+447: 	for _, r := range t.Replies {
+448: 		if r.Author != botLogin {
+449: 			return true
+450: 		}
+451: 	}
+452: 	return false
+453: }
+454: 
+455: // isAckReply checks if a reply body contains an acknowledgment marker.
+456: func isAckReply(body string) bool {
+457: 	return strings.Contains(body, ackMarkerPrefix) || strings.Contains(body, legacyAckPrefix)
+458: }
+459: 
+460: // hasNewHumanReply checks if a thread has a human reply AFTER the last
+461: // ack reply. If no ack reply exists, it falls back to hasHumanReply behavior.
+462: // Replies are in chronological order.
+463: func hasNewHumanReply(t ReviewThread, botLogin string) bool {
+464: 	lastAckIdx := -1
+465: 	for i, r := range t.Replies {
+466: 		if r.Author == botLogin && isAckReply(r.Body) {
+467: 			lastAckIdx = i
+468: 		}
+469: 	}
+470: 	if lastAckIdx == -1 {
+471: 		// No ack reply exists — fall back to standard check.
+472: 		return hasHumanReply(t, botLogin)
+473: 	}
+474: 	// Check for human replies after the last ack.
+475: 	for _, r := range t.Replies[lastAckIdx+1:] {
+476: 		if r.Author != botLogin {
+477: 			return true
+478: 		}
+479: 	}
+480: 	return false
+481: }
+482: 
+483: // BuildPerThreadPrompt dispatches to the appropriate prompt builder based on classification.
+484: func BuildPerThreadPrompt(t TriagedThread, cfg *ReviewConfig) string {
+485: 	switch t.Class {
+486: 	case TriageCodeChanged:
+487: 		return buildCodeChangePrompt(t, cfg)
+488: 	case TriageHasReply:
+489: 		return buildReplyPrompt(t, cfg)
+490: 	case TriageCodeChangedReply:
+491: 		return buildCodeChangeReplyPrompt(t, cfg)
+492: 	case TriageCrossFileChange:
+493: 		return buildCrossFilePrompt(t, cfg)
+494: 	default:
+495: 		return "" // TriageSkip — should not be called
+496: 	}
+497: }
+498: 
+499: func buildCodeChangePrompt(t TriagedThread, cfg *ReviewConfig) string {
+500: 	var b strings.Builder
+501: 
+502: 	b.WriteString("You are a code reviewer. You previously raised a finding on a pull request. The author pushed new code.\n\n")
+503: 
+504: 	writeFinding(&b, t.Thread)
+505: 
+506: 	writeFileSnippet(&b, t.FileSnippet)
+507: 
+508: 	b.WriteString("## Code Changes\n```diff\n")
+509: 	b.WriteString(t.FileDiff)
+510: 	b.WriteString("\n```\n\n")
+511: 
+512: 	if ctx := evalContext(cfg, "code_change"); ctx != "" {
+513: 		fmt.Fprintf(&b, "## Additional Context\n%s\n\n", ctx)
+514: 	}
+515: 
+516: 	b.WriteString("## Task\n")
+517: 	b.WriteString("Determine whether the issue you raised has been resolved.\n\n")
+518: 	b.WriteString("**Start with the current file content** (if provided). Read the code around the finding location and determine whether the issue still exists. If the problematic code has been fixed, removed, or restructured so the finding no longer applies, the answer is YES — regardless of which specific diff line produced the fix.\n\n")
+519: 	b.WriteString("If file content is not available, examine the diff for evidence that the issue was addressed.\n")
+520: 	b.WriteString("- A change that fixes the root cause, removes the problematic code, or meaningfully changes the code so the finding no longer applies → YES.\n")
+521: 	b.WriteString("- A change to nearby or adjacent code counts IF it effectively resolves the concern (e.g. fixing the logic, adding the missing check, refactoring the problematic pattern).\n")
+522: 	b.WriteString("- A structural change also counts — for example, if code was moved before a guard condition, control flow was reordered, or the code was refactored so the finding no longer applies.\n")
+523: 	b.WriteString("- Answer NO only if the concern is still present in the current code (when file content is provided) or if the diff does not address the finding.\n\n")
+524: 	writeCodeChangeResolutionFormat(&b)
+525: 
+526: 	return b.String()
+527: }
+528: 
+529: func buildReplyPrompt(t TriagedThread, cfg *ReviewConfig) string {
+530: 	var b strings.Builder
+531: 
+532: 	b.WriteString("You are a code reviewer. You previously raised a finding on a pull request. The author replied.\n\n")
+533: 
+534: 	writeFinding(&b, t.Thread)
+535: 	writeReplies(&b, t.Thread, t.BotLogin)
+536: 
+537: 	if ctx := evalContext(cfg, "reply"); ctx != "" {
+538: 		fmt.Fprintf(&b, "## Additional Context\n%s\n\n", ctx)
+539: 	}
+540: 
+541: 	b.WriteString("## Task\n")
+542: 	b.WriteString("Does the author's reply resolve the finding?\n")
+543: 	b.WriteString("- **Dismissed**: Reply explicitly asks the reviewer to dismiss, ignore, or skip the finding (e.g. \"dismiss this\", \"you can safely dismiss\", \"please ignore\", \"skip this one\"). The author is exercising their authority to close the thread without further justification.\n")
+544: 	b.WriteString("- **Acknowledged**: Reply indicates the finding is intentional, accepted, or tracked elsewhere (e.g. \"intentional\", \"will fix in a future PR\", \"tracked in issue #N\").\n")
+545: 	b.WriteString("- **Rebutted**: Reply provides concrete technical reasoning showing the finding is not applicable. Vague disagreement (\"I don't think so\") does NOT qualify — the reply must cite specific technical details, framework behavior, or project constraints.\n")
+546: 	b.WriteString("- **Not resolved**: Reply is a question, vague disagreement, or does not address the finding.\n\n")
+547: 	writeResolutionFormat(&b)
+548: 
+549: 	return b.String()
+550: }
+551: 
+552: func buildCodeChangeReplyPrompt(t TriagedThread, cfg *ReviewConfig) string {
+553: 	var b strings.Builder
+554: 
+555: 	b.WriteString("You are a code reviewer. You previously raised a finding on a pull request. The author pushed new code AND replied.\n\n")
+556: 
+557: 	writeFinding(&b, t.Thread)
+558: 	writeReplies(&b, t.Thread, t.BotLogin)
+559: 
+560: 	writeFileSnippet(&b, t.FileSnippet)
+561: 
+562: 	b.WriteString("## Code Changes\n```diff\n")
+563: 	b.WriteString(t.FileDiff)
+564: 	b.WriteString("\n```\n\n")
+565: 
+566: 	if ctx := evalContext(cfg, "code_change"); ctx != "" {
+567: 		fmt.Fprintf(&b, "## Additional Context (Code Changes)\n%s\n\n", ctx)
+568: 	}
+569: 	if ctx := evalContext(cfg, "reply"); ctx != "" {
+570: 		fmt.Fprintf(&b, "## Additional Context (Replies)\n%s\n\n", ctx)
+571: 	}
+572: 
+573: 	b.WriteString("## Task\n")
+574: 	b.WriteString("Is the finding resolved? It may be resolved by the code change, the reply, or both.\n\n")
+575: 	b.WriteString("**Start with the current file content** (if provided). If the issue no longer exists in the current code — the root cause is fixed, the code was removed, or the code was restructured — it is resolved by code change regardless of which diff line produced the fix.\n\n")
+576: 	b.WriteString("If the code still shows the issue, evaluate the reply:\n")
+577: 	b.WriteString("- **Dismissed**: Reply explicitly asks the reviewer to dismiss, ignore, or skip the finding (e.g. \"dismiss this\", \"you can safely dismiss\", \"please ignore\", \"skip this one\"). The author is exercising their authority to close the thread without further justification.\n")
+578: 	b.WriteString("- **Acknowledged**: Reply indicates the finding is intentional, accepted, or tracked elsewhere (e.g. \"intentional\", \"will fix in a future PR\", \"tracked in issue #N\").\n")
+579: 	b.WriteString("- **Rebutted**: Reply provides concrete technical reasoning showing the finding is not applicable. Vague disagreement (\"I don't think so\") does NOT qualify — the reply must cite specific technical details, framework behavior, or project constraints.\n")
+580: 	b.WriteString("- **Not resolved**: The issue is still in the code, and the reply is a question, vague disagreement, or does not address the finding.\n\n")
+581: 	writeResolutionFormat(&b)
+582: 
+583: 	return b.String()
+584: }
+585: 
+586: func buildCrossFilePrompt(t TriagedThread, cfg *ReviewConfig) string {
+587: 	var b strings.Builder
+588: 
+589: 	b.WriteString("You are a code reviewer. You previously raised a finding on a pull request. The author pushed new code, but the changes are in DIFFERENT files from where you left your finding.\n\n")
+590: 
+591: 	writeFinding(&b, t.Thread)
+592: 
+593: 	writeFileSnippet(&b, t.FileSnippet)
+594: 
+595: 	b.WriteString("## All Code Changes\n```diff\n")
+596: 	b.WriteString(t.FileDiff)
+597: 	b.WriteString("\n```\n\n")
+598: 
+599: 	if ctx := evalContext(cfg, "code_change"); ctx != "" {
+600: 		fmt.Fprintf(&b, "## Additional Context\n%s\n\n", ctx)
+601: 	}
+602: 
+603: 	b.WriteString("## Task\n")
+604: 	b.WriteString("Determine whether the issue you raised has been resolved, even though the changes are in different files from where you left your finding.\n")
+605: 	b.WriteString("**Start with the current file content** (if provided). If the issue no longer exists in the current code, the answer is YES.\n\n")
+606: 	b.WriteString("Otherwise, examine the code changes for evidence of a cross-file fix.\n")
+607: 	writeCrossFileCriteria(&b)
+608: 	b.WriteString("- Answer NO if none of the changes in this diff are related to the finding, or if file context is provided and the concern is still present in the current code.\n\n")
+609: 	writeCodeChangeResolutionFormat(&b)
+610: 
+611: 	return b.String()
+612: }
+613: 
+614: // buildWidenedScopePrompt is the level-2 fallback prompt used when the file-scoped
+615: // evaluation (level 1) found no fix. It sends the full PR diff so the evaluator can
+616: // detect cross-file fixes that the narrower scope missed.
+617: func buildWidenedScopePrompt(t TriagedThread, cfg *ReviewConfig) string {
+618: 	var b strings.Builder
+619: 
+620: 	b.WriteString("You are a code reviewer. You previously raised a finding on a pull request. A focused check of the finding's file did not find a fix. Now examine ALL code changes across the PR — the fix may be in a different file.\n\n")
+621: 
+622: 	writeFinding(&b, t.Thread)
+623: 
+624: 	writeFileSnippet(&b, t.FileSnippet)
+625: 
+626: 	b.WriteString("## All Code Changes (full PR)\n```diff\n")
+627: 	b.WriteString(t.FullDiff)
+628: 	b.WriteString("\n```\n\n")
+629: 
+630: 	if ctx := evalContext(cfg, "code_change"); ctx != "" {
+631: 		fmt.Fprintf(&b, "## Additional Context\n%s\n\n", ctx)
+632: 	}
+633: 
+634: 	b.WriteString("## Task\n")
+635: 	b.WriteString("The finding's file was already checked and the issue appears unresolved there. Examine the full PR diff to determine if a change in another file resolves the concern.\n\n")
+636: 	writeCrossFileCriteria(&b)
+637: 	b.WriteString("- Answer NO if none of the changes in the diff are related to the finding.\n\n")
+638: 	writeCodeChangeResolutionFormat(&b)
+639: 
+640: 	return b.String()
+641: }
+642: 
+643: // writeCrossFileCriteria writes the shared YES-criteria bullets for cross-file evaluations.
+644: // Used by both buildCrossFilePrompt and buildWidenedScopePrompt.
+645: func writeCrossFileCriteria(b *strings.Builder) {
+646: 	b.WriteString("- Answer YES if a change in another file effectively resolves the concern (e.g. fixing the caller instead of the callee, adding validation in a different layer, removing the code path that triggers the issue).\n")
+647: 	b.WriteString("- A structural change also counts — for example, if code was moved, control flow was reordered, or the code was refactored so the finding no longer applies.\n")
+648: }
+649: 
+650: // writeFileSnippet adds the current file content section to the prompt when available.
+651: func writeFileSnippet(b *strings.Builder, snippet string) {
+652: 	if snippet == "" {
+653: 		return
+654: 	}
+655: 	b.WriteString("## Current File Content (around finding)\n")
+656: 	b.WriteString("This shows the file as it exists NOW (after the changes). Use it to understand the final code structure and control flow.\n\n~~~\n")
+657: 	b.WriteString(snippet)
+658: 	b.WriteString("~~~\n\n")
+659: }
+660: 
+661: // writeFinding writes the finding section to the prompt.
+662: func writeFinding(b *strings.Builder, t ReviewThread) {
+663: 	b.WriteString("## Finding\n")
+664: 	fmt.Fprintf(b, "File: `%s:%d`\n", t.Path, t.Line)
+665: 	b.WriteString(t.Body)
+666: 	b.WriteString("\n\n")
+667: }
+668: 
+669: // writeReplies writes the author replies section to the prompt.
+670: // Bot replies are filtered out so the bot's own acknowledgment messages
+671: // don't leak into the Claude prompt and bias evaluation.
+672: func writeReplies(b *strings.Builder, t ReviewThread, botLogin string) {
+673: 	if len(t.Replies) == 0 {
+674: 		return
+675: 	}
+676: 	// Filter out bot replies using explicit botLogin, consistent with
+677: 	// hasHumanReply and hasNewHumanReply.
+678: 	var humanReplies []ThreadReply
+679: 	for _, r := range t.Replies {
+680: 		if r.Author != botLogin {
+681: 			humanReplies = append(humanReplies, r)
+682: 		}
+683: 	}
+684: 	if len(humanReplies) == 0 {
+685: 		return
+686: 	}
+687: 	b.WriteString("## Author Replies\n")
+688: 	for _, r := range humanReplies {
+689: 		normalizedBody := strings.ReplaceAll(r.Body, "\n", " ")
+690: 		fmt.Fprintf(b, "> **@%s**: %s\n", r.Author, normalizedBody)
+691: 	}
+692: 	b.WriteString("\n")
+693: }
+694: 
+695: // writeResolutionFormat writes the expected JSON response format with all reason options.
+696: // Used for prompts where author replies are present (TriageHasReply, TriageCodeChangedReply).
+697: func writeResolutionFormat(b *strings.Builder) {
+698: 	b.WriteString("Return a JSON object inside a ```json code fence:\n")
+699: 	b.WriteString("- If resolved: `{\"resolved\": true, \"reason\": \"<reason>\", \"rationale\": \"<one sentence>\"}` — `reason` is one of `\"code_change\"`, `\"dismissed\"`, `\"acknowledged\"`, `\"rebutted\"`. `rationale` must be a single sentence naming the specific change, reply, or reasoning that resolved the finding (e.g. \"Removed the three `original_error_*` fields from the service logger\").\n")
+700: 	b.WriteString("- If NOT resolved: `{\"resolved\": false}`\n")
+701: }
+702: 
+703: // writeCodeChangeResolutionFormat writes a restricted JSON response format
+704: // for code-change-only evaluations (no author reply). Only allows code_change
+705: // as a resolution reason since there is no author reply to acknowledge/dismiss/rebut.
+706: func writeCodeChangeResolutionFormat(b *strings.Builder) {
+707: 	b.WriteString("Return a JSON object inside a ```json code fence:\n")
+708: 	b.WriteString("- If resolved: `{\"resolved\": true, \"reason\": \"code_change\", \"rationale\": \"<one sentence>\"}` — `rationale` must be a single sentence naming the specific change that resolved the finding (e.g. \"Removed the three `original_error_*` fields from the service logger\").\n")
+709: 	b.WriteString("- If NOT resolved: `{\"resolved\": false}`\n")
+710: }
+711: 
+712: // evalContext returns the evaluation context string for a given type from config.
+713: func evalContext(cfg *ReviewConfig, evalType string) string {
+714: 	if cfg == nil || cfg.Evaluation == nil {
+715: 		return ""
+716: 	}
+717: 	switch evalType {
+718: 	case "code_change":
+719: 		return cfg.Evaluation.CodeChange.Context
+720: 	case "reply":
+721: 		return cfg.Evaluation.Reply.Context
+722: 	}
+723: 	return ""
+724: }
+725: 
+726: // EvaluateThreadsParallel runs the LLM in parallel for threads that need evaluation.
+727: // When maxBudgetUSD > 0, new goroutines are not launched once the budget is exceeded
+728: // (already-running goroutines are allowed to finish).
+729: func EvaluateThreadsParallel(triaged []TriagedThread, provider ModelProvider, cfg *ReviewConfig, maxConcurrent int, tracker *UsageTracker, maxBudgetUSD float64) []ThreadResolution {
+730: 	results := make([]ThreadResolution, len(triaged))
+731: 
+732: 	sem := make(chan struct{}, maxConcurrent)
+733: 	var wg sync.WaitGroup
+734: 
+735: 	for i, t := range triaged {
+736: 		if t.Class == TriageSkip || t.Class == TriageFileRemovedFromPR {
+737: 			results[i] = ThreadResolution{Index: t.Index, Resolved: false}
+738: 			continue
+739: 		}
+740: 		if t.Class == TriagePreviouslyAcked {
+741: 			// Sticky: carry the prior ack reason forward without burning
+742: 			// triage tokens. computeReviewSummary will route it to the
+743: 			// matching bucket (Dismissed/Acknowledged/Rebutted), so the
+744: 			// commit status check stays green across pushes that don't
+745: 			// touch the deferred finding.
+746: 			results[i] = ThreadResolution{
+747: 				Index:    t.Index,
+748: 				Resolved: true,
+749: 				Reason:   t.PriorAckReason,
+750: 			}
+751: 			continue
+752: 		}
+753: 		// Soft budget cap: skip remaining evaluations if budget is exceeded.
+754: 		if err := CheckBudget(tracker, maxBudgetUSD); err != nil {
+755: 			results[i] = ThreadResolution{Index: t.Index, Error: err}
+756: 			continue
+757: 		}
+758: 		wg.Add(1)
+759: 		go func(idx int, tt TriagedThread) {
+760: 			defer wg.Done()
+761: 			sem <- struct{}{}
+762: 			defer func() { <-sem }()
+763: 
+764: 			// Level 1: file-scoped evaluation.
+765: 			prompt := BuildPerThreadPrompt(tt, cfg)
+766: 			result, err := provider.Run(context.Background(), prompt, RunOpts{})
+767: 			if err != nil {
+768: 				results[idx] = ThreadResolution{Index: tt.Index, Error: err}
+769: 				return
+770: 			}
+771: 			trackUsage(tracker, result, "triage")
+772: 			res := parseThreadResolution(result.Text, tt.Index)
+773: 			res = validateResolutionReason(res, tt.Class)
+774: 
+775: 			// Level 2: widen to full PR diff if file-scoped check was inconclusive.
+776: 			// Only for TriageCodeChanged — TriageCodeChangedReply has author replies
+777: 			// that buildWidenedScopePrompt doesn't include, so widening would drop
+778: 			// the reply context and prevent dismissed/acknowledged/rebutted resolutions.
+779: 			if !res.Resolved && tt.FullDiff != "" && tt.Class == TriageCodeChanged {
+780: 				if err := CheckBudget(tracker, maxBudgetUSD); err == nil {
+781: 					fmt.Fprintf(os.Stderr, "  [widen]    %s — checking full PR diff\n", threadLabel(tt.Thread))
+782: 					prompt2 := buildWidenedScopePrompt(tt, cfg)
+783: 					result2, err := provider.Run(context.Background(), prompt2, RunOpts{})
+784: 					if err == nil {
+785: 						trackUsage(tracker, result2, "triage")
+786: 						res2 := parseThreadResolution(result2.Text, tt.Index)
+787: 						res2 = validateResolutionReason(res2, tt.Class)
+788: 						if res2.Resolved {
+789: 							res = res2
+790: 						}
+791: 					}
+792: 				}
+793: 			}
+794: 
+795: 			results[idx] = res
+796: 		}(i, t)
+797: 	}
+798: 
+799: 	wg.Wait()
+800: 	return results
+801: }
+802: 
+803: // parseThreadResolution parses Claude's JSON response for a single thread evaluation.
+804: func parseThreadResolution(output string, index int) ThreadResolution {
+805: 	allMatches := jsonFenceRe.FindAllStringSubmatch(output, -1)
+806: 	for _, matches := range allMatches {
+807: 		raw := matches[1]
+808: 
+809: 		var resp struct {
+810: 			Resolved  bool   `json:"resolved"`
+811: 			Reason    string `json:"reason"`
+812: 			Rationale string `json:"rationale"`
+813: 		}
+814: 		if err := json.Unmarshal([]byte(raw), &resp); err != nil {
+815: 			continue
+816: 		}
+817: 		return ThreadResolution{
+818: 			Index:     index,
+819: 			Resolved:  resp.Resolved,
+820: 			Reason:    resp.Reason,
+821: 			Rationale: strings.TrimSpace(resp.Rationale),
+822: 		}
+823: 	}
+824: 
+825: 	// If parsing fails, treat as unresolved (conservative).
+826: 	return ThreadResolution{Index: index, Resolved: false}
+827: }
+828: 
+829: // validateResolutionReason enforces that code-change-only classifications
+830: // (no author reply) can only resolve with reason "code_change". If Claude
+831: // returns "acknowledged"/"dismissed"/"rebutted", treat it as unresolved.
+832: func validateResolutionReason(res ThreadResolution, class ThreadClassification) ThreadResolution {
+833: 	if res.Resolved && res.Reason != "code_change" &&
+834: 		(class == TriageCodeChanged || class == TriageCrossFileChange) {
+835: 		res.Resolved = false
+836: 		res.Reason = ""
+837: 	}
+838: 	return res
+839: }
+840: 
+841: // LogTriage prints structured triage results to stderr.
+842: func LogTriage(triaged []TriagedThread) {
+843: 	fmt.Fprintf(os.Stderr, "Re-evaluating %d unresolved thread(s)...\n\n", len(triaged))
+844: 
+845: 	for _, t := range triaged {
+846: 		label := threadLabel(t.Thread)
+847: 		switch t.Class {
+848: 		case TriageSkip:
+849: 			fmt.Fprintf(os.Stderr, "  [skip]     %s — no code changes, no human replies\n", label)
+850: 		case TriageCodeChanged:
+851: 			fmt.Fprintf(os.Stderr, "  [evaluate] %s — code changes detected\n", label)
+852: 		case TriageHasReply:
+853: 			fmt.Fprintf(os.Stderr, "  [evaluate] %s — human reply detected\n", label)
+854: 		case TriageCodeChangedReply:
+855: 			fmt.Fprintf(os.Stderr, "  [evaluate] %s — code changes + human reply detected\n", label)
+856: 		case TriageCrossFileChange:
+857: 			fmt.Fprintf(os.Stderr, "  [evaluate] %s — cross-file changes detected\n", label)
+858: 		case TriageFileRemovedFromPR:
+859: 			fmt.Fprintf(os.Stderr, "  [resolve]  %s — file removed from PR\n", label)
+860: 		case TriagePreviouslyAcked:
+861: 			fmt.Fprintf(os.Stderr, "  [sticky]   %s — prior ack (%s) carried forward\n", label, t.PriorAckReason)
+862: 		}
+863: 	}
+864: 
+865: 	skipped := 0
+866: 	autoResolved := 0
+867: 	needsEval := 0
+868: 	for _, t := range triaged {
+869: 		switch t.Class {
+870: 		case TriageSkip:
+871: 			skipped++
+872: 		case TriageFileRemovedFromPR, TriagePreviouslyAcked:
+873: 			autoResolved++
+874: 		default:
+875: 			needsEval++
+876: 		}
+877: 	}
+878: 	fmt.Fprintf(os.Stderr, "\nTriage result: %d skipped, %d auto-resolved, %d need evaluation\n", skipped, autoResolved, needsEval)
+879: }
+880: 
+881: // LogResolutions prints structured evaluation results to stderr.
+882: func LogResolutions(triaged []TriagedThread, resolutions []ThreadResolution) {
+883: 	fmt.Fprintf(os.Stderr, "\n")
+884: 	for i, r := range resolutions {
+885: 		switch triaged[i].Class {
+886: 		case TriageSkip, TriageFileRemovedFromPR, TriagePreviouslyAcked:
+887: 			continue
+888: 		}
+889: 		label := threadLabel(triaged[i].Thread)
+890: 		if r.Error != nil {
+891: 			if isBudgetError(r.Error) {
+892: 				fmt.Fprintf(os.Stderr, "  [skip]     %s — %v\n", label, r.Error)
+893: 			} else {
+894: 				fmt.Fprintf(os.Stderr, "  [error]    %s — evaluation failed: %v\n", label, r.Error)
+895: 			}
+896: 		} else if r.Resolved {
+897: 			switch r.Reason {
+898: 			case "code_change":
+899: 				fmt.Fprintf(os.Stderr, "  [resolved] %s — fixed by code change\n", label)
+900: 			case "dismissed":
+901: 				fmt.Fprintf(os.Stderr, "  [ack]      %s — dismissed by author (keeping open)\n", label)
+902: 			case "acknowledged":
+903: 				fmt.Fprintf(os.Stderr, "  [ack]      %s — acknowledged by author (keeping open)\n", label)
+904: 			case "rebutted":
+905: 				fmt.Fprintf(os.Stderr, "  [ack]      %s — rebutted by author (keeping open)\n", label)
+906: 			default:
+907: 				fmt.Fprintf(os.Stderr, "  [resolved] %s — resolved\n", label)
+908: 			}
+909: 		} else {
+910: 			fmt.Fprintf(os.Stderr, "  [open]     %s — not resolved\n", label)
+911: 		}
+912: 	}
+913: }
+914: 
+915: // countNonSkipped returns the number of triaged threads that EvaluateThreadsParallel
+916: // must process. TriagePreviouslyAcked is included even though it short-circuits
+917: // without an LLM call: the function still has to run to emit the carried-forward
+918: // fixedThread, which is what feeds the summary's Acknowledged/Rebutted/Dismissed
+919: // buckets. Excluding it here was the bug behind the "Still unresolved: 2" stuck
+920: // status on already-acked threads.
+921: func countNonSkipped(triaged []TriagedThread) int {
+922: 	n := 0
+923: 	for _, t := range triaged {
+924: 		switch t.Class {
+925: 		case TriageSkip, TriageFileRemovedFromPR:
+926: 			continue
+927: 		default:
+928: 			n++
+929: 		}
+930: 	}
+931: 	return n
+932: }
+933: 
+934: // toFixedThreads converts thread resolutions to the fixedThread type used by downstream code.
+935: func toFixedThreads(resolutions []ThreadResolution) []fixedThread {
+936: 	var result []fixedThread
+937: 	for _, r := range resolutions {
+938: 		if r.Resolved {
+939: 			result = append(result, fixedThread{Index: r.Index, Reason: r.Reason, Rationale: r.Rationale})
+940: 		}
+941: 	}
+942: 	return result
+943: }
+````
+
+### `internal/review/triage_test.go`
+````
+1: package review
+2: 
+3: import (
+4: 	"context"
+5: 	"fmt"
+6: 	"strings"
+7: 	"testing"
+8: )
+9: 
+10: // --- ExtractFileSnippet tests ---
+11: 
+12: func TestExtractFileSnippet_Basic(t *testing.T) {
+13: 	// 100-line file, finding at line 50, hunk at lines 45-55.
+14: 	var lines []string
+15: 	for i := 1; i <= 100; i++ {
+16: 		lines = append(lines, fmt.Sprintf("line %d content", i))
+17: 	}
+18: 	content := strings.Join(lines, "\n")
+19: 	diff := "@@ -40,10 +45,11 @@ func foo() {\n+added line\n"
+20: 
+21: 	snippet := ExtractFileSnippet(content, 50, diff, 300)
+22: 	if snippet == "" {
+23: 		t.Fatal("expected non-empty snippet")
+24: 	}
+25: 	// Should contain the finding line.
+26: 	if !strings.Contains(snippet, "50: line 50 content") {
+27: 		t.Error("snippet should contain the finding line")
+28: 	}
+29: 	// Should contain hunk area.
+30: 	if !strings.Contains(snippet, "45: line 45 content") {
+31: 		t.Error("snippet should contain hunk start area")
+32: 	}
+33: }
+34: 
+35: func TestExtractFileSnippet_MergesOverlappingRanges(t *testing.T) {
+36: 	var lines []string
+37: 	for i := 1; i <= 200; i++ {
+38: 		lines = append(lines, fmt.Sprintf("line %d", i))
+39: 	}
+40: 	content := strings.Join(lines, "\n")
+41: 	// Two hunks close together — should merge into one contiguous range.
+42: 	diff := "@@ -10,5 +10,5 @@\n+a\n@@ -20,5 +20,5 @@\n+b\n"
+43: 
+44: 	snippet := ExtractFileSnippet(content, 15, diff, 300)
+45: 	// Should NOT contain omission markers since ranges overlap/merge.
+46: 	if strings.Contains(snippet, "lines omitted") {
+47: 		t.Error("close hunks should merge without omission markers")
+48: 	}
+49: }
+50: 
+51: func TestExtractFileSnippet_CapsAtMaxLines(t *testing.T) {
+52: 	var lines []string
+53: 	for i := 1; i <= 1000; i++ {
+54: 		lines = append(lines, fmt.Sprintf("line %d", i))
+55: 	}
+56: 	content := strings.Join(lines, "\n")
+57: 	// Hunks spread across the file.
+58: 	diff := "@@ -10,5 +10,5 @@\n+a\n@@ -500,5 +500,5 @@\n+b\n@@ -900,5 +900,5 @@\n+c\n"
+59: 
+60: 	snippet := ExtractFileSnippet(content, 50, diff, 150)
+61: 	snippetLines := strings.Split(strings.TrimRight(snippet, "\n"), "\n")
+62: 	if len(snippetLines) > 160 { // small buffer for omission markers
+63: 		t.Errorf("snippet should respect maxLines cap, got %d lines", len(snippetLines))
+64: 	}
+65: 	// Must contain the finding line.
+66: 	if !strings.Contains(snippet, "50: line 50") {
+67: 		t.Error("snippet must prioritize the finding line")
+68: 	}
+69: }
+70: 
+71: func TestExtractFileSnippet_NoDiff(t *testing.T) {
+72: 	var lines []string
+73: 	for i := 1; i <= 100; i++ {
+74: 		lines = append(lines, fmt.Sprintf("line %d", i))
+75: 	}
+76: 	content := strings.Join(lines, "\n")
+77: 
+78: 	// Cross-file case: no diff for this file.
+79: 	snippet := ExtractFileSnippet(content, 50, "", 300)
+80: 	if snippet == "" {
+81: 		t.Fatal("expected non-empty snippet for cross-file case")
+82: 	}
+83: 	if !strings.Contains(snippet, "50: line 50") {
+84: 		t.Error("snippet should center on finding line")
+85: 	}
+86: }
+87: 
+88: func TestExtractFileSnippet_ZeroCountHunk(t *testing.T) {
+89: 	// A hunk with count=0 (pure deletion) should not produce a range.
+90: 	ranges := parseHunkNewRanges("@@ -5,3 +10,0 @@\n-deleted line\n")
+91: 	if len(ranges) != 0 {
+92: 		t.Errorf("expected 0 ranges for zero-count hunk, got %d", len(ranges))
+93: 	}
+94: }
+95: 
+96: func TestExtractFileSnippet_FindingLineZero(t *testing.T) {
+97: 	var lines []string
+98: 	for i := 1; i <= 100; i++ {
+99: 		lines = append(lines, fmt.Sprintf("line %d", i))
+100: 	}
+101: 	content := strings.Join(lines, "\n")
+102: 	diff := "@@ -40,10 +40,10 @@\n+changed\n"
+103: 
+104: 	// findingLine=0 should not panic and should anchor to hunk area.
+105: 	snippet := ExtractFileSnippet(content, 0, diff, 50)
+106: 	if snippet == "" {
+107: 		t.Fatal("expected non-empty snippet even with findingLine=0")
+108: 	}
+109: 	// Should contain hunk area, not be anchored to line 0.
+110: 	if !strings.Contains(snippet, "40: line 40") {
+111: 		t.Error("snippet should include hunk area when findingLine is 0")
+112: 	}
+113: }
+114: 
+115: func TestExtractFileSnippet_EmptyContent(t *testing.T) {
+116: 	snippet := ExtractFileSnippet("", 10, "@@ -1,5 +1,5 @@\n", 300)
+117: 	if snippet != "" {
+118: 		t.Error("expected empty snippet for empty content")
+119: 	}
+120: }
+121: 
+122: // --- Prompt builder tests ---
+123: 
+124: func TestBuildCodeChangePrompt_IncludesFileContext(t *testing.T) {
+125: 	tt := TriagedThread{
+126: 		Thread: ReviewThread{
+127: 			Path: "main.go",
+128: 			Line: 10,
+129: 			Body: "Found a bug",
+130: 		},
+131: 		FileDiff:    "+ fixed line",
+132: 		FileSnippet: "9: before\n10: the line\n11: after\n",
+133: 	}
+134: 	prompt := buildCodeChangePrompt(tt, nil)
+135: 
+136: 	if !strings.Contains(prompt, "## Current File Content (around finding)") {
+137: 		t.Error("prompt should include file context section when FileSnippet is set")
+138: 	}
+139: 	if !strings.Contains(prompt, "10: the line") {
+140: 		t.Error("prompt should include the file snippet content")
+141: 	}
+142: }
+143: 
+144: func TestBuildCodeChangePrompt_NoFileContextWhenEmpty(t *testing.T) {
+145: 	tt := TriagedThread{
+146: 		Thread: ReviewThread{
+147: 			Path: "main.go",
+148: 			Line: 10,
+149: 			Body: "Found a bug",
+150: 		},
+151: 		FileDiff: "+ fixed line",
+152: 	}
+153: 	prompt := buildCodeChangePrompt(tt, nil)
+154: 
+155: 	if strings.Contains(prompt, "## Current File Content") {
+156: 		t.Error("prompt should NOT include file context section when FileSnippet is empty")
+157: 	}
+158: }
+159: 
+160: func TestBuildCodeChangePrompt_StructuralChangeInstruction(t *testing.T) {
+161: 	tt := TriagedThread{
+162: 		Thread: ReviewThread{
+163: 			Path: "main.go",
+164: 			Line: 10,
+165: 			Body: "Found a bug",
+166: 		},
+167: 		FileDiff: "+ fixed line",
+168: 	}
+169: 	prompt := buildCodeChangePrompt(tt, nil)
+170: 
+171: 	if !strings.Contains(prompt, "structural change") {
+172: 		t.Error("prompt should include structural change guidance")
+173: 	}
+174: }
+175: 
+176: func TestBuildCrossFilePrompt_IncludesFileContext(t *testing.T) {
+177: 	tt := TriagedThread{
+178: 		Thread: ReviewThread{
+179: 			Path: "main.go",
+180: 			Line: 10,
+181: 			Body: "Found a bug",
+182: 		},
+183: 		FileDiff:    "+ change in other file",
+184: 		FileSnippet: "9: before\n10: the line\n11: after\n",
+185: 	}
+186: 	prompt := buildCrossFilePrompt(tt, nil)
+187: 
+188: 	if !strings.Contains(prompt, "## Current File Content (around finding)") {
+189: 		t.Error("cross-file prompt should include file context section")
+190: 	}
+191: 	if !strings.Contains(prompt, "structural change") {
+192: 		t.Error("cross-file prompt should include structural change guidance")
+193: 	}
+194: }
+195: 
+196: func TestBuildCodeChangePrompt_OnlyAllowsCodeChangeReason(t *testing.T) {
+197: 	tt := TriagedThread{
+198: 		Thread: ReviewThread{
+199: 			Path: "main.go",
+200: 			Line: 10,
+201: 			Body: "Found a bug",
+202: 		},
+203: 		FileDiff: "+ fixed line",
+204: 	}
+205: 	prompt := buildCodeChangePrompt(tt, nil)
+206: 
+207: 	if strings.Contains(prompt, `"acknowledged"`) {
+208: 		t.Error("buildCodeChangePrompt should not offer 'acknowledged' as a reason")
+209: 	}
+210: 	if strings.Contains(prompt, `"dismissed"`) {
+211: 		t.Error("buildCodeChangePrompt should not offer 'dismissed' as a reason")
+212: 	}
+213: 	if strings.Contains(prompt, `"rebutted"`) {
+214: 		t.Error("buildCodeChangePrompt should not offer 'rebutted' as a reason")
+215: 	}
+216: 	if !strings.Contains(prompt, `"code_change"`) {
+217: 		t.Error("buildCodeChangePrompt must offer 'code_change' as a reason")
+218: 	}
+219: }
+220: 
+221: func TestBuildCrossFilePrompt_OnlyAllowsCodeChangeReason(t *testing.T) {
+222: 	tt := TriagedThread{
+223: 		Thread: ReviewThread{
+224: 			Path: "main.go",
+225: 			Line: 10,
+226: 			Body: "Found a bug",
+227: 		},
+228: 		FileDiff: "+ fixed in other file",
+229: 	}
+230: 	prompt := buildCrossFilePrompt(tt, nil)
+231: 
+232: 	if strings.Contains(prompt, `"acknowledged"`) {
+233: 		t.Error("buildCrossFilePrompt should not offer 'acknowledged' as a reason")
+234: 	}
+235: 	if strings.Contains(prompt, `"dismissed"`) {
+236: 		t.Error("buildCrossFilePrompt should not offer 'dismissed' as a reason")
+237: 	}
+238: 	if strings.Contains(prompt, `"rebutted"`) {
+239: 		t.Error("buildCrossFilePrompt should not offer 'rebutted' as a reason")
+240: 	}
+241: 	if !strings.Contains(prompt, `"code_change"`) {
+242: 		t.Error("buildCrossFilePrompt must offer 'code_change' as a reason")
+243: 	}
+244: }
+245: 
+246: func TestBuildReplyPrompt_AllowsAllReasons(t *testing.T) {
+247: 	tt := TriagedThread{
+248: 		Thread: ReviewThread{
+249: 			Path: "main.go",
+250: 			Line: 10,
+251: 			Body: "Found a bug",
+252: 			Replies: []ThreadReply{
+253: 				{Author: "user1", Body: "Will fix later"},
+254: 			},
+255: 		},
+256: 		BotLogin: "codecanary-bot",
+257: 	}
+258: 	prompt := buildReplyPrompt(tt, nil)
+259: 
+260: 	for _, reason := range []string{`"code_change"`, `"acknowledged"`, `"dismissed"`, `"rebutted"`} {
+261: 		if !strings.Contains(prompt, reason) {
+262: 			t.Errorf("buildReplyPrompt must offer %s as a reason", reason)
+263: 		}
+264: 	}
+265: }
+266: 
+267: func TestBuildCodeChangeReplyPrompt_AllowsAllReasons(t *testing.T) {
+268: 	tt := TriagedThread{
+269: 		Thread: ReviewThread{
+270: 			Path: "main.go",
+271: 			Line: 10,
+272: 			Body: "Found a bug",
+273: 			Replies: []ThreadReply{
+274: 				{Author: "user1", Body: "Fixed it"},
+275: 			},
+276: 		},
+277: 		FileDiff: "+ fixed line",
+278: 		BotLogin: "codecanary-bot",
+279: 	}
+280: 	prompt := buildCodeChangeReplyPrompt(tt, nil)
+281: 
+282: 	for _, reason := range []string{`"code_change"`, `"acknowledged"`, `"dismissed"`, `"rebutted"`} {
+283: 		if !strings.Contains(prompt, reason) {
+284: 			t.Errorf("buildCodeChangeReplyPrompt must offer %s as a reason", reason)
+285: 		}
+286: 	}
+287: }
+288: 
+289: // --- ClassifyThreads diff scoping tests ---
+290: 
+291: func TestClassifyThreads_FileScopedDiffForCodeChanged(t *testing.T) {
+292: 	threads := []ReviewThread{
+293: 		{Path: "a.go", Line: 10, Body: "Issue in a.go", Outdated: true},
+294: 	}
+295: 	fullDiff := "diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -10,3 +10,3 @@\n-old\n+new\n" +
+296: 		"diff --git a/b.go b/b.go\n--- a/b.go\n+++ b/b.go\n@@ -5,3 +5,3 @@\n-old b\n+new b\n"
+297: 
+298: 	triaged := ClassifyThreads(threads, fullDiff, fullDiff, "bot", []string{"a.go", "b.go"}, nil)
+299: 
+300: 	if triaged[0].Class != TriageCodeChanged {
+301: 		t.Fatalf("expected TriageCodeChanged, got %d", triaged[0].Class)
+302: 	}
+303: 	if strings.Contains(triaged[0].FileDiff, "b.go") {
+304: 		t.Error("FileDiff for TriageCodeChanged should be file-scoped, not full PR diff")
+305: 	}
+306: 	if !strings.Contains(triaged[0].FileDiff, "a.go") {
+307: 		t.Error("FileDiff should contain the finding's file diff")
+308: 	}
+309: 	// FullDiff should contain the entire PR diff for widened-scope fallback.
+310: 	if !strings.Contains(triaged[0].FullDiff, "b.go") {
+311: 		t.Error("FullDiff should contain the full PR diff for fallback")
+312: 	}
+313: }
+314: 
+315: func TestClassifyThreads_NoFullDiffForCrossFile(t *testing.T) {
+316: 	threads := []ReviewThread{
+317: 		{Path: "a.go", Line: 10, Body: "Issue in a.go"},
+318: 	}
+319: 	diff := "diff --git a/b.go b/b.go\n--- a/b.go\n+++ b/b.go\n@@ -5,3 +5,3 @@\n-old b\n+new b\n"
+320: 
+321: 	triaged := ClassifyThreads(threads, diff, diff, "bot", []string{"a.go", "b.go"}, nil)
+322: 
+323: 	if triaged[0].Class != TriageCrossFileChange {
+324: 		t.Fatalf("expected TriageCrossFileChange, got %d", triaged[0].Class)
+325: 	}
+326: 	// TriageCrossFileChange already gets the full diff as FileDiff — no fallback needed.
+327: 	if triaged[0].FullDiff != "" {
+328: 		t.Error("FullDiff should be empty for TriageCrossFileChange (no fallback needed)")
+329: 	}
+330: }
+331: 
+332: func TestBuildWidenedScopePrompt(t *testing.T) {
+333: 	tt := TriagedThread{
+334: 		Thread: ReviewThread{
+335: 			Path: "main.go",
+336: 			Line: 10,
+337: 			Body: "Found a bug",
+338: 		},
+339: 		FullDiff:    "+ fix in other file",
+340: 		FileSnippet: "9: before\n10: the line\n11: after\n",
+341: 	}
+342: 	prompt := buildWidenedScopePrompt(tt, nil)
+343: 
+344: 	if !strings.Contains(prompt, "full PR diff") {
+345: 		t.Error("widened prompt should mention full PR diff")
+346: 	}
+347: 	if !strings.Contains(prompt, "another file") {
+348: 		t.Error("widened prompt should guide LLM to check other files")
+349: 	}
+350: 	if !strings.Contains(prompt, "+ fix in other file") {
+351: 		t.Error("widened prompt should include FullDiff content")
+352: 	}
+353: 	if !strings.Contains(prompt, "## Current File Content") {
+354: 		t.Error("widened prompt should include file snippet")
+355: 	}
+356: 	// Should only allow code_change reason (no reply-based reasons).
+357: 	if strings.Contains(prompt, `"acknowledged"`) || strings.Contains(prompt, `"dismissed"`) {
+358: 		t.Error("widened prompt should not offer reply-based resolution reasons")
+359: 	}
+360: }
+361: 
+362: func TestClassifyThreads_FullDiffForCrossFile(t *testing.T) {
+363: 	threads := []ReviewThread{
+364: 		{Path: "a.go", Line: 10, Body: "Issue in a.go"},
+365: 	}
+366: 	// Only b.go changed — finding's file (a.go) is not in the diff.
+367: 	diff := "diff --git a/b.go b/b.go\n--- a/b.go\n+++ b/b.go\n@@ -5,3 +5,3 @@\n-old b\n+new b\n"
+368: 
+369: 	triaged := ClassifyThreads(threads, diff, diff, "bot", []string{"a.go", "b.go"}, nil)
+370: 
+371: 	if triaged[0].Class != TriageCrossFileChange {
+372: 		t.Fatalf("expected TriageCrossFileChange, got %d", triaged[0].Class)
+373: 	}
+374: 	if !strings.Contains(triaged[0].FileDiff, "b.go") {
+375: 		t.Error("FileDiff for TriageCrossFileChange should contain the full PR diff")
+376: 	}
+377: }
+378: 
+379: func TestValidateResolutionReason_RejectsInvalidReasonForCodeChangeOnly(t *testing.T) {
+380: 	// Simulate Claude returning "acknowledged" for a code-change-only thread.
+381: 	output := "```json\n{\"resolved\": true, \"reason\": \"acknowledged\"}\n```"
+382: 	parsed := parseThreadResolution(output, 0)
+383: 
+384: 	// parseThreadResolution itself accepts any reason (it's just a parser).
+385: 	if !parsed.Resolved || parsed.Reason != "acknowledged" {
+386: 		t.Fatal("parseThreadResolution should parse the raw response as-is")
+387: 	}
+388: 
+389: 	// For code-change-only classifications, invalid reasons should be rejected.
+390: 	for _, class := range []ThreadClassification{TriageCodeChanged, TriageCrossFileChange} {
+391: 		res := validateResolutionReason(parsed, class)
+392: 		if res.Resolved {
+393: 			t.Errorf("class %d: resolution with reason 'acknowledged' should be rejected", class)
+394: 		}
+395: 		if res.Reason != "" {
+396: 			t.Errorf("class %d: reason should be cleared, got %q", class, res.Reason)
+397: 		}
+398: 	}
+399: 
+400: 	// For reply-based classifications, the same reason should be accepted.
+401: 	for _, class := range []ThreadClassification{TriageHasReply, TriageCodeChangedReply} {
+402: 		res := validateResolutionReason(parsed, class)
+403: 		if !res.Resolved {
+404: 			t.Errorf("class %d: resolution with reason 'acknowledged' should be accepted", class)
+405: 		}
+406: 		if res.Reason != "acknowledged" {
+407: 			t.Errorf("class %d: reason should be 'acknowledged', got %q", class, res.Reason)
+408: 		}
+409: 	}
+410: }
+411: 
+412: func TestParseThreadResolution_CapturesRationale(t *testing.T) {
+413: 	output := "```json\n{\"resolved\": true, \"reason\": \"code_change\", \"rationale\": \"  Removed the three original_error_* fields  \"}\n```"
+414: 	parsed := parseThreadResolution(output, 7)
+415: 
+416: 	if !parsed.Resolved || parsed.Reason != "code_change" {
+417: 		t.Fatalf("expected resolved code_change, got %+v", parsed)
+418: 	}
+419: 	if parsed.Rationale != "Removed the three original_error_* fields" {
+420: 		t.Errorf("rationale should be trimmed, got %q", parsed.Rationale)
+421: 	}
+422: 	if parsed.Index != 7 {
+423: 		t.Errorf("index should be preserved, got %d", parsed.Index)
+424: 	}
+425: }
+426: 
+427: func TestToFixedThreads_PropagatesRationale(t *testing.T) {
+428: 	resolutions := []ThreadResolution{
+429: 		{Index: 0, Resolved: true, Reason: "code_change", Rationale: "dropped dead fields"},
+430: 		{Index: 1, Resolved: false},
+431: 		{Index: 2, Resolved: true, Reason: "dismissed"},
+432: 	}
+433: 	fixed := toFixedThreads(resolutions)
+434: 
+435: 	if len(fixed) != 2 {
+436: 		t.Fatalf("expected 2 fixed threads, got %d", len(fixed))
+437: 	}
+438: 	if fixed[0].Rationale != "dropped dead fields" {
+439: 		t.Errorf("first rationale should carry over, got %q", fixed[0].Rationale)
+440: 	}
+441: 	if fixed[1].Rationale != "" {
+442: 		t.Errorf("empty rationale should stay empty, got %q", fixed[1].Rationale)
+443: 	}
+444: }
+445: 
+446: func TestExtractAckReason(t *testing.T) {
+447: 	cases := []struct {
+448: 		name string
+449: 		body string
+450: 		want string
+451: 	}{
+452: 		{"current marker", "<!-- codecanary:ack:rebutted -->\nKeeping open.", "rebutted"},
+453: 		{"acknowledged", "<!-- codecanary:ack:acknowledged -->\nKeeping open.", "acknowledged"},
+454: 		{"dismissed", "<!-- codecanary:ack:dismissed -->\nKeeping open.", "dismissed"},
+455: 		{"legacy marker", "<!-- clanopy:ack:rebutted -->\nKeeping open.", "rebutted"},
+456: 		{"no marker", "Some normal reply", ""},
+457: 		{"no closing tag", "<!-- codecanary:ack:acknowledged with no closer", ""},
+458: 		{"unknown reason", "<!-- codecanary:ack:unknown -->\n", "unknown"},
+459: 	}
+460: 	for _, tc := range cases {
+461: 		t.Run(tc.name, func(t *testing.T) {
+462: 			if got := extractAckReason(tc.body); got != tc.want {
+463: 				t.Errorf("extractAckReason(%q) = %q, want %q", tc.body, got, tc.want)
+464: 			}
+465: 		})
+466: 	}
+467: }
+468: 
+469: func TestParsePriorAckReason_PicksLatestBotAck(t *testing.T) {
+470: 	thread := ReviewThread{
+471: 		Replies: []ThreadReply{
+472: 			{Author: "user", Body: "Deferring — see rationale."},
+473: 			{Author: "bot", Body: "<!-- codecanary:ack:acknowledged -->\nAuthor acknowledged this finding."},
+474: 			{Author: "bot", Body: "<!-- codecanary:ack:rebutted -->\nAuthor provided rebuttal."},
+475: 		},
+476: 	}
+477: 	if got := parsePriorAckReason(thread, "bot"); got != "rebutted" {
+478: 		t.Errorf("expected latest reason 'rebutted', got %q", got)
+479: 	}
+480: }
+481: 
+482: func TestParsePriorAckReason_IgnoresNonBotMarkers(t *testing.T) {
+483: 	thread := ReviewThread{
+484: 		Replies: []ThreadReply{
+485: 			{Author: "attacker", Body: "<!-- codecanary:ack:dismissed -->\nFake."},
+486: 		},
+487: 	}
+488: 	if got := parsePriorAckReason(thread, "bot"); got != "" {
+489: 		t.Errorf("non-bot ack should not be sticky, got %q", got)
+490: 	}
+491: }
+492: 
+493: func TestClassifyThreads_StickyAckSurvivesNextPush(t *testing.T) {
+494: 	threads := []ReviewThread{
+495: 		{
+496: 			Path: "CLAUDE.md",
+497: 			Line: 724,
+498: 			Body: "Original finding",
+499: 			Replies: []ThreadReply{
+500: 				{Author: "user", Body: "Deferring — forward recommendation, not yet implemented."},
+501: 				{Author: "bot", Body: "<!-- codecanary:ack:acknowledged -->\nAuthor acknowledged."},
+502: 			},
+503: 		},
+504: 	}
+505: 	// File changed in the next push — without sticky-ack this would
+506: 	// classify as TriageCodeChanged and lose the prior reason.
+507: 	diff := "diff --git a/CLAUDE.md b/CLAUDE.md\n--- a/CLAUDE.md\n+++ b/CLAUDE.md\n@@ -700,3 +700,3 @@\n-old\n+new\n"
+508: 
+509: 	triaged := ClassifyThreads(threads, diff, diff, "bot", []string{"CLAUDE.md"}, nil)
+510: 
+511: 	if triaged[0].Class != TriagePreviouslyAcked {
+512: 		t.Fatalf("expected TriagePreviouslyAcked, got %d", triaged[0].Class)
+513: 	}
+514: 	if triaged[0].PriorAckReason != "acknowledged" {
+515: 		t.Errorf("expected PriorAckReason 'acknowledged', got %q", triaged[0].PriorAckReason)
+516: 	}
+517: }
+518: 
+519: func TestClassifyThreads_NewHumanReplyBreaksStickiness(t *testing.T) {
+520: 	// Author replied AGAIN after the bot's ack — that's a fresh signal
+521: 	// and should reopen the thread for evaluation, not stay sticky.
+522: 	threads := []ReviewThread{
+523: 		{
+524: 			Path: "CLAUDE.md",
+525: 			Line: 724,
+526: 			Replies: []ThreadReply{
+527: 				{Author: "user", Body: "Original deferring rationale."},
+528: 				{Author: "bot", Body: "<!-- codecanary:ack:acknowledged -->\nAck."},
+529: 				{Author: "user", Body: "Wait, actually this one needs another look."},
+530: 			},
+531: 		},
+532: 	}
+533: 	triaged := ClassifyThreads(threads, "", "", "bot", []string{"CLAUDE.md"}, nil)
+534: 
+535: 	if triaged[0].Class != TriageHasReply {
+536: 		t.Fatalf("expected TriageHasReply (new reply after ack), got %d", triaged[0].Class)
+537: 	}
+538: 	if triaged[0].PriorAckReason != "" {
+539: 		t.Errorf("PriorAckReason should be empty when new reply present, got %q", triaged[0].PriorAckReason)
+540: 	}
+541: }
+542: 
+543: func TestCountNonSkipped_IncludesPreviouslyAcked(t *testing.T) {
+544: 	// Regression: sticky-ack threads must count toward needsEval so
+545: 	// EvaluateThreadsParallel runs and emits the carried-forward fixedThread.
+546: 	// Excluding them caused the runner to skip eval entirely, leaving the
+547: 	// summary stuck on "Still unresolved" for threads the bot had already
+548: 	// acked.
+549: 	triaged := []TriagedThread{
+550: 		{Class: TriageSkip},
+551: 		{Class: TriageFileRemovedFromPR},
+552: 		{Class: TriagePreviouslyAcked, PriorAckReason: "acknowledged"},
+553: 		{Class: TriagePreviouslyAcked, PriorAckReason: "rebutted"},
+554: 	}
+555: 	if got := countNonSkipped(triaged); got != 2 {
+556: 		t.Errorf("countNonSkipped = %d, want 2 (the two PreviouslyAcked threads)", got)
+557: 	}
+558: }
+559: 
+560: func TestEvaluateThreadsParallel_StickyAckShortCircuits(t *testing.T) {
+561: 	// Provider that panics if called — sticky-ack must skip the LLM.
+562: 	provider := &stickyAckPanicProvider{t: t}
+563: 
+564: 	triaged := []TriagedThread{
+565: 		{Index: 0, Class: TriagePreviouslyAcked, PriorAckReason: "rebutted"},
+566: 		{Index: 1, Class: TriagePreviouslyAcked, PriorAckReason: "dismissed"},
+567: 	}
+568: 	results := EvaluateThreadsParallel(triaged, provider, nil, 3, &UsageTracker{}, 0)
+569: 
+570: 	if len(results) != 2 {
+571: 		t.Fatalf("expected 2 results, got %d", len(results))
+572: 	}
+573: 	if !results[0].Resolved || results[0].Reason != "rebutted" {
+574: 		t.Errorf("first result: expected resolved=true reason=rebutted, got %+v", results[0])
+575: 	}
+576: 	if !results[1].Resolved || results[1].Reason != "dismissed" {
+577: 		t.Errorf("second result: expected resolved=true reason=dismissed, got %+v", results[1])
+578: 	}
+579: }
+580: 
+581: type stickyAckPanicProvider struct{ t *testing.T }
+582: 
+583: func (p *stickyAckPanicProvider) Run(_ context.Context, _ string, _ RunOpts) (*providerResult, error) {
+584: 	p.t.Fatalf("provider.Run must not be called for TriagePreviouslyAcked threads")
+585: 	return nil, nil
+586: }
+587: 
+588: func TestResolutionFormat_RequestsRationale(t *testing.T) {
+589: 	for _, fn := range map[string]func(*strings.Builder){
+590: 		"writeResolutionFormat":           writeResolutionFormat,
+591: 		"writeCodeChangeResolutionFormat": writeCodeChangeResolutionFormat,
+592: 	} {
+593: 		var b strings.Builder
+594: 		fn(&b)
+595: 		out := b.String()
+596: 		if !strings.Contains(out, `"rationale"`) {
+597: 			t.Errorf("prompt format should request a rationale field, got:\n%s", out)
+598: 		}
+599: 	}
+600: }
+````
+
+## Diff
+```diff
+diff --git a/internal/review/triage.go b/internal/review/triage.go
+index dc20e2a..485db27 100644
+--- a/internal/review/triage.go
++++ b/internal/review/triage.go
+@@ -912,12 +912,17 @@ func LogResolutions(triaged []TriagedThread, resolutions []ThreadResolution) {
+ 	}
+ }
+ 
+-// countNonSkipped returns the number of triaged threads that need LLM evaluation.
++// countNonSkipped returns the number of triaged threads that EvaluateThreadsParallel
++// must process. TriagePreviouslyAcked is included even though it short-circuits
++// without an LLM call: the function still has to run to emit the carried-forward
++// fixedThread, which is what feeds the summary's Acknowledged/Rebutted/Dismissed
++// buckets. Excluding it here was the bug behind the "Still unresolved: 2" stuck
++// status on already-acked threads.
+ func countNonSkipped(triaged []TriagedThread) int {
+ 	n := 0
+ 	for _, t := range triaged {
+ 		switch t.Class {
+-		case TriageSkip, TriageFileRemovedFromPR, TriagePreviouslyAcked:
++		case TriageSkip, TriageFileRemovedFromPR:
+ 			continue
+ 		default:
+ 			n++
+diff --git a/internal/review/triage_test.go b/internal/review/triage_test.go
+index be37fcb..79a5950 100644
+--- a/internal/review/triage_test.go
++++ b/internal/review/triage_test.go
+@@ -540,6 +540,23 @@ func TestClassifyThreads_NewHumanReplyBreaksStickiness(t *testing.T) {
+ 	}
+ }
+ 
++func TestCountNonSkipped_IncludesPreviouslyAcked(t *testing.T) {
++	// Regression: sticky-ack threads must count toward needsEval so
++	// EvaluateThreadsParallel runs and emits the carried-forward fixedThread.
++	// Excluding them caused the runner to skip eval entirely, leaving the
++	// summary stuck on "Still unresolved" for threads the bot had already
++	// acked.
++	triaged := []TriagedThread{
++		{Class: TriageSkip},
++		{Class: TriageFileRemovedFromPR},
++		{Class: TriagePreviouslyAcked, PriorAckReason: "acknowledged"},
++		{Class: TriagePreviouslyAcked, PriorAckReason: "rebutted"},
++	}
++	if got := countNonSkipped(triaged); got != 2 {
++		t.Errorf("countNonSkipped = %d, want 2 (the two PreviouslyAcked threads)", got)
++	}
++}
++
+ func TestEvaluateThreadsParallel_StickyAckShortCircuits(t *testing.T) {
+ 	// Provider that panics if called — sticky-ack must skip the LLM.
+ 	provider := &stickyAckPanicProvider{t: t}
+```
+
+## Output Format
+Return your findings as a JSON array inside a ```json code fence. Each finding must have these fields:
+
+- `id` (string): The rule ID that was violated, or a short kebab-case identifier for general findings.
+- `file` (string): The file path where the issue was found. **Must be one of the exact paths listed in "Files in This Diff" above.** If a file path does not appear in that list, do NOT reference it. If your finding relates to a file not in the diff (e.g. a downstream consequence), set `file` and `line` to the diff location that triggers the issue and mention the affected file in `description`.
+- `line` (int): The line number in the file. **Must be a line that was added or modified in the diff** (a `+` line in the diff hunk). If your finding is about a side effect on a distant line, set `line` to the diff line that *causes* the issue and describe the affected location in `description`.
+- `severity` (string): One of "critical", "bug", "warning", "suggestion", or "nitpick".
+  - "critical": Security vulnerabilities, data loss, crashes.
+  - "bug": A logic error that causes incorrect runtime behavior for real inputs. Missing test coverage, unused parameters, typos in identifiers that happen to compile, or "what if a future caller…" concerns do NOT qualify — use "suggestion" or "nitpick" for those. If you cannot name the concrete input and the concrete wrong output, it is not a bug.
+  - "warning": Potential issues, performance problems, code smells.
+  - "suggestion": Better patterns, readability improvements.
+  - "nitpick": Minor style, naming, formatting.
+- `title` (string): A short title for the finding.
+- `description` (string): A concise explanation of the issue — 2-3 sentences max. State what is wrong and why it matters. Do not repeat the code or walk through the logic step by step.
+- `suggestion` (string, optional): A concise suggested fix — 1-2 sentences of prose, then a code block if helpful. Do not explain what the code block does. For suggestions about broader patterns or improvements beyond the current PR scope, recommend opening a separate PR — do not imply they should fix it here.
+- `fix_ref` (string): A reference ID in the format `175-<index>` where index starts at 1 (e.g. `175-1`, `175-2`).
+- `actionable` (boolean): Set to `false` if your analysis concludes the code is correct and no change is needed. Set to `true` if the finding requires the author to act. **Prefer returning an empty array over emitting findings with `actionable: false`.**
+
+**IMPORTANT — JSON escaping:** When your description or suggestion references code containing backslash sequences (e.g. `\n`, `\t`, `\"`), you MUST double-escape the backslash in the JSON string value. For example, to mention `fmt.Print("\n")` in a JSON string, write `fmt.Print("\\n")`. A single `\n` in JSON is a newline character, not the literal text `\n`.
+
+**Do not include findings where your conclusion is that the code is correct or no action is needed.** If you evaluate something and determine it is fine, omit it entirely rather than reporting it. Specifically: if you begin analyzing a potential issue but then realize the code handles it correctly, do NOT emit a finding that walks through the concern and then concludes "this is actually fine" or "no bug here" — simply drop it. Every finding you emit must represent a real, actionable problem.
+
+**Check against project documentation before emitting.** The "Project Documentation" section above defines conventions for this codebase (e.g. "don't add error handling for scenarios that can't happen", "keep the core engine agnostic"). Before emitting a finding, verify it does not contradict those conventions. If your suggested fix would violate a project-doc rule, drop the finding — the author has already made that tradeoff deliberately.
+
+**Label uncertainty from external behavior.** If your finding's validity depends on the behavior of a third-party API, webhook payload shape, framework internal, or other system you cannot verify from the diff, file contents, and project docs above, you MUST (a) cap severity at "suggestion" and (b) state the assumption in `description` (e.g. "Assumes `github.event.pull_request.number` is unset on `pull_request_review_comment` events — verify against GitHub's webhook docs before acting."). A finding that asserts external behavior as fact without this label is a false-positive risk.
+
+**CRITICAL: Do NOT invent or hallucinate file paths, function names, or code that does not appear in the diff or the provided file contents. If a file or function is not shown above, do not reference it.**
+
+If there are no findings, return an empty array: `[]`.
+
+Example:
+```json
+[
+  {
+    "id": "rule-id",
+    "file": "src/main.go",
+    "line": 42,
+    "severity": "warning",
+    "title": "Short title",
+    "description": "The value is used after the error check, so a non-nil error silently proceeds with stale data.",
+    "suggestion": "Return early on error.\n\n```go\nif err != nil {\n    return err\n}\n```",
+    "fix_ref": "175-1",
+    "actionable": true
+  }
+]
+```

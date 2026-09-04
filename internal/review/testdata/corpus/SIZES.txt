@@ -1,0 +1,5 @@
+# Rendered prompt sizes, in characters.
+# Regenerate: go test ./internal/review/ -run Golden -update
+alansikora-codecanary-pr165                70300
+alansikora-codecanary-pr173               130438
+alansikora-codecanary-pr175                86970
