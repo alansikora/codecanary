@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -334,8 +335,15 @@ func TestClaudeProvider_DefaultDisablesTools(t *testing.T) {
 	mc := &ModelConfig{Provider: "claude", Model: "sonnet"}
 	p := newClaudeCLIProvider(mc, []string{"PATH=/usr/bin"}).(*claudeCLIProvider)
 	args := p.buildArgs(RunOpts{})
-	got := argValue(args, "--tools")
-	if got != "" {
+	// Assert the flag is actually present before checking its value:
+	// argValue returns "" both for `--tools ""` and for a missing --tools,
+	// so a value-only assertion would still pass if the flag were dropped —
+	// and a dropped --tools means the CLI falls back to its own default,
+	// which enables tools rather than disabling them.
+	if !slices.Contains(args, "--tools") {
+		t.Fatalf("--tools must be passed explicitly to disable tools; got args %q", args)
+	}
+	if got := argValue(args, "--tools"); got != "" {
 		t.Errorf("--tools should be empty by default, got %q", got)
 	}
 }
