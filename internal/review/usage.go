@@ -5,20 +5,21 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
 
 // CallUsage captures token usage and cost for a single Claude CLI invocation.
 type CallUsage struct {
-	Phase       string  `json:"phase"`
-	Model       string  `json:"model"`
-	InputTokens int     `json:"input_tokens"`
-	OutputTokens int    `json:"output_tokens"`
-	CacheReadTokens   int `json:"cache_read_tokens,omitempty"`
-	CacheCreateTokens int `json:"cache_creation_tokens,omitempty"`
-	CostUSD     float64 `json:"cost_usd"`
-	DurationMS  int     `json:"duration_ms"`
+	Phase             string  `json:"phase"`
+	Model             string  `json:"model"`
+	InputTokens       int     `json:"input_tokens"`
+	OutputTokens      int     `json:"output_tokens"`
+	CacheReadTokens   int     `json:"cache_read_tokens,omitempty"`
+	CacheCreateTokens int     `json:"cache_creation_tokens,omitempty"`
+	CostUSD           float64 `json:"cost_usd"`
+	DurationMS        int     `json:"duration_ms"`
 }
 
 // UsageReport is the top-level structure written to the usage JSON file.
@@ -201,25 +202,31 @@ func writeStepSummary(report *UsageReport) error {
 		return nil
 	}
 
+	// Render the whole table first so a partial write can't leave a
+	// half-formed table in the job summary.
+	var b strings.Builder
+	b.WriteString("## CodeCanary Usage\n\n")
+	b.WriteString("| Phase | Model | Input tokens | Output tokens | Cost |\n")
+	b.WriteString("|-------|-------|-------------|---------------|------|\n")
+	for _, c := range report.Calls {
+		fmt.Fprintf(&b, "| %s | %s | %s | %s | $%.4f |\n",
+			c.Phase, c.Model,
+			formatInt(c.InputTokens), formatInt(c.OutputTokens),
+			c.CostUSD)
+	}
+	fmt.Fprintf(&b, "| **Total** | | **%s** | **%s** | **$%.4f** |\n",
+		formatInt(report.TotalInputTokens), formatInt(report.TotalOutputTokens),
+		report.TotalCostUSD)
+
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("opening GITHUB_STEP_SUMMARY: %w", err)
 	}
 	defer func() { _ = f.Close() }()
 
-	fmt.Fprintln(f, "## CodeCanary Usage")
-	fmt.Fprintln(f, "")
-	fmt.Fprintln(f, "| Phase | Model | Input tokens | Output tokens | Cost |")
-	fmt.Fprintln(f, "|-------|-------|-------------|---------------|------|")
-	for _, c := range report.Calls {
-		fmt.Fprintf(f, "| %s | %s | %s | %s | $%.4f |\n",
-			c.Phase, c.Model,
-			formatInt(c.InputTokens), formatInt(c.OutputTokens),
-			c.CostUSD)
+	if _, err := f.WriteString(b.String()); err != nil {
+		return fmt.Errorf("writing GITHUB_STEP_SUMMARY: %w", err)
 	}
-	fmt.Fprintf(f, "| **Total** | | **%s** | **%s** | **$%.4f** |\n",
-		formatInt(report.TotalInputTokens), formatInt(report.TotalOutputTokens),
-		report.TotalCostUSD)
 
 	return nil
 }
@@ -250,7 +257,7 @@ type claudeJSONResponse struct {
 	APIErrorStatus int     `json:"api_error_status"` // HTTP status when is_error is true (e.g. 429 on rate limit)
 	CostUSD        float64 `json:"total_cost_usd"`
 	DurationMS     int     `json:"duration_ms"`
-	Usage      struct {
+	Usage          struct {
 		InputTokens              int `json:"input_tokens"`
 		OutputTokens             int `json:"output_tokens"`
 		CacheReadInputTokens     int `json:"cache_read_input_tokens"`
