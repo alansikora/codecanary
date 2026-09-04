@@ -224,8 +224,16 @@ func BuildIncrementalPrompt(diff string, cfg *ReviewConfig, knownIssues []Review
 
 	// PR description (when available) — needed for the cross-check section
 	// below so the LLM can flag contradictions between the description and
-	// the incremental diff.
+	// the incremental diff. Emit the same header BuildPrompt uses so the body
+	// arrives labelled rather than as raw text after the preamble; without it
+	// the LLM has no framing for what the block represents and can misattribute
+	// the claims it makes.
 	if prBody != "" {
+		if prNumber > 0 {
+			fmt.Fprintf(&b, "## Pull Request #%d\n", prNumber)
+		} else {
+			b.WriteString("## Pull Request\n")
+		}
 		fmt.Fprintf(&b, "<pr-body>\n%s\n</pr-body>\n\n", escapeAllTags(prBody))
 	}
 

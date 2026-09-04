@@ -251,6 +251,7 @@ func TestBuildIncrementalPrompt_IncludesPRBodyCrossCheckWhenBodyPresent(t *testi
 	got := BuildIncrementalPrompt("diff --git a/foo b/foo\n", nil, nil, 1, 0, nil, []string{"foo"}, nil, nil, "Cost cap: ~$2-4/run.")
 
 	mustContain := []string{
+		"## Pull Request #1",
 		"<pr-body>",
 		"## PR Description Cross-Check",
 		"contradicts a specific factual claim",
@@ -259,6 +260,23 @@ func TestBuildIncrementalPrompt_IncludesPRBodyCrossCheckWhenBodyPresent(t *testi
 		if !strings.Contains(got, s) {
 			t.Errorf("BuildIncrementalPrompt missing expected cross-check snippet %q", s)
 		}
+	}
+	// The header must precede the body, otherwise it doesn't frame it.
+	if i, j := strings.Index(got, "## Pull Request #1"), strings.Index(got, "<pr-body>"); i > j {
+		t.Error("PR header should be emitted before the pr-body block")
+	}
+}
+
+// Local reviews carry no PR number; the body still needs a label so the
+// cross-check section has framing to refer back to.
+func TestBuildIncrementalPrompt_PRBodyHeaderWithoutPRNumber(t *testing.T) {
+	got := BuildIncrementalPrompt("diff --git a/foo b/foo\n", nil, nil, 0, 0, nil, []string{"foo"}, nil, nil, "Cost cap: ~$2-4/run.")
+
+	if !strings.Contains(got, "## Pull Request\n<pr-body>") {
+		t.Error("BuildIncrementalPrompt should label the pr-body block even without a PR number")
+	}
+	if strings.Contains(got, "## Pull Request #0") {
+		t.Error("BuildIncrementalPrompt should not emit a zero PR number")
 	}
 }
 
