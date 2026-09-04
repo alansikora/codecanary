@@ -130,10 +130,16 @@ func writeSizeReport(t *testing.T, dir string, sizes []string) {
 		return
 	}
 	prev, err := os.ReadFile(path)
-	if err != nil || string(prev) == body {
-		return
+	switch {
+	case os.IsNotExist(err):
+		// The point of this file is that prompt growth cannot pass unnoticed,
+		// so a missing one is a failure rather than a skip.
+		t.Errorf("no size report at %s; run `go test ./internal/review/ -run Golden -update`", path)
+	case err != nil:
+		t.Errorf("reading size report: %v", err)
+	case string(prev) != body:
+		t.Errorf("prompt sizes changed:\n\n%s\nwant:\n\n%s\nre-run with -update", body, prev)
 	}
-	t.Errorf("prompt sizes changed:\n\n%s\nwant:\n\n%s\nre-run with -update", body, prev)
 }
 
 func lineAt(lines []string, i int) string {
