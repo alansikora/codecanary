@@ -140,10 +140,17 @@ func (u *UsageTracker) Report(repo string, prNumber int) *UsageReport {
 }
 
 // WriteUsageEnv writes the usage report as a CODECANARY_USAGE env var
-// to $GITHUB_ENV so subsequent workflow steps can read it. No-op outside
-// GitHub Actions. Also writes a markdown summary to $GITHUB_STEP_SUMMARY
-// when that env var is set.
+// to $GITHUB_ENV so subsequent workflow steps can read it, and a markdown
+// summary to $GITHUB_STEP_SUMMARY. Each is a no-op when its own env var is
+// unset, so neither depends on the other being present.
 func WriteUsageEnv(report *UsageReport) error {
+	// Written first, and independently: the two variables travel together in
+	// GitHub Actions, but gating the summary on GITHUB_ENV would make it
+	// silently unreachable anywhere only GITHUB_STEP_SUMMARY is set.
+	if err := writeStepSummary(report); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to write GitHub Step Summary: %v\n", err)
+	}
+
 	path := os.Getenv("GITHUB_ENV")
 	if path == "" {
 		return nil
@@ -162,10 +169,6 @@ func WriteUsageEnv(report *UsageReport) error {
 
 	if _, err := fmt.Fprintf(f, "CODECANARY_USAGE=%s\n", data); err != nil {
 		return fmt.Errorf("writing to GITHUB_ENV: %w", err)
-	}
-
-	if err := writeStepSummary(report); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to write GitHub Step Summary: %v\n", err)
 	}
 
 	return nil

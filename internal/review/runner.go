@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 
@@ -38,6 +39,21 @@ type FailOnSeverityError struct {
 
 func (e *FailOnSeverityError) Error() string {
 	return fmt.Sprintf("found %d finding(s) at or above severity %q (--fail-on %s)", e.Count, e.Severity, e.Severity)
+}
+
+// countAtOrAboveSeverity counts the findings that meet or exceed a severity
+// threshold. It spans both new findings and the ones still open from previous
+// reviews: a run that raises nothing new but leaves unresolved findings above
+// the threshold is exactly the state --fail-on exists to catch.
+func countAtOrAboveSeverity(result *ReviewResult, severity string) int {
+	threshold := severityOrder(severity)
+	var count int
+	for _, f := range slices.Concat(result.Findings, result.StillOpen) {
+		if severityOrder(f.Severity) <= threshold {
+			count++
+		}
+	}
+	return count
 }
 
 // allowedEnvPrefixes lists environment variable prefixes passed to the LLM subprocess.
@@ -495,14 +511,7 @@ func Run(opts RunOptions) error {
 	// Deferred until after telemetry so that failing runs still emit usage data.
 	var failOnErr error
 	if opts.FailOnSeverity != "" {
-		threshold := severityOrder(opts.FailOnSeverity)
-		var count int
-		for _, f := range result.Findings {
-			if severityOrder(f.Severity) <= threshold {
-				count++
-			}
-		}
-		if count > 0 {
+		if count := countAtOrAboveSeverity(result, opts.FailOnSeverity); count > 0 {
 			failOnErr = &FailOnSeverityError{Severity: opts.FailOnSeverity, Count: count}
 		}
 	}
