@@ -155,6 +155,11 @@ If the response is truncated (hit max output tokens), a warning is logged. The p
 4. **Actionable filter**: Removes findings where `actionable: false`.
 5. **Status tagging**: Tags all findings as `"new"` if this is an incremental review.
 
+Incremental reviews then apply two history filters (`findings.go`), in Go, after the LLM:
+
+6. **Late-finding gate** (`FilterLateFindings`): a finding below `bug` that sits more than 5 lines from anything in the incremental diff is about code a previous review already saw, so it's dropped. Each review samples the touched files afresh; without this gate a PR keeps surfacing one more suggestion about old code per push and never converges. Bugs and criticals in old code still pass. Skipped when the review fell back to the full PR diff.
+7. **Known-duplicate filter** (`FilterKnownDuplicates`): drops a finding that restates a thread the PR already has (open, or answered and acked) — same file, within 15 lines, and either the same `id` or titles with ≥ 50% word overlap. The prompt's Known Issues list asks the model not to repeat these, but it still rewords and re-raises them, most often after a rebase forces a full re-review.
+
 ### 8. Publish results
 
 **GitHub PR** (`--post`): Every cycle emits exactly one top-level CodeCanary review, decided by an edit-vs-post rule. `FetchLatestCodecanaryReview` reads the commit SHA from the most recent CodeCanary review's hidden marker:
@@ -168,7 +173,7 @@ Per-thread ack replies for dismissed/acknowledged/rebutted resolutions are poste
 
 `codecanary findings` applies the same marker to filter deferrals out of its default output: threads with any `codecanary:ack:*` reply are treated as handled and omitted alongside GitHub-resolved threads. Pass `--include-resolved` to see them. This keeps the codecanary-fix skill from re-prompting on findings the operator already deferred.
 
-After the review is posted (or updated in place), `GithubPlatform.Publish` also POSTs a `CodeCanary / review` commit status on the reviewed SHA via `PostReviewCommitStatus`. State is `success` when `NewFindings + StillOpen == 0` (everything is either new-and-green, fixed by code, or explicitly handled by the author), and `failure` otherwise. Description is the unresolved count or "all findings resolved" / "no findings". Teams that add `CodeCanary / review` as a required status check in branch protection get auto-gating: merges are blocked until a review run posts a green status on HEAD. Status posting failures are logged as warnings and do not abort Publish — the review itself has already landed. The local `codecanary signoff` command posts a status under the same context, so a team can rely on a single required check that either the bot (pr-loop) or a local reviewer (local-loop) satisfies.
+After the review is posted (or updated in place), `GithubPlatform.Publish` also POSTs a `CodeCanary / review` commit status on the reviewed SHA via `PostReviewCommitStatus`. State is `failure` while any *blocking* finding — severity `warning` or above (`blockingSeverity` in `findings.go`) — is new this cycle or still open with no classification, and `success` otherwise. Suggestions and nitpicks stay on the PR without failing the check, so they never cost the author another push. Description is the blocking count ("2 unresolved blocking findings"), or "N non-blocking findings open" / "all findings resolved" / "no findings". `codecanary signoff` applies the same rule through `CommitStatusForFindings`. Teams that add `CodeCanary / review` as a required status check in branch protection get auto-gating: merges are blocked until a review run posts a green status on HEAD. Status posting failures are logged as warnings and do not abort Publish — the review itself has already landed. The local `codecanary signoff` command posts a status under the same context, so a team can rely on a single required check that either the bot (pr-loop) or a local reviewer (local-loop) satisfies.
 
 **Local**: Prints the formatted result to stdout. Format depends on context: terminal (colored, human-readable), markdown, or JSON.
 

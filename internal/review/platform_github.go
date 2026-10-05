@@ -290,10 +290,10 @@ func (g *GithubPlatform) ReportUsage(tracker *UsageTracker) {
 }
 
 // postReviewCommitStatus POSTs a `CodeCanary / review` commit status on the
-// reviewed SHA. state=success when no unresolved findings remain for the
-// PR (new findings this cycle + threads still open with no classification
-// both at zero); state=failure otherwise. Teams can require this check in
-// branch protection to gate merges on a clean review.
+// reviewed SHA. state=failure while any blocking finding (severity at or
+// above blockingSeverity) is unresolved — new this cycle or still open with
+// no classification; state=success otherwise. Teams can require this check
+// in branch protection to gate merges on a clean review.
 //
 // Skipped silently when the SHA is empty (non-pr-loop contexts that
 // accidentally share the adapter). Failures are logged as warnings — the
@@ -311,27 +311,4 @@ func (g *GithubPlatform) postReviewCommitStatus(sha string, summary ReviewSummar
 	}
 	Stderrf(ansiGreen, "Posted %s = %s on %s (%s)\n",
 		ReviewCommitStatusContext, state, shortSHA(sha), desc)
-}
-
-// commitStatusFromSummary maps a ReviewSummary to the (state, description)
-// pair sent to the commit status API. Pulled out so the mapping is
-// unit-testable without network access.
-//
-// An "unresolved" count combines new findings this cycle with threads that
-// were already open and remain unclassified — either kind should fail the
-// required check. Everything classified by triage (resolved by code, file
-// removed, dismissed, acknowledged, rebutted) counts as handled.
-func commitStatusFromSummary(summary ReviewSummary) (state, desc string) {
-	unresolved := summary.NewFindings + summary.StillOpen
-	if unresolved > 0 {
-		suffix := "s"
-		if unresolved == 1 {
-			suffix = ""
-		}
-		return "failure", fmt.Sprintf("%d unresolved finding%s", unresolved, suffix)
-	}
-	if summary.ResolvedByCode+summary.FileRemoved+summary.Dismissed+summary.Acknowledged+summary.Rebutted > 0 {
-		return "success", "all findings resolved"
-	}
-	return "success", "no findings"
 }
