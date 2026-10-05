@@ -12,13 +12,6 @@ permissions:
   id-token: write
   pull-requests: write
 
-# Serialize CodeCanary runs per PR so two concurrent workflow runs never post
-# duplicate inline comments or race each other when editing the latest
-# top-level review body. Replies on the same PR queue behind the commit push.
-concurrency:
-  group: codecanary-pr-${{ github.event.pull_request.number || github.event.comment.pull_request_url }}
-  cancel-in-progress: false
-
 jobs:
   review:
     if: >-
@@ -29,6 +22,20 @@ jobs:
         github.event.comment.user.login != 'codecanary-bot[bot]' &&
         github.event.comment.in_reply_to_id
       )
+    # Serialize CodeCanary runs per PR so two runs never post duplicate inline
+    # comments or race each other when editing the latest top-level review
+    # body. Job-level (not workflow-level) so runs whose job is skipped by the
+    # `if:` above (e.g. the bot's own ack replies) stay out of the group, and
+    # `queue: max` so a burst of events queues up instead of cancelling the
+    # pending run (the default keeps only one pending run per group).
+    concurrency:
+      group: codecanary-pr-${{ github.event.pull_request.number || github.event.comment.pull_request_url }}
+      cancel-in-progress: false
+      # `queue` is documented for workflow-level concurrency
+      # (github.blog/changelog/2026-05-07-github-actions-concurrency-groups-now-allow-larger-queues);
+      # job-level support was verified with a probe run (#189). If GitHub ever
+      # ignored it here, behaviour would fall back to one pending run per group.
+      queue: max
     runs-on: ubuntu-latest
     steps:
       - name: Check if codecanary thread
