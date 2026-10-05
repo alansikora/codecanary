@@ -23,8 +23,9 @@ type ReviewConfig struct {
 	Rules        []Rule            `yaml:"-"`
 	Context      string            `yaml:"-"`
 	Ignore       []string          `yaml:"-"`
-	MaxFileSize  int               `yaml:"max_file_size"`  // per-file content limit in bytes (default 100KB)
-	MaxTotalSize int               `yaml:"max_total_size"` // total file content limit in bytes (default 500KB)
+	MaxFileSize  int               `yaml:"max_file_size"`   // per-file content limit in bytes (default 100KB)
+	MaxTotalSize int               `yaml:"max_total_size"`  // total file content limit in bytes (default 500KB)
+	MaxDiffSize  int               `yaml:"max_diff_size"`   // diff size limit in bytes for the review prompt (default 300KB)
 	MaxBudgetUSD float64           `yaml:"max_budget_usd"`  // per-invocation spending limit in USD (default 0 = unlimited)
 	TimeoutMins  int               `yaml:"timeout_minutes"` // per-invocation timeout in minutes (default 5)
 	ReviewModel  string            `yaml:"review_model"`    // model for main review (required)
@@ -76,6 +77,16 @@ func (c *ReviewConfig) EffectiveMaxTotalSize() int {
 		return c.MaxTotalSize
 	}
 	return 500 * 1024
+}
+
+// EffectiveMaxDiffSize returns the diff size limit for the review prompt,
+// defaulting to 300KB. Together with max_total_size this keeps the prompt
+// within a typical 200K-token context window.
+func (c *ReviewConfig) EffectiveMaxDiffSize() int {
+	if c != nil && c.MaxDiffSize > 0 {
+		return c.MaxDiffSize
+	}
+	return 300 * 1024
 }
 
 // EffectiveTimeout returns the per-invocation timeout. Returns 0 when
@@ -180,6 +191,9 @@ func (c *ReviewConfig) Validate() error {
 	}
 	if c.MaxTotalSize < 0 {
 		return fmt.Errorf("max_total_size must be non-negative, got %d", c.MaxTotalSize)
+	}
+	if c.MaxDiffSize < 0 {
+		return fmt.Errorf("max_diff_size must be non-negative, got %d", c.MaxDiffSize)
 	}
 	if c.TimeoutMins < 0 {
 		return fmt.Errorf("timeout_minutes must be non-negative, got %d", c.TimeoutMins)

@@ -19,7 +19,11 @@ type Finding struct {
 	Suggestion  string `json:"suggestion,omitempty"`
 	FixRef      string `json:"fix_ref"`
 	Actionable  *bool  `json:"actionable,omitempty"`
-	Status      string `json:"status,omitempty"` // "new", "still open", or "" (first review)
+	// NeedsVerification marks a finding whose validity hinges on something the
+	// reviewer could not confirm from the diff, files, and docs it was given.
+	// Such findings are open questions, not threads: see SplitOpenQuestions.
+	NeedsVerification bool   `json:"needs_verification,omitempty"`
+	Status            string `json:"status,omitempty"` // "new", "still open", or "" (first review)
 }
 
 // ReviewResult holds the complete output of a review run.
@@ -28,8 +32,15 @@ type ReviewResult struct {
 	Repo      string    `json:"repo"`
 	Findings  []Finding `json:"findings"`
 	StillOpen []Finding `json:"still_open,omitempty"` // Unresolved findings from previous reviews
+	// Questions are findings the reviewer flagged needs_verification. They are
+	// shown in an "Open questions" section, never posted as threads, never
+	// persisted as open findings, and never counted toward the commit status.
+	Questions []Finding `json:"questions,omitempty"`
 	Summary   string    `json:"summary"`
 	SHA       string    `json:"sha,omitempty"`
+	// Coverage lists changed files the review did not see in full; nil when
+	// every file was reviewed with its full contents.
+	Coverage *ReviewCoverage `json:"coverage,omitempty"`
 }
 
 // jsonFenceRe matches a ```json ... ``` code fence.
@@ -321,4 +332,78 @@ func jaccard(a, b map[string]bool) float64 {
 		}
 	}
 	return float64(inter) / float64(len(a)+len(b)-inter)
+}
+
+// anchorKind says where a finding lands on the PR.
+type anchorKind int
+
+const (
+	// anchorNone: the finding cannot be posted as a thread and is dropped.
+	anchorNone anchorKind = iota
+	// anchorLine: an inline comment on a line added in the PR diff.
+	anchorLine
+	// anchorFile: a file-level comment, for a finding in a PR file that has
+	// no added line to anchor to (pure deletion, binary or mode-only change)
+	// or that names no line.
+	anchorFile
+)
+
+// findingAnchor is where a finding is posted. Line is the diff line for
+// anchorLine and 0 otherwise.
+type findingAnchor struct {
+	Kind anchorKind
+	Line int
+}
+
+// anchorFinding is the single rule for whether and where a finding becomes a
+// review thread. Validation (runner.go) keeps exactly the findings it anchors
+// and PostReview posts them where it says, so a finding is never counted as
+// new without also getting a thread.
+//
+//   - No file, or a file outside the PR: dropped.
+//   - A line within MaxFindingProximity of an added line: inline, snapped to
+//     that line.
+//   - A line further than that: dropped (out of scope or hallucinated).
+//   - No line, or a file with no added lines: file-level.
+//
+// prFiles must already exclude files the review left out (ignore patterns,
+// binaries — see scopePRForPrompt), so the file-level fallback only fires
+// for files whose diff the reviewer actually saw.
+func anchorFinding(f Finding, prFiles map[string]bool, lines diffLineMap) findingAnchor {
+	if f.File == "" || !prFiles[f.File] {
+		return findingAnchor{Kind: anchorNone}
+	}
+	if f.Line > 0 {
+		if nearest := lines.nearestLine(f.File, f.Line); nearest > 0 {
+			if abs(f.Line-nearest) <= MaxFindingProximity {
+				return findingAnchor{Kind: anchorLine, Line: nearest}
+			}
+			return findingAnchor{Kind: anchorNone}
+		}
+	}
+	return findingAnchor{Kind: anchorFile}
+}
+
+// fileSet returns the set of the given paths.
+func fileSet(files []string) map[string]bool {
+	set := make(map[string]bool, len(files))
+	for _, f := range files {
+		set[f] = true
+	}
+	return set
+}
+
+// SplitOpenQuestions separates findings the reviewer marked
+// needs_verification from the rest. A question is inconclusive by the model's
+// own account, so it is listed for the author to glance at instead of opening
+// a thread that costs a reply cycle.
+func SplitOpenQuestions(findings []Finding) (kept, questions []Finding) {
+	for _, f := range findings {
+		if f.NeedsVerification {
+			questions = append(questions, f)
+			continue
+		}
+		kept = append(kept, f)
+	}
+	return kept, questions
 }
