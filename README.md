@@ -83,8 +83,10 @@ Once merged, CodeCanary reviews every PR on open and push. Draft PRs are skipped
 
 CodeCanary can block merges until a review comes back clean. After every review, the bot (and the local `codecanary signoff` command) posts a GitHub commit status under the context `CodeCanary / review`:
 
-- `success` — no unresolved findings (everything is either unraised, fixed by code, or handled by the author)
-- `failure` — one or more findings remain unresolved, with a description like `"3 unresolved findings"`
+- `success` — no unresolved blocking findings (everything is either unraised, fixed by code, handled by the author, or below `warning`)
+- `failure` — one or more findings at `warning` or above remain unresolved, with a description like `"3 unresolved blocking findings"`
+
+Suggestions and nitpicks are still posted on the PR but don't fail the status (its description reads like `"2 non-blocking findings open"`), so they never force another push.
 
 To turn this into a required check, add `CodeCanary / review` to your repo's required status checks via whichever branch protection mechanism you use (rulesets, classic branch protection rules, etc.). GitHub accepts any context name; if a review has already run, it will also show up in autocomplete.
 

@@ -365,6 +365,7 @@ func Run(opts RunOptions) error {
 	var prompt string
 	var fixed []fixedThread
 	var stillOpenFindings []Finding
+	var incrementalDiff string
 	// A previous SHA alone is enough to enter the incremental path. When
 	// previous findings were all resolved (reviewThreads empty), we still
 	// want to scope the next review to commits since that baseline instead
@@ -372,7 +373,7 @@ func Run(opts RunOptions) error {
 	isIncremental := previousSHA != ""
 
 	if isIncremental {
-		prompt, fixed, stillOpenFindings = runTriage(
+		prompt, fixed, stillOpenFindings, incrementalDiff = runTriage(
 			pr, cfg, rctx.ProjectDocs, triageProvider, tracker, platform,
 			reviewThreads, previousSHA, startIndex, opts,
 		)
@@ -438,6 +439,14 @@ func Run(opts RunOptions) error {
 				Stderrf(ansiYellow, "Could not parse truncated response — proceeding with no findings\n")
 				findings = nil
 			}
+		}
+		if isIncremental {
+			findings = FilterLateFindings(findings, incrementalDiff)
+			known := make([]Finding, len(reviewThreads))
+			for i := range reviewThreads {
+				known[i] = threadFinding(platform, reviewThreads, i)
+			}
+			findings = FilterKnownDuplicates(findings, known)
 		}
 	}
 
@@ -524,13 +533,14 @@ func Run(opts RunOptions) error {
 
 // runTriage handles the incremental review: classify previous threads, evaluate
 // via LLM, handle resolutions, and build the incremental prompt.
-// Returns the prompt, fixed threads, and still-open findings.
+// Returns the prompt, fixed threads, still-open findings, and the incremental
+// diff the prompt reviewed ("" when it fell back to the full PR diff).
 func runTriage(
 	pr *PRData, cfg *ReviewConfig, projectDocs map[string]string,
 	triageProvider ModelProvider, tracker *UsageTracker, platform ReviewPlatform,
 	reviewThreads []ReviewThread, previousSHA string, startIndex int,
 	opts RunOptions,
-) (string, []fixedThread, []Finding) {
+) (string, []fixedThread, []Finding, string) {
 	if len(reviewThreads) > 0 {
 		Stderrf(ansiBold, "Re-evaluating %d unresolved thread(s) (base %s)...\n", len(reviewThreads), shortSHA(previousSHA))
 	} else {
@@ -606,7 +616,7 @@ func runTriage(
 	}
 
 	if opts.ReplyOnly {
-		return "", fixed, nil
+		return "", fixed, nil, ""
 	}
 
 	// Phase 2: Build review prompt for new findings.
@@ -626,16 +636,7 @@ func runTriage(
 			continue
 		}
 		unresolved = append(unresolved, t)
-		// Use original finding from local state when available (lossless).
-		// Fall back to FindingFromThread for GitHub mode (has embedded JSON).
-		if lp, ok := platform.(*LocalPlatform); ok {
-			if f, ok := lp.SavedFinding(i); ok {
-				f.Status = "still open"
-				stillOpenFindings = append(stillOpenFindings, f)
-				continue
-			}
-		}
-		stillOpenFindings = append(stillOpenFindings, FindingFromThread(t))
+		stillOpenFindings = append(stillOpenFindings, threadFinding(platform, reviewThreads, i))
 	}
 
 	// Build resolved context for the incremental review prompt (anti-ping-pong).
@@ -660,15 +661,7 @@ func runTriage(
 			continue
 		}
 		t := reviewThreads[f.Index]
-		var finding Finding
-		if lp, ok := platform.(*LocalPlatform); ok {
-			if saved, ok := lp.SavedFinding(f.Index); ok {
-				finding = saved
-			}
-		}
-		if finding.Title == "" && finding.Description == "" {
-			finding = FindingFromThread(t)
-		}
+		finding := threadFinding(platform, reviewThreads, f.Index)
 		title := finding.Title
 		if title == "" {
 			title = t.Body
@@ -705,7 +698,7 @@ func runTriage(
 	} else if strings.TrimSpace(incrementalDiff) == "" {
 		// No new changes — return previous findings as still-open.
 		Stderrf(ansiGreen, "No new changes since last review\n")
-		return "", fixed, stillOpenFindings
+		return "", fixed, stillOpenFindings, ""
 	} else {
 		incFiles := FilesFromDiff(incrementalDiff)
 		incContents := make(map[string]string, len(incFiles))
@@ -722,7 +715,23 @@ func runTriage(
 		prompt = BuildIncrementalPrompt(incrementalDiff, cfg, unresolved, opts.PRNumber, startIndex, incContents, incFiles, resolvedCtx, projectDocs)
 	}
 
-	return prompt, fixed, stillOpenFindings
+	if diffErr != nil {
+		return prompt, fixed, stillOpenFindings, ""
+	}
+	return prompt, fixed, stillOpenFindings, incrementalDiff
+}
+
+// threadFinding returns the finding behind threads[i], marked "still open".
+// Local state keeps the original finding losslessly; GitHub threads carry it
+// in their embedded JSON marker, which FindingFromThread reads.
+func threadFinding(platform ReviewPlatform, threads []ReviewThread, i int) Finding {
+	if lp, ok := platform.(*LocalPlatform); ok {
+		if f, ok := lp.SavedFinding(i); ok && (f.Title != "" || f.Description != "") {
+			f.Status = "still open"
+			return f
+		}
+	}
+	return FindingFromThread(threads[i])
 }
 
 // loadReviewConfig loads the review config from the given path, or

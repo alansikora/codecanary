@@ -15,6 +15,9 @@ type ReviewSummary struct {
 	Acknowledged   int
 	Rebutted       int
 	StillOpen      int // threads still open with no classification this cycle
+	// Blocking counts the new and still-open findings at or above
+	// blockingSeverity. Only these fail the commit status.
+	Blocking int
 }
 
 // hasContent reports whether any bucket has a non-zero count.
@@ -91,6 +94,11 @@ func replaceSummaryBlock(body string, summary ReviewSummary) string {
 // classified by this cycle (no code fix, no author activity).
 func computeReviewSummary(threads []ReviewThread, fixed []fixedThread, newFindings []Finding) ReviewSummary {
 	s := ReviewSummary{NewFindings: len(newFindings)}
+	for _, f := range newFindings {
+		if isBlocking(f.Severity) {
+			s.Blocking++
+		}
+	}
 	fixedSet := make(map[int]bool, len(fixed))
 	for _, f := range fixed {
 		if f.Index < 0 || f.Index >= len(threads) {
@@ -111,5 +119,57 @@ func computeReviewSummary(threads []ReviewThread, fixed []fixedThread, newFindin
 		}
 	}
 	s.StillOpen = len(threads) - len(fixedSet)
+	for i, t := range threads {
+		if !fixedSet[i] && isBlocking(FindingFromThread(t).Severity) {
+			s.Blocking++
+		}
+	}
 	return s
+}
+
+// commitStatusFromSummary maps a ReviewSummary to the (state, description)
+// pair sent to the commit status API. Pulled out so the mapping is
+// unit-testable without network access.
+//
+// An "unresolved" count combines new findings this cycle with threads that
+// were already open and remain unclassified. Only the blocking ones fail the
+// required check: suggestions and nitpicks stay visible on the PR but don't
+// make the author push again. Everything classified by triage (resolved by
+// code, file removed, dismissed, acknowledged, rebutted) counts as handled.
+func commitStatusFromSummary(summary ReviewSummary) (state, desc string) {
+	if summary.Blocking > 0 {
+		return "failure", fmt.Sprintf("%d unresolved blocking finding%s", summary.Blocking, pluralS(summary.Blocking))
+	}
+	if unresolved := summary.NewFindings + summary.StillOpen; unresolved > 0 {
+		return "success", fmt.Sprintf("%d non-blocking finding%s open", unresolved, pluralS(unresolved))
+	}
+	if summary.ResolvedByCode+summary.FileRemoved+summary.Dismissed+summary.Acknowledged+summary.Rebutted > 0 {
+		return "success", "all findings resolved"
+	}
+	return "success", "no findings"
+}
+
+// CommitStatusForFindings maps the open findings of a local review to the
+// (state, description) pair for the commit status, by the same rule the bot
+// applies. Findings marked not actionable are left out.
+func CommitStatusForFindings(findings []Finding) (state, desc string) {
+	var s ReviewSummary
+	for _, f := range findings {
+		if f.Actionable != nil && !*f.Actionable {
+			continue
+		}
+		s.StillOpen++
+		if isBlocking(f.Severity) {
+			s.Blocking++
+		}
+	}
+	return commitStatusFromSummary(s)
+}
+
+// pluralS returns "s" unless n is 1.
+func pluralS(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
