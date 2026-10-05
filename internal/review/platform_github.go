@@ -278,8 +278,9 @@ func (g *GithubPlatform) SaveState(_ *ReviewResult, _ []Finding, _ bool) error {
 	return nil
 }
 
-func (g *GithubPlatform) GetIncrementalDiff(baseSHA string, _ []string) (string, error) {
-	return GetIncrementalDiff(baseSHA)
+func (g *GithubPlatform) GetIncrementalDiff(previousSHA string, pr *PRData) (string, error) {
+	baseRef := fetchIncrementalHistory(previousSHA, pr.BaseBranch)
+	return IncrementalDiff(previousSHA, baseRef)
 }
 
 func (g *GithubPlatform) ReportUsage(tracker *UsageTracker) {
