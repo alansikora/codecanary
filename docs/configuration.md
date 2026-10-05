@@ -33,6 +33,8 @@ max_budget_usd: 0.50            # per-review spending limit in USD (default: 0 =
 timeout_minutes: 5              # per-invocation timeout
 max_file_size: 102400           # per-file content limit in bytes (default 100KB)
 max_total_size: 512000          # total file content limit in bytes (default 500KB)
+                                # files over either limit are reviewed from their diff only
+max_diff_size: 307200           # diff limit in bytes; the largest file diffs are trimmed past it (default 300KB)
 
 context: |
   Describe your project stack and conventions here.

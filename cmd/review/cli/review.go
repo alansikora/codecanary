@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"github.com/alansikora/codecanary/internal/review"
+	"github.com/alansikora/codecanary/internal/setup"
 	"github.com/spf13/cobra"
 )
 
@@ -58,6 +59,10 @@ var reviewCmd = &cobra.Command{
 					Repo:     repo,
 					PRNumber: prNumber,
 					DryRun:   dryRun,
+					Updates: review.UpdateCheck{
+						BinaryVersion:   Version,
+						TemplateVersion: setup.TemplateVersion(),
+					},
 				},
 			})
 		}
