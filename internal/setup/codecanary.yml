@@ -31,6 +31,10 @@ jobs:
     concurrency:
       group: codecanary-pr-${{ github.event.pull_request.number || github.event.comment.pull_request_url }}
       cancel-in-progress: false
+      # `queue` is documented for workflow-level concurrency
+      # (github.blog/changelog/2026-05-07-github-actions-concurrency-groups-now-allow-larger-queues);
+      # job-level support was verified with a probe run (#189). If GitHub ever
+      # ignored it here, behaviour would fall back to one pending run per group.
       queue: max
     runs-on: ubuntu-latest
     steps:
