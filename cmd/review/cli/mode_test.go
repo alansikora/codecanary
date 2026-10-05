@@ -79,6 +79,11 @@ func TestModeOutput_NoUpdate(t *testing.T) {
 	if m["update_available"] != false {
 		t.Errorf("update_available = %v, want false", m["update_available"])
 	}
+	// The cache knows the latest version, but it isn't newer: the skill's
+	// contract is that latest_version is absent when there's no update.
+	if _, ok := m["latest_version"]; ok {
+		t.Errorf("latest_version should be omitted without an update, got %v", m["latest_version"])
+	}
 }
 
 func TestModeOutput_CISkipsUpdateCheck(t *testing.T) {

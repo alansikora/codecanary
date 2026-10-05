@@ -80,8 +80,10 @@ func buildModeOutput(mode *review.ModeInfo) *modeOutput {
 	out := &modeOutput{ModeInfo: mode, Version: DisplayVersion()}
 
 	latest, hasUpdate := checkForUpdate()
-	out.LatestVersion = strings.TrimPrefix(latest, "v")
 	out.UpdateAvailable = hasUpdate
+	if hasUpdate {
+		out.LatestVersion = strings.TrimPrefix(latest, "v")
+	}
 
 	// Best-effort: an unreadable skill file must not fail mode detection.
 	installed, differs, path, err := skillNeedsUpgrade()
