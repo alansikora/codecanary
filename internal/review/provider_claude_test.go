@@ -2,6 +2,8 @@ package review
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -250,6 +252,24 @@ func TestClaudeProvider_ScrubsEnv(t *testing.T) {
 		key, _, _ := strings.Cut(e, "=")
 		if claudeScrubbedEnvKeys[key] {
 			t.Errorf("%s should be scrubbed from the claude env", key)
+		}
+	}
+}
+
+// With tools on, the CLI runs from the repo root, so a relative claude_path
+// such as ./bin/claude must be made absolute against codecanary's cwd first.
+// Bare names stay on PATH lookup.
+func TestAbsIfRelativePath(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := absIfRelativePath("./bin/claude"), filepath.Join(cwd, "bin", "claude"); got != want {
+		t.Errorf("relative path = %q, want %q", got, want)
+	}
+	for _, p := range []string{"claude", "/usr/local/bin/claude"} {
+		if got := absIfRelativePath(p); got != p {
+			t.Errorf("absIfRelativePath(%q) = %q, want unchanged", p, got)
 		}
 	}
 }

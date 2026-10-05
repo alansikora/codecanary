@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -117,7 +118,22 @@ func (p *claudeCLIProvider) enableReviewTools(tools, repoRoot string) {
 	default:
 		p.reviewTools = tools
 		p.workDir = repoRoot
+		p.binaryPath = absIfRelativePath(p.binaryPath)
 	}
+}
+
+// absIfRelativePath makes a relative path that names a file (contains a
+// separator, like ./bin/claude) absolute against the current directory, so it
+// still resolves once the CLI runs from the repo root. A bare command name
+// ("claude") is left for PATH lookup, which doesn't depend on the directory.
+func absIfRelativePath(path string) string {
+	if filepath.IsAbs(path) || !strings.ContainsRune(path, filepath.Separator) {
+		return path
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		return abs
+	}
+	return path
 }
 
 // claudeScrubbedEnvKeys are credentials the Claude CLI subprocess never needs.
