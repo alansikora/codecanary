@@ -4,7 +4,7 @@
 # Template version. CodeCanary compares it with the template it ships and
 # adds a note to its reviews when this file is older. Keep this line when
 # customizing; update it only when you take the changes from a newer template.
-# codecanary-workflow: v1
+# codecanary-workflow: v2
 name: CodeCanary
 on:
   pull_request_target:
@@ -89,26 +89,45 @@ jobs:
             echo "mergeable=$MERGEABLE; proceeding"
           fi
 
+      # Checking out a fork's code under pull_request_target is safe here only
+      # because nothing from the checkout is executed: CodeCanary reads files
+      # and diffs, its config is pinned to the base branch below, and the
+      # Claude CLI is run with project settings, hooks and MCP servers
+      # ignored. actions/checkout refuses fork code by default, so opt in
+      # explicitly. On fork PRs the token isn't left in .git/config; same-repo
+      # PRs keep it so the incremental review can fetch earlier commits.
       - uses: actions/checkout@v6
         if: env.skip != 'true'
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          allow-unsafe-pr-checkout: true
+          persist-credentials: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
 
-      # Prevent fork PRs from poisoning config to redirect secrets to an
-      # attacker-controlled endpoint (pull_request_target + checkout attack).
+      # Fork PRs must not control how CodeCanary runs. Every CodeCanary config
+      # file is taken from the base branch, and one the base branch doesn't
+      # have is deleted, so a fork can't add it. Claude Code project settings
+      # (hooks, env, apiKeyHelper) and MCP servers are removed as well; the
+      # CLI already ignores them, this keeps that true if a flag changes.
       - name: Pin config to base branch
         if: >-
           env.skip != 'true' &&
           github.event.pull_request.base.sha != '' &&
           github.event.pull_request.head.repo.full_name != github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           BASE="${{ github.event.pull_request.base.sha }}"
-          git fetch --depth=1 origin "$BASE"
-          for f in .codecanary/config.yml .codecanary/review.yml .codecanary.yml; do
+          git -c "http.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)" \
+            fetch --depth=1 origin "$BASE"
+          for f in .codecanary/config.yml .codecanary/review.yml .codecanary/review.local.yml .codecanary.yml; do
             if git show "$BASE":"$f" > /tmp/base-cfg 2>/dev/null; then
+              mkdir -p "$(dirname "$f")"
               cp /tmp/base-cfg "$f"
+            else
+              rm -f "$f"
             fi
           done
+          rm -f .claude/settings.json .claude/settings.local.json .mcp.json
 
       - uses: alansikora/codecanary@canary
         if: env.skip != 'true'
