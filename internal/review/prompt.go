@@ -242,15 +242,7 @@ func BuildIncrementalPrompt(diff string, cfg *ReviewConfig, knownIssues []Review
 		b.WriteString("\n")
 	}
 
-	// Known issues to avoid duplicating.
-	if len(knownIssues) > 0 {
-		b.WriteString("## Known Issues (DO NOT DUPLICATE)\n")
-		b.WriteString("These issues are already reported and unresolved. Do NOT report them again:\n\n")
-		for _, t := range knownIssues {
-			fmt.Fprintf(&b, "- `%s:%d`\n", t.Path, t.Line)
-		}
-		b.WriteString("\n")
-	}
+	writeKnownIssuesSection(&b, knownIssues)
 
 	// Recently resolved issues — anti-ping-pong context.
 	if len(resolved) > 0 {
@@ -406,4 +398,63 @@ func writeFileContents(b *strings.Builder, fileContents map[string]string, files
 		writeFencedBlock(b, "", numbered.String())
 		b.WriteString("\n")
 	}
+}
+
+// writeKnownIssuesSection renders the still-open findings carried into the
+// incremental review with enough context (title, severity, description) for
+// the LLM to (a) avoid emitting duplicates with different wording and (b)
+// recognize when the incremental diff invalidates an open finding's premise.
+//
+// The previous version of this section emitted only `path:line`, which left
+// the LLM with no way to tell why the finding was open in the first place.
+// That made it hard to relate new findings to existing ones, and impossible
+// to flag "evidence that an open finding is now wrong."
+//
+// Untrusted body text is neutralised via escapeAllTags — the same treatment
+// applied to the Recently Resolved Issues section.
+func writeKnownIssuesSection(b *strings.Builder, knownIssues []ReviewThread) {
+	if len(knownIssues) == 0 {
+		return
+	}
+	b.WriteString("## Known Issues (Open)\n")
+	b.WriteString("These findings from prior reviews are still open. Do NOT emit them again — including as variants with different wording. Where the author has replied (for example, that they checked and nothing needs to change), the question is settled: do not raise the same concern again in any form.\n\n")
+	b.WriteString("**If the incremental diff provides new evidence that an open finding's premise is wrong** (e.g. a documentation update or refactor in the diff makes the original concern moot, an assumption no longer holds, or the relevant code path is now unreachable), do NOT silently re-emit the original finding. Instead, emit a NEW finding anchored to the relevant diff line whose `description` notes the conflict (e.g. \"Contradicts open finding at `path:line`: …\"). Don't fabricate evidence — only flag this when the incremental diff actually undermines the open finding.\n\n")
+	for _, t := range knownIssues {
+		f := FindingFromThread(t)
+		title := f.Title
+		if title == "" {
+			title = "(no title)"
+		}
+		fmt.Fprintf(b, "### `%s:%d` — %s\n", t.Path, t.Line, escapeAllTags(title))
+		if f.Severity != "" {
+			fmt.Fprintf(b, "**Severity:** %s\n", f.Severity)
+		}
+		if f.Description != "" {
+			fmt.Fprintf(b, "\n**Description:**\n%s\n", escapeAllTags(f.Description))
+		}
+		if reply := lastAuthorReply(t); reply != "" {
+			fmt.Fprintf(b, "\n**Author's reply:**\n%s\n", escapeAllTags(reply))
+		}
+		b.WriteString("\n")
+	}
+}
+
+// maxKnownIssueReply caps how much of an author's reply goes into the
+// Known Issues section. The gist ("checked, no caller remains") comes first.
+const maxKnownIssueReply = 600
+
+// lastAuthorReply returns the latest reply on t that is not one of the bot's
+// ack replies, cut to maxKnownIssueReply bytes, or "" when there is none.
+func lastAuthorReply(t ReviewThread) string {
+	for i := len(t.Replies) - 1; i >= 0; i-- {
+		body := strings.TrimSpace(t.Replies[i].Body)
+		if body == "" || isAckReply(body) {
+			continue
+		}
+		if len(body) > maxKnownIssueReply {
+			body = strings.ToValidUTF8(body[:maxKnownIssueReply], "") + " …"
+		}
+		return body
+	}
+	return ""
 }
