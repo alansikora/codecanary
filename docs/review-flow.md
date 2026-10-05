@@ -40,7 +40,14 @@ If the PR is a setup PR (only adds workflow files with no real code changes), th
 
 - **Config**: Reads `config.yml` (provider, models, budgets, timeouts). If a `review.yml` exists alongside it, its rules/context/ignore fields override the config. If a `review.local.yml` also exists, its fields are appended (not replaced) on top of `review.yml`.
 - **Project docs**: Discovers CLAUDE.md files at the repo root and in every ancestor directory of a changed PR file. Skips `vendor/`, `node_modules/`, hidden dirs, and other build artifacts. Up to 10 files, 16 KB each, 48 KB total. Monorepos commonly keep per-app conventions (e.g. `apps/exchange-api/CLAUDE.md`) — those load automatically when a PR touches files under that directory, so the reviewer sees the conventions specific to the code being changed rather than only the repo-root overview.
-- **File contents**: Reads changed files from disk with size limits (default 100KB per file, 500KB total). Skips binary files, ignored patterns, and files exceeding limits. When files are skipped, the diff is also filtered to remove their hunks (via `ScopeDiffToFiles`) and they are removed from the file list. The original unfiltered diff is preserved in `FullDiff` for finding validation.
+- **File contents** (`FetchFileContents`, `scopePRForPrompt` in `coverage.go`): Reads changed files from disk and sorts them into three groups:
+  - *Full contents*: read into the prompt, up to `max_file_size` per file (default 100KB) and `max_total_size` in total (default 500KB), in PR file order.
+  - *Diff only*: files over `max_file_size`, or that would push the total past `max_total_size`. Their contents are left out of the prompt, but they stay in the file list and their hunks stay in the diff, so their changes are still reviewed (and their previous threads are triaged normally rather than auto-resolved as "file removed").
+  - *Excluded*: files matching an `ignore` pattern, and binary files. These leave the review entirely: they are dropped from the file list and their hunks are removed from the prompt diff (via `ScopeDiffToFiles`).
+
+  Files that can't be read (deleted in the PR) are in none of the groups; their diff is reviewed as usual.
+- **Diff size guard** (`capDiff`): if the prompt diff is larger than `max_diff_size` (default 300KB), it is trimmed so a huge change (a schema dump, a generated file) can't push the prompt past the provider's context window. The budget is shared per file, smallest first: each file gets an equal share of what is left, files under their share keep their whole diff, and only the largest files are cut — keeping the file header and the first lines that fit, followed by a `[codecanary: diff truncated ...]` marker line. The result is deterministic. There is no token-based fitting against the model's context window; `max_total_size` + `max_diff_size` bound the two largest prompt sections.
+- **Coverage**: the diff-only, truncated, and excluded files are recorded on `ReviewResult.Coverage` and rendered by each platform (see step 8). The untouched PR diff is always kept in `FullDiff` for finding validation.
 - **Environment**: Builds a filtered env for LLM subprocesses (only allowed prefixes like `CODECANARY_`, `GITHUB_`, plus essential vars like `PATH`). Injects keychain credentials if not already set.
 
 ### 3. Create providers
@@ -81,7 +88,7 @@ Calls `BuildPrompt()` to assemble the full review prompt. The prompt includes (i
 9. The unified diff
 10. Output format instructions (JSON schema, examples, escaping rules)
 
-After building, `fitPromptForModel()` checks whether the prompt fits the review model's context window (context window minus max output tokens). If it exceeds the budget, it progressively drops the largest file contents first, then truncates the diff as a last resort.
+The prompt is not fitted to the model's context window after it is built; its size is bounded up front by `max_total_size` (file contents) and `max_diff_size` (diff) in step 2.
 
 #### Incremental review path (triage)
 
@@ -185,6 +192,8 @@ Per-thread ack replies for dismissed/acknowledged/rebutted resolutions are poste
 After the review is posted (or updated in place), `GithubPlatform.Publish` also POSTs a `CodeCanary / review` commit status on the reviewed SHA via `PostReviewCommitStatus`. State is `failure` while any *blocking* finding — severity `warning` or above (`blockingSeverity` in `findings.go`) — is new this cycle or still open with no classification, and `success` otherwise. Suggestions and nitpicks stay on the PR without failing the check, so they never cost the author another push. Description is the blocking count ("2 unresolved blocking findings"), or "N non-blocking findings open" / "all findings resolved" / "no findings". `codecanary signoff` applies the same rule through `CommitStatusForFindings`. Teams that add `CodeCanary / review` as a required status check in branch protection get auto-gating: merges are blocked until a review run posts a green status on HEAD. Status posting failures are logged as warnings and do not abort Publish — the review itself has already landed. The local `codecanary signoff` command posts a status under the same context, so a team can rely on a single required check that either the bot (pr-loop) or a local reviewer (local-loop) satisfies.
 
 **Local**: Prints the formatted result to stdout. Format depends on context: terminal (colored, human-readable), markdown, or JSON.
+
+**Coverage note** (both platforms): when `ReviewResult.Coverage` is non-empty, the output lists the files the review saw only partially — reviewed from the diff only, or diff truncated. Excluded files (ignored/binary) are left out of the note, since configuration excludes them on every review and listing them would put the note on every review; they remain in the JSON `coverage` field. On GitHub it is a collapsed `<details>` block (`renderCoverageNote`) in every top-level review body (findings, clean, all-clear, activity); in the terminal it is a dim footer; in JSON it is the `coverage` field. Nothing is rendered when no file was cut short.
 
 ### 9. Save state
 

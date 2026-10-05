@@ -242,7 +242,7 @@ func (g *GithubPlatform) Publish(result *ReviewResult, pr *PRData, threads []Rev
 	// branch emits a top-level review so each push lands a visible status
 	// comment on the PR. Open questions ride along in whichever body is
 	// posted; they never change which one.
-	notes := formatOpenQuestions(result.Questions)
+	notes := formatOpenQuestions(result.Questions) + renderCoverageNote(result.Coverage)
 	switch {
 	case len(result.Findings) > 0:
 		if err := PostReview(g.Repo, g.PRNumber, result, pr.Files, pr.ValidationDiff(), result.SHA, summary); err != nil {

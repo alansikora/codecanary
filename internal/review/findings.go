@@ -38,6 +38,9 @@ type ReviewResult struct {
 	Questions []Finding `json:"questions,omitempty"`
 	Summary   string    `json:"summary"`
 	SHA       string    `json:"sha,omitempty"`
+	// Coverage lists changed files the review did not see in full; nil when
+	// every file was reviewed with its full contents.
+	Coverage *ReviewCoverage `json:"coverage,omitempty"`
 }
 
 // jsonFenceRe matches a ```json ... ``` code fence.

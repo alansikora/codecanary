@@ -1250,58 +1250,6 @@ func MinimizeComment(nodeID string) error {
 	return nil
 }
 
-// FetchFileContents reads the full contents of changed files from disk.
-// It skips files that are too large, binary, deleted, or match ignore patterns.
-// Returns a map of path->content and a list of skipped file paths.
-func FetchFileContents(files []string, ignorePatterns []string, maxPerFile, maxTotal int) (map[string]string, []string) {
-	contents := make(map[string]string)
-	var skipped []string
-	totalSize := 0
-
-	for _, path := range files {
-		// Check ignore patterns.
-		if matchesIgnore(path, ignorePatterns) {
-			skipped = append(skipped, path)
-			continue
-		}
-
-		data, err := os.ReadFile(path)
-		if err != nil {
-			// File may have been deleted in this PR — skip gracefully.
-			continue
-		}
-
-		// Skip binary files (null bytes in first 512 bytes).
-		peek := data
-		if len(peek) > 512 {
-			peek = peek[:512]
-		}
-		if bytes.ContainsRune(peek, 0) {
-			skipped = append(skipped, path)
-			continue
-		}
-
-		size := len(data)
-
-		// Skip files exceeding per-file limit.
-		if size > maxPerFile {
-			skipped = append(skipped, path)
-			continue
-		}
-
-		// Stop if total budget would be exceeded.
-		if totalSize+size > maxTotal {
-			skipped = append(skipped, path)
-			continue
-		}
-
-		contents[path] = string(data)
-		totalSize += size
-	}
-
-	return contents, skipped
-}
-
 // isSetupPR detects whether this is the initial setup PR.
 // Returns true only when a new workflow file referencing codecanary is added AND
 // the PR contains no other files beyond expected setup artifacts (workflow +
