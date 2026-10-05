@@ -25,6 +25,11 @@ Whether a prompt change makes reviews better or worse is a separate question
 that needs labelled findings, repeated runs to establish variance, and real
 model calls.
 
+It also covers only the **first-review prompt** (`BuildPrompt`). Re-pushes use
+`BuildIncrementalPrompt`, which adds known issues (with author replies) and
+recently resolved findings; fixtures do not capture review threads, so that
+prompt is not rendered here.
+
 ## Updating the goldens
 
 When a prompt change is intentional:
@@ -50,6 +55,12 @@ git fetch origin pull/1234/head && git checkout FETCH_HEAD
 go run github.com/alansikora/codecanary/cmd/evalsnap \
   --repo owner/name --pr 1234 --out /path/to/corpus
 ```
+
+A fixture holds the raw PR diff and file list plus the files the content reader
+left out (`excluded`: ignored or binary; `diff_only`: over the size limits).
+The harness scopes the PR with the review's own `scopePRForPrompt` before
+rendering, exactly as a real review does, so changes to that scoping (dropping
+excluded files, trimming to `max_diff_size`) show up in the goldens.
 
 ## Private repositories
 

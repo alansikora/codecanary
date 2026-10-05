@@ -106,11 +106,19 @@ Pass --force to capture anyway.
 		return fmt.Errorf("loading review config: %w", err)
 	}
 
-	fileContents, skipped := review.FetchFileContents(
+	// Freeze the raw PR plus what the content reader left out, not an
+	// already-scoped PR: the harness applies the review's own scoping when it
+	// renders, so a change to that scoping shows up in the goldens instead of
+	// being baked into the fixture.
+	fc := review.FetchFileContents(
 		prData.Files, cfg.Ignore, cfg.EffectiveMaxFileSize(), cfg.EffectiveMaxTotalSize())
-	if len(skipped) > 0 {
-		fmt.Fprintf(os.Stderr, "skipped %d large/ignored file(s): %s\n",
-			len(skipped), strings.Join(skipped, ", "))
+	if len(fc.Excluded) > 0 {
+		fmt.Fprintf(os.Stderr, "excluded %d ignored/binary file(s): %s\n",
+			len(fc.Excluded), strings.Join(fc.Excluded, ", "))
+	}
+	if len(fc.DiffOnly) > 0 {
+		fmt.Fprintf(os.Stderr, "%d file(s) over the size limits, diff only: %s\n",
+			len(fc.DiffOnly), strings.Join(fc.DiffOnly, ", "))
 	}
 
 	fixture := &evalcorpus.Fixture{
@@ -119,7 +127,7 @@ Pass --force to capture anyway.
 		PRNumber:    *pr,
 		HeadSHA:     headSHA,
 		CapturedAt:  time.Now().UTC().Format(time.RFC3339),
-		PR:          toPRInput(prData, fileContents),
+		PR:          toPRInput(prData, fc),
 		Config:      toConfigInput(cfg),
 		ProjectDocs: review.ReadProjectDocs(prData.Files),
 	}
@@ -262,7 +270,7 @@ func fixtureName(explicit, repo string, pr int) string {
 	return fmt.Sprintf("%s-pr%d", strings.ReplaceAll(repo, "/", "-"), pr)
 }
 
-func toPRInput(pr *review.PRData, contents map[string]string) evalcorpus.PRInput {
+func toPRInput(pr *review.PRData, fc review.FileContentsResult) evalcorpus.PRInput {
 	return evalcorpus.PRInput{
 		Number:       pr.Number,
 		Title:        pr.Title,
@@ -272,7 +280,9 @@ func toPRInput(pr *review.PRData, contents map[string]string) evalcorpus.PRInput
 		HeadBranch:   pr.HeadBranch,
 		Diff:         pr.Diff,
 		Files:        pr.Files,
-		FileContents: contents,
+		FileContents: fc.Contents,
+		DiffOnly:     fc.DiffOnly,
+		Excluded:     fc.Excluded,
 	}
 }
 
@@ -290,7 +300,12 @@ func toConfigInput(cfg *review.ReviewConfig) *evalcorpus.ConfigInput {
 			ExcludePaths: r.ExcludePaths,
 		})
 	}
-	return &evalcorpus.ConfigInput{Rules: rules, Context: cfg.Context, Ignore: cfg.Ignore}
+	return &evalcorpus.ConfigInput{
+		Rules:       rules,
+		Context:     cfg.Context,
+		Ignore:      cfg.Ignore,
+		MaxDiffSize: cfg.MaxDiffSize,
+	}
 }
 
 func short(sha string) string {

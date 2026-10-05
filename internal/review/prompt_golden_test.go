@@ -57,7 +57,16 @@ func TestPromptGolden(t *testing.T) {
 	sizes := make([]string, 0, len(fixtures))
 	for _, f := range fixtures {
 		t.Run(f.Name, func(t *testing.T) {
-			got := BuildPrompt(toPRData(f), toReviewConfig(f.Config), 0, f.ProjectDocs)
+			pr, cfg := toPRData(f), toReviewConfig(f.Config)
+			// Scope the PR the way prepareReview does before BuildPrompt, so
+			// the golden is the prompt a real review sends: ignored and
+			// binary files dropped, the diff trimmed to max_diff_size.
+			scopePRForPrompt(pr, FileContentsResult{
+				Contents: f.PR.FileContents,
+				DiffOnly: f.PR.DiffOnly,
+				Excluded: f.PR.Excluded,
+			}, cfg.EffectiveMaxDiffSize())
+			got := BuildPrompt(pr, cfg, 0, f.ProjectDocs)
 			sizes = append(sizes, fmt.Sprintf("%-40s %7d", f.Name, len(got)))
 			compareGolden(t, filepath.Join(dir, f.Name+".prompt.golden"), got)
 		})
@@ -159,15 +168,15 @@ func truncate(s string) string {
 
 func toPRData(f *evalcorpus.Fixture) *PRData {
 	return &PRData{
-		Number:       f.PR.Number,
-		Title:        f.PR.Title,
-		Body:         f.PR.Body,
-		Author:       f.PR.Author,
-		BaseBranch:   f.PR.BaseBranch,
-		HeadBranch:   f.PR.HeadBranch,
-		Diff:         f.PR.Diff,
-		Files:        f.PR.Files,
-		FileContents: f.PR.FileContents,
+		Number:     f.PR.Number,
+		Title:      f.PR.Title,
+		Body:       f.PR.Body,
+		Author:     f.PR.Author,
+		BaseBranch: f.PR.BaseBranch,
+		HeadBranch: f.PR.HeadBranch,
+		Diff:       f.PR.Diff,
+		Files:      f.PR.Files,
+		// FileContents is set by scopePRForPrompt, as in a real review.
 	}
 }
 
@@ -185,5 +194,5 @@ func toReviewConfig(c *evalcorpus.ConfigInput) *ReviewConfig {
 			ExcludePaths: r.ExcludePaths,
 		})
 	}
-	return &ReviewConfig{Rules: rules, Context: c.Context, Ignore: c.Ignore}
+	return &ReviewConfig{Rules: rules, Context: c.Context, Ignore: c.Ignore, MaxDiffSize: c.MaxDiffSize}
 }

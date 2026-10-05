@@ -68,6 +68,14 @@ type PRInput struct {
 	Diff         string            `json:"diff"`
 	Files        []string          `json:"files"`
 	FileContents map[string]string `json:"file_contents,omitempty"`
+
+	// DiffOnly and Excluded record what the content reader left out, as
+	// review.FetchFileContents reported it at capture time. They cannot be
+	// recomputed from the fixture (binary detection and the size budget need
+	// the working tree), and the review scopes its prompt from them: Excluded
+	// files are dropped from the file list and the diff.
+	DiffOnly []string `json:"diff_only,omitempty"`
+	Excluded []string `json:"excluded,omitempty"`
 }
 
 // ConfigInput mirrors the review config fields that reach the prompt. Model,
@@ -78,6 +86,9 @@ type ConfigInput struct {
 	Rules   []RuleInput `json:"rules,omitempty"`
 	Context string      `json:"context,omitempty"`
 	Ignore  []string    `json:"ignore,omitempty"`
+	// MaxDiffSize is the configured max_diff_size; zero means the review's
+	// default. It trims the prompt's diff, so it shapes what the prompt says.
+	MaxDiffSize int `json:"max_diff_size,omitempty"`
 }
 
 // RuleInput mirrors review.Rule.
