@@ -70,6 +70,11 @@ Before the first iteration:
    - `PR` — the PR number, or null.
    - `WORKFLOW_DETECTED` — boolean.
    - `REASONS` — array of human-readable detection reasons.
+   - `UPDATE_AVAILABLE` / `LATEST_VERSION` — from `update_available` and
+     `latest_version` (the latter is absent when no update is known).
+   - `SKILL_STALE` — from `skill.stale`: true when the skill installed by
+     `codecanary install-skill` (at `skill.path`) differs from the copy
+     embedded in this binary. Treat missing fields as false (older CLI).
 3. Print a boxed hash-style banner to the operator.
 
 Concrete example — if the version is `0.6.13`, the banner must be
@@ -118,6 +123,20 @@ Where the reason is synthesised from the `REASONS` array. Examples:
 - `Mode: pr-loop  —  PR #167, CodeCanary workflow detected`
 - `Mode: local-loop-git  —  PR #167, no CodeCanary workflow on this branch (fixes will commit, not push)`
 - `Mode: local-loop-nogit  —  no open PR (fixes applied in place)`
+
+Then, only if something is out of date, print exactly one notice line
+under the mode line:
+
+- `UPDATE_AVAILABLE` and `SKILL_STALE`:
+  `Update: codecanary <LATEST_VERSION> is available (running <VERSION>) — run 'codecanary upgrade', then 'codecanary install-skill --force'.`
+- `UPDATE_AVAILABLE` only:
+  `Update: codecanary <LATEST_VERSION> is available (running <VERSION>) — run 'codecanary upgrade'.`
+- `SKILL_STALE` only:
+  `Update: the installed codecanary-fix skill is out of date with this binary — run 'codecanary install-skill --force' and restart Claude Code.`
+
+This is informational. Never run `codecanary upgrade` or
+`codecanary install-skill` yourself, never ask the operator about it,
+and never let it delay or block the loop — print the line and continue.
 
 If `MODE` came back as something unexpected (CLI error, empty JSON),
 surface the error and stop. Do not proceed without a valid mode.
