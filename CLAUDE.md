@@ -25,7 +25,7 @@ internal/
     provider_anthropic.go
     provider_openai.go
     provider_openrouter.go
-    provider_claude.go   # Claude CLI wrapper
+    provider_claude.go   # Claude CLI wrapper (project-config isolation, opt-in confined reviewer tools)
     provider_compat.go   # Shared types for OpenAI-compatible APIs
     pricing.go           # Token-based cost estimation
     # Platform layer (environment abstraction)
@@ -41,6 +41,7 @@ internal/
     github.go            # GitHub API calls (fetch threads, post reviews)
     comments.go          # PR review comment fetch + finding marker parser + review-check watcher
     local.go             # Local diff & git operations
+    repo.go              # Git repo helpers shared across flows (repo root)
     state.go             # Local state persistence
     docs.go              # Project doc discovery
   credentials/     # Credential storage (keychain with file fallback)

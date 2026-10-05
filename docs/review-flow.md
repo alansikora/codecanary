@@ -59,6 +59,8 @@ Two `ModelProvider` instances are created from config:
 
 Each provider is constructed via the factory registry in `provider.go`. The provider name determines which adapter handles the API call (Anthropic, OpenAI, OpenRouter, or Claude CLI).
 
+**Claude CLI specifics** (`provider_claude.go`): every call — review and triage — runs with `--setting-sources user --strict-mcp-config` and `disableAllHooks` in the generated `--settings`, so the checked-out PR's own `.claude/` settings, hooks and `.mcp.json` servers never load; the CLI's environment is the filtered env above minus GitHub tokens and the raw `CODECANARY_PROVIDER_SECRET` (mapped to `CLAUDE_CODE_OAUTH_TOKEN` first). Calls are single-shot (`--tools ""`) unless `claude_review_tools` is set, in which case only the **review** provider gets `--tools Read,Grep,Glob` (or a subset) so it can check claims against code outside the diff. Those calls are confined to the repository root: the CLI runs from `git rev-parse --show-toplevel` with `--restricted`, `--permission-mode dontAsk`, `blockReadsOutsideWorkingDirectories` and `Read` deny rules for credential and system paths. No repo root, or a user `--settings` in `claude_args`, turns tools off. See [configuration.md](configuration.md#reviewer-tool-use) for the security model.
+
 ### 4. Load previous findings
 
 The platform adapter loads unresolved findings from the last review:
@@ -244,6 +246,8 @@ If telemetry is enabled (opt-in), fires an anonymous event with aggregate stats:
 **Anti-ping-pong.** The incremental prompt includes recently resolved findings so the LLM doesn't re-raise similar issues. Non-code resolutions (dismissed, acknowledged, rebutted) keep threads open for re-triage on future pushes, but post ack replies to avoid duplicate acknowledgments.
 
 **Sticky ack across pushes.** Once the bot has recorded a deferral on a thread, subsequent pushes preserve that classification (via `TriagePreviouslyAcked`) until the author adds a new reply. Without this, the next push would re-triage the thread as `TriageCodeChanged` (when the file was touched) or `TriageSkip` (when it wasn't), and the resolution reason would evaporate from the summary — flipping `Acknowledged by author: N` to `Still unresolved: N` and failing the commit status check on a thread the operator already deferred.
+
+**The PR checkout is untrusted input to the Claude CLI.** Under `pull_request_target` the CLI runs inside the PR head with a provider secret in its environment, so nothing in that checkout may configure it: project settings, hooks and `.mcp.json` are excluded on every call, not just when tools are on. Reviewer tool use is opt-in and limited to read-only file tools confined to the repo root, because the anchoring guards control where a finding lands but not what its text quotes.
 
 **One run per PR at a time, nothing dropped.** The edit-vs-post rule in Publish assumes no two runs on the same PR publish at once. The workflow template enforces that with a job-level `concurrency` group per PR (`codecanary-pr-<n>`, `cancel-in-progress: false`, `queue: max`). It is job-level so runs whose job is skipped by `if:` (the bot's own ack replies, non-reply comments) never join the group, and `queue: max` lets several runs wait instead of GitHub's default of one pending run per group, where each newly queued run cancels the pending one. With the old workflow-level group, a human reply (running) followed by a push (pending) followed by the bot's ack reply cancelled the push review, so HEAD was never reviewed.
 

@@ -21,33 +21,35 @@ func isValidURL(s string) bool {
 }
 
 type ReviewConfig struct {
-	Version      int               `yaml:"version"`
-	Rules        []Rule            `yaml:"-"`
-	Context      string            `yaml:"-"`
-	Ignore       []string          `yaml:"-"`
-	MaxFileSize  int               `yaml:"max_file_size"`   // per-file content limit in bytes (default 100KB)
-	MaxTotalSize int               `yaml:"max_total_size"`  // total file content limit in bytes (default 500KB)
-	MaxDiffSize  int               `yaml:"max_diff_size"`   // diff size limit in bytes for the review prompt (default 300KB)
-	MaxBudgetUSD float64           `yaml:"max_budget_usd"`  // per-invocation spending limit in USD (default 0 = unlimited)
-	TimeoutMins  int               `yaml:"timeout_minutes"` // per-invocation timeout in minutes (default 5)
-	ReviewModel  string            `yaml:"review_model"`    // model for main review (required)
-	TriageModel  string            `yaml:"triage_model"`    // model for thread re-evaluation (required)
-	AdvisorModel string            `yaml:"advisor_model"`   // optional advisor model for mid-generation strategic guidance (anthropic & claude providers only)
-	Provider     string            `yaml:"provider"`        // "anthropic", "openai", "openrouter", or "claude"
-	APIBase      string            `yaml:"api_base"`        // override base URL (openai provider only)
-	APIKeyEnv    string            `yaml:"api_key_env"`     // env var name for API key (default depends on provider)
-	ClaudeArgs   []string          `yaml:"claude_args"`     // extra args passed to the Claude CLI binary (claude provider only)
-	ClaudePath   string            `yaml:"claude_path"`     // path to Claude CLI binary (default: "claude")
+	Version      int      `yaml:"version"`
+	Rules        []Rule   `yaml:"-"`
+	Context      string   `yaml:"-"`
+	Ignore       []string `yaml:"-"`
+	MaxFileSize  int      `yaml:"max_file_size"`   // per-file content limit in bytes (default 100KB)
+	MaxTotalSize int      `yaml:"max_total_size"`  // total file content limit in bytes (default 500KB)
+	MaxDiffSize  int      `yaml:"max_diff_size"`   // diff size limit in bytes for the review prompt (default 300KB)
+	MaxBudgetUSD float64  `yaml:"max_budget_usd"`  // per-invocation spending limit in USD (default 0 = unlimited)
+	TimeoutMins  int      `yaml:"timeout_minutes"` // per-invocation timeout in minutes (default 5)
+	ReviewModel  string   `yaml:"review_model"`    // model for main review (required)
+	TriageModel  string   `yaml:"triage_model"`    // model for thread re-evaluation (required)
+	AdvisorModel string   `yaml:"advisor_model"`   // optional advisor model for mid-generation strategic guidance (anthropic & claude providers only)
+	Provider     string   `yaml:"provider"`        // "anthropic", "openai", "openrouter", or "claude"
+	APIBase      string   `yaml:"api_base"`        // override base URL (openai provider only)
+	APIKeyEnv    string   `yaml:"api_key_env"`     // env var name for API key (default depends on provider)
+	ClaudeArgs   []string `yaml:"claude_args"`     // extra args passed to the Claude CLI binary (claude provider only)
+	ClaudePath   string   `yaml:"claude_path"`     // path to Claude CLI binary (default: "claude")
 	// ClaudeReviewTools, when non-empty, enables the listed tools for the
 	// review model (claude provider only): a comma-separated list of tool
 	// names passed to the Claude CLI's `--tools` flag (e.g. "Read,Grep,Glob").
 	// Empty (the default) preserves the historical single-shot behaviour with
-	// `--tools ""`. Only read-only tools are accepted — see claudeReadOnlyTools;
-	// the CLI's "default" is rejected because it enables write and exec tools
-	// too. Read-only tools let the reviewer verify hypotheses (does this column
-	// exist? is this function called elsewhere?) without writing or executing
-	// anything. Triage stays single-shot regardless — only the review-model
-	// invocation gets tools.
+	// `--tools ""`. Only Read, Grep and Glob are accepted — see
+	// claudeReadOnlyTools; the CLI's "default" is rejected because it enables
+	// write and exec tools too. The provider confines those tools to the
+	// repository root (see claudeToolUseArgs in provider_claude.go). They let
+	// the reviewer verify hypotheses (is this helper defined elsewhere? do the
+	// callers still match?) without writing, executing or reaching the network.
+	// Triage stays single-shot regardless — only the review-model invocation
+	// gets tools.
 	ClaudeReviewTools string            `yaml:"claude_review_tools"`
 	Evaluation        *EvaluationConfig `yaml:"evaluation"`
 }
@@ -262,6 +264,9 @@ func (c *ReviewConfig) Validate() error {
 			if claudeReservedArgs[name] {
 				return fmt.Errorf("claude_args: %q is managed by codecanary and cannot be overridden", arg)
 			}
+			if c.ClaudeReviewTools != "" && claudeToolUseConflictingArgs[name] {
+				return fmt.Errorf("claude_args: %q cannot be combined with claude_review_tools — codecanary generates the permission settings that confine the reviewer's file access", arg)
+			}
 		}
 		if err := validateClaudeReviewTools(c.ClaudeReviewTools); err != nil {
 			return err
@@ -291,14 +296,17 @@ type ReviewPolicy struct {
 
 // claudeReadOnlyTools are the Claude CLI tools the reviewer may be granted.
 // The reviewer runs under `pull_request_target` with the PR's own head checked
-// out, so any tool that can write or execute would let PR content act on the
-// runner. Inspection-only tools carry no such reach.
+// out and a provider secret in its environment, so the PR content is untrusted
+// input that can try to steer the model. Only local, read-only file tools are
+// allowed, and the provider confines them to the repository root (see
+// claudeToolUseArgs). Tools that write or execute (Bash, Edit, Write, ...) would
+// let PR content act on the runner; network tools (WebFetch, WebSearch) would
+// give an injected prompt a channel to send what it read off the runner, so
+// they are excluded too.
 var claudeReadOnlyTools = map[string]bool{
-	"Read":      true,
-	"Grep":      true,
-	"Glob":      true,
-	"WebFetch":  true,
-	"WebSearch": true,
+	"Read": true,
+	"Grep": true,
+	"Glob": true,
 }
 
 // parseClaudeReviewTools splits claude_review_tools into its tool names,
@@ -326,7 +334,7 @@ func parseClaudeReviewTools(tools string) ([]string, error) {
 			return nil, fmt.Errorf("claude_review_tools: %q is a flag, not a tool name; the value is passed as the argument to --tools", name)
 		}
 		if !claudeReadOnlyTools[name] {
-			return nil, fmt.Errorf("claude_review_tools: %q is not a read-only tool; the reviewer runs against untrusted PR code, so only %s are allowed", name, strings.Join(allowed, ", "))
+			return nil, fmt.Errorf("claude_review_tools: %q is not an allowed reviewer tool; the reviewer runs against untrusted PR code, so only the read-only local file tools %s are allowed", name, strings.Join(allowed, ", "))
 		}
 		out = append(out, name)
 	}
@@ -352,6 +360,10 @@ func NormalizeClaudeReviewTools(tools string) string {
 }
 
 // claudeReservedArgs are flags codecanary always controls; users cannot override them via claude_args.
+// --setting-sources and --strict-mcp-config are reserved because the provider
+// relies on them to keep a checked-out PR's own Claude Code configuration
+// (hooks, env, MCP servers, permission rules) from loading — see
+// claudeIsolationArgs in provider_claude.go.
 var claudeReservedArgs = map[string]bool{
 	"--print":                  true,
 	"--output-format":          true,
@@ -359,6 +371,24 @@ var claudeReservedArgs = map[string]bool{
 	"--model":                  true,
 	"--max-budget-usd":         true,
 	"--tools":                  true,
+	"--setting-sources":        true,
+	"--strict-mcp-config":      true,
+}
+
+// claudeToolUseConflictingArgs are claude_args that are fine for a tool-less
+// review but would loosen or replace the confinement codecanary applies when
+// claude_review_tools is set: extra working directories, pre-approved tool
+// rules, a different permission mode, or a user --settings that would displace
+// the generated deny rules.
+var claudeToolUseConflictingArgs = map[string]bool{
+	"--add-dir":                            true,
+	"--allowedTools":                       true,
+	"--allowed-tools":                      true,
+	"--settings":                           true,
+	"--permission-mode":                    true,
+	"--permission-prompt-tool":             true,
+	"--dangerously-skip-permissions":       true,
+	"--allow-dangerously-skip-permissions": true,
 }
 
 // safeSlugSegment matches valid owner/repo name characters (GitHub-compatible).

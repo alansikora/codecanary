@@ -168,9 +168,15 @@ func TestValidate_ClaudeReviewToolsRejectsUnsafeValues(t *testing.T) {
 		tools string
 		want  string
 	}{
-		{"write tool", "Read,Write", "not a read-only tool"},
-		{"exec tool", "Bash", "not a read-only tool"},
-		{"cli default enables everything", "default", "not a read-only tool"},
+		{"write tool", "Read,Write", "not an allowed reviewer tool"},
+		{"exec tool", "Bash", "not an allowed reviewer tool"},
+		{"cli default enables everything", "default", "not an allowed reviewer tool"},
+		// Network tools would give an injected prompt an exfiltration channel.
+		{"web fetch", "Read,WebFetch", "not an allowed reviewer tool"},
+		{"web search", "WebSearch", "not an allowed reviewer tool"},
+		{"lsp spawns language servers", "LSP", "not an allowed reviewer tool"},
+		{"notebook edit", "NotebookEdit", "not an allowed reviewer tool"},
+		{"case matters", "read", "not an allowed reviewer tool"},
 		{"flag-shaped value", "--tools=Bash", "is a flag, not a tool name"},
 		{"empty entry", "Read,,Grep", "empty tool name"},
 	}
@@ -194,10 +200,62 @@ func TestValidate_ClaudeReviewToolsRejectsUnsafeValues(t *testing.T) {
 func TestValidate_ClaudeReviewToolsAcceptsReadOnlySet(t *testing.T) {
 	cfg := &ReviewConfig{
 		Provider: "claude", ReviewModel: "sonnet", TriageModel: "haiku",
-		ClaudeReviewTools: "Read, Grep ,Glob,WebFetch,WebSearch",
+		ClaudeReviewTools: "Read, Grep ,Glob",
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("read-only tool list should validate (whitespace tolerated): %v", err)
+	}
+	if got := NormalizeClaudeReviewTools(cfg.ClaudeReviewTools); got != "Read,Grep,Glob" {
+		t.Errorf("NormalizeClaudeReviewTools = %q, want %q", got, "Read,Grep,Glob")
+	}
+}
+
+// --setting-sources and --strict-mcp-config keep a PR's own .claude/ and
+// .mcp.json from loading on every claude invocation, so claude_args may not
+// override them — with or without claude_review_tools.
+func TestValidate_ClaudeArgsIsolationFlagsReserved(t *testing.T) {
+	for _, arg := range []string{"--setting-sources=user,project,local", "--strict-mcp-config"} {
+		cfg := &ReviewConfig{
+			Provider: "claude", ReviewModel: "sonnet", TriageModel: "haiku",
+			ClaudeArgs: []string{arg},
+		}
+		err := cfg.Validate()
+		if err == nil || !strings.Contains(err.Error(), "managed by codecanary") {
+			t.Errorf("claude_args %q: want reserved-flag error, got %v", arg, err)
+		}
+	}
+}
+
+// Flags that would widen or replace the reviewer's file confinement are
+// rejected only when tool use is on; without tools they stay usable (e.g.
+// --settings, --allowedTools for operator-supplied MCP servers).
+func TestValidate_ClaudeReviewToolsConflictingArgs(t *testing.T) {
+	for _, arg := range []string{
+		"--add-dir=/",
+		"--allowedTools=Read(//**)",
+		"--allowed-tools=Read",
+		`--settings={"permissions":{}}`,
+		"--permission-mode=bypassPermissions",
+		"--permission-prompt-tool=mcp__x__y",
+		"--dangerously-skip-permissions",
+		"--allow-dangerously-skip-permissions",
+	} {
+		withTools := &ReviewConfig{
+			Provider: "claude", ReviewModel: "sonnet", TriageModel: "haiku",
+			ClaudeReviewTools: "Read,Grep,Glob",
+			ClaudeArgs:        []string{arg},
+		}
+		err := withTools.Validate()
+		if err == nil || !strings.Contains(err.Error(), "cannot be combined with claude_review_tools") {
+			t.Errorf("claude_args %q with tools: want conflict error, got %v", arg, err)
+		}
+		withoutTools := &ReviewConfig{
+			Provider: "claude", ReviewModel: "sonnet", TriageModel: "haiku",
+			ClaudeArgs: []string{arg},
+		}
+		if err := withoutTools.Validate(); err != nil {
+			t.Errorf("claude_args %q without tools: unexpected error %v", arg, err)
+		}
 	}
 }
 
