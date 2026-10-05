@@ -17,15 +17,27 @@ func init() {
 	providers["anthropic"] = ProviderFactory{
 		New:      newAnthropicProvider,
 		Validate: validateAnthropic,
+		// Substring match, first hit wins: list longer IDs before their
+		// prefixes (claude-sonnet-5-5 before claude-sonnet-5). Where Anthropic
+		// doesn't list a cache price, cache writes are 1.25x input and cache
+		// reads 0.1x input.
 		Pricing: []PricingEntry{
-			// Opus 4.7
-			{"claude-opus-4-7", modelPricing{15, 75, 18.75, 1.50}},
-			// Opus 4.6 / 4.5
+			// Fable 5.1 / 5
+			{"claude-fable-5-1", modelPricing{10, 50, 12.50, 0.25}},
+			{"claude-fable-5", modelPricing{10, 50, 12.50, 1.00}},
+			// Opus 5.5 / 5
+			{"claude-opus-5-5", modelPricing{4, 20, 5, 0.20}},
+			{"claude-opus-5", modelPricing{5, 25, 6.25, 0.50}},
+			// Opus 4.8 / 4.7 / 4.6 / 4.5
+			{"claude-opus-4-8", modelPricing{5, 25, 6.25, 0.50}},
+			{"claude-opus-4-7", modelPricing{5, 25, 6.25, 0.50}},
 			{"claude-opus-4-6", modelPricing{5, 25, 6.25, 0.50}},
 			{"claude-opus-4-5", modelPricing{5, 25, 6.25, 0.50}},
 			// Opus 4.1 / 4
 			{"claude-opus-4-1", modelPricing{15, 75, 18.75, 1.50}},
 			{"claude-opus-4-", modelPricing{15, 75, 18.75, 1.50}},
+			// Sonnet 5.5 / 5
+			{"claude-sonnet-5", modelPricing{2, 10, 2.50, 0.20}},
 			// Sonnet 4.6 / 4.5 / 4
 			{"claude-sonnet-4", modelPricing{3, 15, 3.75, 0.30}},
 			// Haiku 4.5
@@ -36,7 +48,12 @@ func init() {
 			{"claude-haiku-3", modelPricing{0.25, 1.25, 0.30, 0.03}},
 		},
 		MaxOutputTokens: []MaxTokensEntry{
-			// Opus 4.7 / 4.6 / 4.5: 128k output
+			// Fable 5.1 / 5, Opus 5.5 / 5, Sonnet 5.5 / 5: 128k output
+			{"claude-fable-5", 128_000},
+			{"claude-opus-5", 128_000},
+			{"claude-sonnet-5", 128_000},
+			// Opus 4.8 / 4.7 / 4.6 / 4.5: 128k output
+			{"claude-opus-4-8", 128_000},
 			{"claude-opus-4-7", 128_000},
 			{"claude-opus-4-6", 128_000},
 			{"claude-opus-4-5", 128_000},
@@ -52,8 +69,8 @@ func init() {
 			// Haiku 3: 4k output
 			{"claude-haiku-3", 4_096},
 		},
-		SuggestedReviewModel: "claude-sonnet-4-6",
-		SuggestedTriageModel: "claude-haiku-4-5-20251001",
+		SuggestedReviewModel: "claude-sonnet-5-5",
+		SuggestedTriageModel: "claude-haiku-4-5",
 	}
 }
 
@@ -126,6 +143,11 @@ type anthropicResponse struct {
 	Content []anthropicResponseBlock `json:"content"`
 	Model      string `json:"model"`
 	StopReason string `json:"stop_reason"`
+	// StopDetails is set only when StopReason is "refusal".
+	StopDetails *struct {
+		Category    string `json:"category"`
+		Explanation string `json:"explanation"`
+	} `json:"stop_details"`
 	Usage      struct {
 		InputTokens              int                   `json:"input_tokens"`
 		OutputTokens             int                   `json:"output_tokens"`
@@ -251,6 +273,10 @@ func (p *anthropicProvider) Run(ctx context.Context, prompt string, opts RunOpts
 		return nil, classifyProviderError("anthropic", resp.StatusCode, msgResp.Error.Message, string(body))
 	}
 
+	if err := refusalError(&msgResp); err != nil {
+		return nil, err
+	}
+
 	truncated := msgResp.StopReason == "max_tokens"
 
 	// Extract text from content blocks. server_tool_use and
@@ -324,4 +350,26 @@ func (p *anthropicProvider) Run(ctx context.Context, prompt string, opts RunOpts
 	usage.CostUSD = estimateCost(usage)
 	result.Usage = usage
 	return result, nil
+}
+
+// refusalError returns an error when the model declined the request
+// (stop_reason "refusal"), naming the category so a review of, say, security
+// code that trips a safety classifier reads as a refusal rather than as an
+// unparseable response. Returns nil for every other stop reason.
+func refusalError(r *anthropicResponse) error {
+	if r.StopReason != "refusal" {
+		return nil
+	}
+	category, explanation := "unspecified", ""
+	if r.StopDetails != nil {
+		if r.StopDetails.Category != "" {
+			category = r.StopDetails.Category
+		}
+		explanation = r.StopDetails.Explanation
+	}
+	msg := fmt.Sprintf("Anthropic API declined the request (stop_reason: refusal, category: %s)", category)
+	if explanation != "" {
+		msg += ": " + explanation
+	}
+	return fmt.Errorf("%s — try another review_model", msg)
 }
