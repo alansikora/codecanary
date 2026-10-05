@@ -761,19 +761,85 @@ func ScopeDiffToFiles(diff string, allowedFiles map[string]bool) string {
 	return strings.Join(result, "\n")
 }
 
-// validSHA matches a full-length lowercase hex Git SHA.
-var validSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
+// historyDeepenSteps are the --deepen amounts tried, in order, when a shallow
+// CI clone does not reach the merge-base of the PR and its base branch. The
+// first entry is also the --depth used for the initial fetches.
+var historyDeepenSteps = []int{100, 500, 2000}
 
-// GetIncrementalDiff gets the diff since a given SHA.
-func GetIncrementalDiff(baseSHA string) (string, error) {
-	if !validSHA.MatchString(baseSHA) {
-		return "", fmt.Errorf("invalid SHA format: %q", baseSHA)
+// fetchIncrementalHistory makes sure the clone has what IncrementalDiff needs
+// after a rebase or force-push: the previously reviewed commit (fetched by
+// SHA, which GitHub serves even once no branch points at it) and the base
+// branch with enough history to compute merge-bases. All steps are
+// best-effort; failures are logged and IncrementalDiff reports the missing
+// piece so the caller falls back to the full PR diff.
+//
+// Returns the base ref to compute merge-bases against, or "" when it is not
+// needed (linear history) or could not be fetched.
+func fetchIncrementalHistory(previousSHA, baseBranch string) string {
+	if !validSHA.MatchString(previousSHA) {
+		return ""
 	}
-	out, err := exec.Command("git", "diff", baseSHA+"..HEAD").Output()
-	if err != nil {
-		return "", fmt.Errorf("git diff: %w", err)
+	shallow := isShallowRepo()
+	depthArgs := func(arg string, n int) []string {
+		// Never pass --depth/--deepen to a full clone: it would make it shallow.
+		if !shallow {
+			return nil
+		}
+		return []string{fmt.Sprintf("%s=%d", arg, n)}
 	}
-	return string(out), nil
+
+	if !commitExists(previousSHA) {
+		fmt.Fprintf(os.Stderr, "Previous review commit %s not in clone (likely force-pushed); fetching it\n", shortSHA(previousSHA))
+		args := append([]string{"fetch", "--no-tags"}, depthArgs("--depth", historyDeepenSteps[0])...)
+		if _, err := gitOutput(append(args, "origin", previousSHA)...); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not fetch previous review commit: %v\n", err)
+			return ""
+		}
+	}
+	if linear, err := isAncestor(previousSHA, "HEAD"); err != nil || linear {
+		return ""
+	}
+	if baseBranch == "" {
+		return ""
+	}
+
+	baseRef := "refs/remotes/origin/" + baseBranch
+	refspec := "+refs/heads/" + baseBranch + ":" + baseRef
+	args := append([]string{"fetch", "--no-tags"}, depthArgs("--depth", historyDeepenSteps[0])...)
+	if _, err := gitOutput(append(args, "origin", refspec)...); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not fetch base branch %s: %v\n", baseBranch, err)
+		return ""
+	}
+	if !shallow {
+		return baseRef
+	}
+
+	// Shallow clone: deepen until both sides reach their merge-base with the base branch.
+	for _, n := range historyDeepenSteps {
+		if _, err := mergeBase(previousSHA, baseRef); err == nil {
+			if _, err := mergeBase("HEAD", baseRef); err == nil {
+				return baseRef
+			}
+		}
+		head, err := HeadSHA()
+		if err != nil {
+			break
+		}
+		args := append([]string{"fetch", "--no-tags"}, depthArgs("--deepen", n)...)
+		if _, err := gitOutput(append(args, "origin", previousSHA, head, refspec)...); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not deepen history: %v\n", err)
+			break
+		}
+	}
+	// The final deepen is not re-checked here; IncrementalDiff reports a
+	// merge-base that is still missing.
+	return baseRef
+}
+
+// isShallowRepo reports whether the working repository is a shallow clone.
+func isShallowRepo() bool {
+	out, err := gitOutput("rev-parse", "--is-shallow-repository")
+	return err == nil && strings.TrimSpace(out) == "true"
 }
 
 // PostCleanReview posts a review when the first review finds no issues. The

@@ -89,7 +89,14 @@ After building, `fitPromptForModel()` checks whether the prompt fits the review 
 
 **Phase 1 -- Classify and evaluate previous findings**
 
-First, an incremental diff is computed (`git diff <previousSHA>..HEAD`). Two diffs serve different purposes:
+First, an incremental diff is computed by `platform.GetIncrementalDiff(previousSHA, pr)`, which both platforms implement on top of the shared `IncrementalDiff()` (`incremental.go`):
+
+- **Linear history** (`previousSHA` is an ancestor of HEAD): `git diff <previousSHA>..HEAD`.
+- **Rebase / force-push** (`git merge-base --is-ancestor` fails): a file-level interdiff. For each file, the PR patch before (`merge-base(previousSHA, base)..previousSHA`) is compared with the patch after (`merge-base(HEAD, base)..HEAD`), after normalising away hunk headers, context lines and `index` lines so pure line shifts and base-branch edits around the change don't count. Files whose patch changed contribute their current PR diff; unchanged files are dropped. A rebase with no author changes yields an empty diff, which takes the usual "no new changes" path.
+- **GitHub only**: CI clones are shallow, so before diffing `fetchIncrementalHistory()` (`github.go`) fetches the previous SHA by hash if it's missing, and on a rebase fetches the base branch into `refs/remotes/origin/<base>` and deepens (100 → 500 → 2000) until both merge-bases resolve. `--depth`/`--deepen` are only passed when the repo is already shallow, so a full local clone is never made shallow. Local mode uses the local base branch and full history as-is.
+- Any failure (commit not fetchable, merge-base out of reach) returns an error and the run falls back to the full PR diff, logging the reason.
+
+Two diffs serve different purposes:
 
 - **Activity diff** (incremental): Determines whether there's new activity to evaluate. If empty, threads with no replies are skipped (no LLM cost).
 - **Context diff** (full PR diff): Used for classification and evaluation context. Ensures fixes from earlier pushes are visible even if they predate the incremental window.
@@ -198,6 +205,8 @@ If telemetry is enabled (opt-in), fires an anonymous event with aggregate stats:
 **Single pipeline, two platforms.** `Run()` never branches on "am I on GitHub?" The `ReviewPlatform` interface absorbs all environment differences. Adding a new platform (e.g. GitLab) means implementing the interface, not forking the pipeline.
 
 **Two diffs for triage.** The incremental diff (changes since last review) decides whether to skip evaluation. The full PR diff (all changes) provides context for evaluation. This prevents the "triage horizon" bug where fixes committed before the triage baseline become invisible.
+
+**Rebase-aware incremental diff.** `<previousSHA>..HEAD` breaks after a rebase or force-push: the old SHA is often absent from the shallow CI clone (so the run fell back to a full re-review that re-raised already-discussed issues), and when present the range drags in every base-branch change to PR files. Comparing the per-file PR patch before and after the rebase isolates what the author actually changed, and lets a no-op rebase cost nothing.
 
 **Two-level triage evaluation.** Same-file evaluations (`TriageCodeChanged`) start with a file-scoped diff (level 1) to reduce noise — the full PR diff can drown out the relevant fix with changes from unrelated files. If level 1 finds no fix, a widened-scope fallback (level 2) sends the full PR diff to catch cross-file fixes. Cross-file evaluations (`TriageCrossFileChange`) go straight to the full diff. The file snippet (current code state) is presented first in all evaluation prompts, so the LLM checks whether the issue still exists before analyzing the diff.
 
