@@ -146,51 +146,34 @@ func prepareReview(pr *PRData, configPath string) (*reviewContext, error) {
 	}, nil
 }
 
-// validateFindings filters findings to PR files, validates line proximity
-// against the PR diff, and removes non-actionable findings.
+// validateFindings keeps the findings that can be posted as a review thread
+// (see anchorFinding) and removes non-actionable ones.
 //
 // prDiff is always the PR diff (base..head from GitHub or merge-base diff
 // locally) — never the incremental diff. This ensures findings are scoped to
 // the PR's own changes regardless of what diff the LLM prompt contained,
-// filtering out rebase noise and hallucinated line numbers.
+// filtering out rebase noise and hallucinated line numbers. PostReview anchors
+// against the same diff and file list, so whatever survives here is posted.
 func validateFindings(findings []Finding, prFiles []string, prDiff string) []Finding {
-	fileSet := make(map[string]bool, len(prFiles))
-	for _, f := range prFiles {
-		fileSet[f] = true
-	}
+	files := fileSet(prFiles)
 	validLines := parseDiffLines(prDiff)
 
-	var filtered []Finding
+	var anchored []Finding
 	for _, f := range findings {
-		if f.File == "" || fileSet[f.File] {
-			filtered = append(filtered, f)
-		} else {
-			fmt.Fprintf(os.Stderr, "Dropped finding on file outside PR: %s\n", f.File)
-		}
-	}
-
-	// Validate line proximity: drop findings whose line is too far from any
-	// changed line in the PR diff. This keeps findings anchored to the PR's
-	// actual changes — preventing scope creep, filtering rebase noise, and
-	// catching hallucinated line numbers.
-	var lineValid []Finding
-	for _, f := range filtered {
-		if f.File == "" || f.Line <= 0 {
-			lineValid = append(lineValid, f)
+		if anchorFinding(f, files, validLines).Kind != anchorNone {
+			anchored = append(anchored, f)
 			continue
 		}
-		nearest := validLines.nearestLine(f.File, f.Line)
-		if nearest == 0 {
-			// File has no changed lines in the diff (e.g. mode-only change,
-			// binary file, pure deletion). Pass through — we can't validate.
-			lineValid = append(lineValid, f)
-		} else if abs(f.Line-nearest) <= MaxFindingProximity {
-			lineValid = append(lineValid, f)
-		} else {
+		switch {
+		case f.File == "":
+			fmt.Fprintf(os.Stderr, "Dropped finding with no file: %s\n", f.ID)
+		case !files[f.File]:
+			fmt.Fprintf(os.Stderr, "Dropped finding on file outside PR: %s\n", f.File)
+		default:
 			fmt.Fprintf(os.Stderr, "Dropped finding outside PR scope: %s (%s:%d)\n", f.ID, f.File, f.Line)
 		}
 	}
-	return FilterNonActionable(lineValid)
+	return FilterNonActionable(anchored)
 }
 
 // processFindings parses Claude's output, validates findings against the PR
@@ -449,6 +432,10 @@ func Run(opts RunOptions) error {
 			findings = FilterKnownDuplicates(findings, known)
 		}
 	}
+	findings, questions := SplitOpenQuestions(findings)
+	if len(questions) > 0 {
+		fmt.Fprintf(os.Stderr, "%d finding(s) need verification — listed as open questions, not threads\n", len(questions))
+	}
 
 	// 8. Build result.
 	headSHA, err := currentHEAD()
@@ -460,6 +447,7 @@ func Run(opts RunOptions) error {
 		Repo:      opts.Repo,
 		Findings:  findings,
 		StillOpen: stillOpenFindings,
+		Questions: questions,
 		SHA:       headSHA,
 	}
 

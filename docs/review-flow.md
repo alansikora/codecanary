@@ -150,22 +150,31 @@ If the response is truncated (hit max output tokens), a warning is logged. The p
 `processFindings()` parses and validates the LLM's output:
 
 1. **Parse JSON**: Extracts the findings array from the ```json fence. Falls back to bracket-matching if embedded code blocks break the regex.
-2. **File validation**: Drops findings referencing files not in the PR.
-3. **Line validation**: Drops findings whose line number is more than 20 lines from any changed line in the PR diff. This catches hallucinated line numbers and scope creep.
-4. **Actionable filter**: Removes findings where `actionable: false`.
-5. **Status tagging**: Tags all findings as `"new"` if this is an incremental review.
+2. **Anchoring** (`anchorFinding` in `findings.go`): the one rule for whether and where a finding becomes a review thread, shared by validation and `PostReview` so a finding is never counted as new without a thread:
+   - no file, or a file not in the PR: dropped;
+   - a line within 20 lines of an *added* line in the PR diff: kept, posted inline on that added line;
+   - a line further than that: dropped (hallucinated line or scope creep);
+   - no line, or a PR file with no added lines (pure deletion, binary or mode-only change): kept, posted as a file-level comment.
+3. **Actionable filter**: Removes findings where `actionable: false`.
+4. **Status tagging**: Tags all findings as `"new"` if this is an incremental review.
 
 Incremental reviews then apply two history filters (`findings.go`), in Go, after the LLM:
 
-6. **Late-finding gate** (`FilterLateFindings`): a non-blocking finding (suggestion or nitpick, below `blockingSeverity`) that sits more than 5 lines from anything in the incremental diff is about code a previous review already saw, so it's dropped. Each review samples the touched files afresh; without this gate a PR keeps surfacing one more suggestion about old code per push and never converges. Blocking findings (warning and above) in old code still pass — the same threshold that fails the commit status. Skipped when the review fell back to the full PR diff.
-7. **Known-duplicate filter** (`FilterKnownDuplicates`): drops a finding that restates a thread the PR already has (open, or answered and acked) — same file, within 15 lines, and either the same `id` or titles with ≥ 50% word overlap. The prompt's Known Issues list asks the model not to repeat these, but it still rewords and re-raises them, most often after a rebase forces a full re-review.
+5. **Late-finding gate** (`FilterLateFindings`): a non-blocking finding (suggestion or nitpick, below `blockingSeverity`) that sits more than 5 lines from anything in the incremental diff is about code a previous review already saw, so it's dropped. Each review samples the touched files afresh; without this gate a PR keeps surfacing one more suggestion about old code per push and never converges. Blocking findings (warning and above) in old code still pass — the same threshold that fails the commit status. Skipped when the review fell back to the full PR diff.
+6. **Known-duplicate filter** (`FilterKnownDuplicates`): drops a finding that restates a thread the PR already has (open, or answered and acked) — same file, within 15 lines, and either the same `id` or titles with ≥ 50% word overlap. The prompt's Known Issues list asks the model not to repeat these, but it still rewords and re-raises them, most often after a rebase forces a full re-review.
+
+Finally, for every review:
+
+7. **Open questions** (`SplitOpenQuestions`): findings the model flagged `needs_verification: true` — their validity hinges on code, callers or external behavior it could not see in the diff, files and docs — move from `result.Findings` to `result.Questions`. They are not posted as threads, not counted in the status block or `NewFindings`, do not affect the commit status, and are not persisted to local state. They are rendered in a collapsed "Open questions" section of the review body (GitHub) or after the findings (local terminal/markdown; `questions` in JSON). The prompt's uncertainty rule asks for the flag together with severity capped at suggestion and the assumption stated; without it, "Verify …" findings each cost the author a reply cycle.
 
 ### 8. Publish results
 
 **GitHub PR** (`--post`): Every cycle emits exactly one top-level CodeCanary review, decided by an edit-vs-post rule. `FetchLatestCodecanaryReview` reads the commit SHA from the most recent CodeCanary review's hidden marker:
 
 - **Same SHA** (reply-only run, or a duplicate `synchronize` webhook on the same HEAD): the existing body is updated in place with `UpdateReviewBody`. Only the status block between the `<!-- codecanary:status -->` markers is swapped — inline comments and prior findings text are untouched.
-- **Different or no SHA** (new commits, or first review on the PR): a fresh review is posted. The body variant depends on the cycle outcome — findings review, all-clear, activity summary (no new findings but cycle activity to surface), or clean review. All variants carry the same status block and baseline SHA marker. Older CodeCanary reviews are minimized (collapsed) before posting.
+- **Different or no SHA** (new commits, or first review on the PR): a fresh review is posted. The body variant depends on the cycle outcome — findings review, all-clear, activity summary (no new findings but cycle activity to surface), or clean review. All variants carry the same status block, the open-questions section when there are any, and the baseline SHA marker. Older CodeCanary reviews are minimized (collapsed) before posting.
+
+In a findings review (`PostReview`, payload built by the pure `buildReviewPosts`), every finding gets a thread: line-anchored findings are inline comments in the review's `comments[]`, and file-level findings are POSTed right after the review to `/pulls/{n}/comments` with `subject_type: "file"` (the create-review `comments[]` does not accept `subject_type`). Both carry the same `<!-- codecanary:finding {...} -->` marker, so `LoadPreviousFindings`, triage and `codecanary findings` see file-level threads like any other. GitHub reports no line for them; `FetchReviewThreads` falls back to the line stored in the marker. A failed file-level post fails the run rather than leaving a counted finding without a thread. GitHub wraps each standalone comment in its own empty-bodied review; those carry no `codecanary:review` marker, so baseline-SHA lookup, edit-in-place and minimization ignore them.
 
 The status block lists non-zero counts for: new findings, resolved by code, file removed, dismissed by author, acknowledged by author, rebutted by author, still unresolved. The block renders nothing when all counts are zero, so clean reviews remain copy-exact.
 
@@ -209,7 +218,7 @@ If telemetry is enabled (opt-in), fires an anonymous event with aggregate stats:
 
 **Context window fitting.** After building the prompt, the pipeline estimates token count and progressively trims file contents (largest first) then diff to fit the model's context window. This prevents API failures on large PRs.
 
-**Finding validation.** All findings are validated against the PR diff regardless of what diff the LLM prompt contained. Line proximity checks (within 20 lines of a changed line) catch hallucinated line numbers and prevent scope creep from rebase noise.
+**Finding validation.** All findings are validated against the PR diff regardless of what diff the LLM prompt contained. Line proximity checks (within 20 lines of an added line) catch hallucinated line numbers and prevent scope creep from rebase noise. Validation and posting share `anchorFinding`, so what is counted is exactly what gets a thread.
 
 ## The codecanary-fix loop
 
