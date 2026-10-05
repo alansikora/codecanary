@@ -199,7 +199,8 @@ func ParseFindingsSalvage(output string) ([]Finding, error) {
 // blockingSeverity is the least severe level that keeps a finding blocking:
 // it fails the commit status, and in incremental reviews it is the floor for
 // a finding on code the review had already seen. Suggestions and nitpicks
-// below it are still reported, but they never cost the author another cycle.
+// below it are still reported on new code, but they never cost the author
+// another cycle.
 const blockingSeverity = "warning"
 
 // isBlocking reports whether a finding of the given severity is at or above
@@ -214,13 +215,13 @@ func isBlocking(severity string) bool {
 // being about the new code.
 const lateFindingProximity = 5
 
-// FilterLateFindings drops, from an incremental review, findings below "bug"
-// that are anchored on code the previous review already saw — lines further
-// than lateFindingProximity from anything in the incremental diff.
+// FilterLateFindings drops, from an incremental review, non-blocking findings
+// anchored on code the previous review already saw — lines further than
+// lateFindingProximity from anything in the incremental diff.
 //
 // Each review samples the touched files afresh, so without this a PR keeps
 // surfacing one more suggestion about old code per push and never converges.
-// A real bug in old code is still worth a cycle, so bug and critical pass.
+// A blocking finding in old code is still worth a cycle, so it passes.
 // No-op when incrementalDiff is empty (no incremental diff was available).
 func FilterLateFindings(findings []Finding, incrementalDiff string) []Finding {
 	if strings.TrimSpace(incrementalDiff) == "" {
@@ -229,7 +230,7 @@ func FilterLateFindings(findings []Finding, incrementalDiff string) []Finding {
 	changed := parseDiffLines(incrementalDiff)
 	var kept []Finding
 	for _, f := range findings {
-		if f.File == "" || f.Line <= 0 || severityOrder(f.Severity) <= severityOrder("bug") {
+		if f.File == "" || f.Line <= 0 || isBlocking(f.Severity) {
 			kept = append(kept, f)
 			continue
 		}

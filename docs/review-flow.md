@@ -157,7 +157,7 @@ If the response is truncated (hit max output tokens), a warning is logged. The p
 
 Incremental reviews then apply two history filters (`findings.go`), in Go, after the LLM:
 
-6. **Late-finding gate** (`FilterLateFindings`): a finding below `bug` that sits more than 5 lines from anything in the incremental diff is about code a previous review already saw, so it's dropped. Each review samples the touched files afresh; without this gate a PR keeps surfacing one more suggestion about old code per push and never converges. Bugs and criticals in old code still pass. Skipped when the review fell back to the full PR diff.
+6. **Late-finding gate** (`FilterLateFindings`): a non-blocking finding (suggestion or nitpick, below `blockingSeverity`) that sits more than 5 lines from anything in the incremental diff is about code a previous review already saw, so it's dropped. Each review samples the touched files afresh; without this gate a PR keeps surfacing one more suggestion about old code per push and never converges. Blocking findings (warning and above) in old code still pass — the same threshold that fails the commit status. Skipped when the review fell back to the full PR diff.
 7. **Known-duplicate filter** (`FilterKnownDuplicates`): drops a finding that restates a thread the PR already has (open, or answered and acked) — same file, within 15 lines, and either the same `id` or titles with ≥ 50% word overlap. The prompt's Known Issues list asks the model not to repeat these, but it still rewords and re-raises them, most often after a rebase forces a full re-review.
 
 ### 8. Publish results

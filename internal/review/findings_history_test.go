@@ -30,7 +30,7 @@ func TestFilterLateFindings(t *testing.T) {
 		{ID: "no-line", File: "lib/lock.rb", Severity: "nitpick"},
 	}
 	got := findingIDs(FilterLateFindings(findings, lateIncrementalDiff))
-	want := []string{"near-new-code", "old-code-bug", "untouched-file-critical", "no-line"}
+	want := []string{"near-new-code", "old-code-warning", "old-code-bug", "untouched-file-critical", "no-line"}
 	if len(got) != len(want) {
 		t.Fatalf("kept %v, want %v", got, want)
 	}
