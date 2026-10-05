@@ -95,10 +95,12 @@ type reviewContext struct {
 	ProjectDocs map[string]string
 	Env         []string
 	Tracker     *UsageTracker
+	Coverage    *ReviewCoverage // files the prompt does not show in full
 }
 
 // prepareReview loads config, project docs, file contents, and resolves the
-// Claude environment. Both the PR and local paths use this.
+// Claude environment. It also scopes pr.Diff for the prompt and records in
+// Coverage which files the prompt does not show in full. Both the PR and local paths use this.
 func prepareReview(pr *PRData, configPath string) (*reviewContext, error) {
 	cfg, err := loadReviewConfig(configPath)
 	if err != nil {
@@ -110,39 +112,15 @@ func prepareReview(pr *PRData, configPath string) (*reviewContext, error) {
 		fmt.Fprintf(os.Stderr, "Loaded %d project doc(s) for review context\n", len(projectDocs))
 	}
 
-	fileContents, skippedFiles := FetchFileContents(pr.Files, cfg.Ignore, cfg.EffectiveMaxFileSize(), cfg.EffectiveMaxTotalSize())
-	pr.FileContents = fileContents
-	if len(skippedFiles) > 0 {
-		fmt.Fprintf(os.Stderr, "Skipped %d large/ignored files: %s\n", len(skippedFiles), strings.Join(skippedFiles, ", "))
-
-		// Preserve the unfiltered diff for finding validation (line-number
-		// checks must run against the full PR diff), then strip skipped-file
-		// hunks from the diff/files that are sent to the LLM prompt.
-		if pr.FullDiff == "" {
-			pr.FullDiff = pr.Diff
-		}
-
-		skippedSet := make(map[string]bool, len(skippedFiles))
-		for _, f := range skippedFiles {
-			skippedSet[f] = true
-		}
-		allowedFiles := make(map[string]bool, len(pr.Files))
-		filtered := make([]string, 0, len(pr.Files))
-		for _, f := range pr.Files {
-			if !skippedSet[f] {
-				allowedFiles[f] = true
-				filtered = append(filtered, f)
-			}
-		}
-		pr.Files = filtered
-		pr.Diff = ScopeDiffToFiles(pr.Diff, allowedFiles)
-	}
+	fc := FetchFileContents(pr.Files, cfg.Ignore, cfg.EffectiveMaxFileSize(), cfg.EffectiveMaxTotalSize())
+	coverage := scopePRForPrompt(pr, fc, cfg.EffectiveMaxDiffSize())
 
 	return &reviewContext{
 		Config:      cfg,
 		ProjectDocs: projectDocs,
 		Env:         resolveEnv(),
 		Tracker:     &UsageTracker{},
+		Coverage:    coverage,
 	}, nil
 }
 
@@ -461,6 +439,9 @@ func Run(opts RunOptions) error {
 		Findings:  findings,
 		StillOpen: stillOpenFindings,
 		SHA:       headSHA,
+	}
+	if !rctx.Coverage.IsEmpty() {
+		result.Coverage = rctx.Coverage
 	}
 
 	// 9. Publish results via the platform adapter.

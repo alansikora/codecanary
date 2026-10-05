@@ -114,6 +114,8 @@ func FormatMarkdown(result *ReviewResult) string {
 
 	}
 
+	b.WriteString(renderCoverageNote(result.Coverage))
+
 	// Embed review data as hidden HTML comment for review data extraction.
 	jsonData, err := json.Marshal(result)
 	if err == nil {
@@ -205,6 +207,8 @@ func FormatReviewBody(result *ReviewResult, canInline func(Finding) bool) string
 		fmt.Fprintf(&b, "%s\n\n", fence)
 		b.WriteString("</details>\n")
 	}
+
+	b.WriteString(renderCoverageNote(result.Coverage))
 
 	// Embed review data as hidden HTML comment for review data extraction.
 	jsonData, err := json.Marshal(result)
@@ -324,7 +328,79 @@ func FormatTerminal(result *ReviewResult) string {
 		b.WriteString("\n")
 	}
 
+	writeTerminalCoverage(&b, result.Coverage, colors)
+
 	return b.String()
+}
+
+// coverageGroup is one labelled bucket of a ReviewCoverage.
+type coverageGroup struct {
+	Label string
+	Files []string
+}
+
+// coverageGroups returns the non-empty coverage buckets with their labels,
+// in display order. Shared by the Markdown and terminal renderers.
+func coverageGroups(c *ReviewCoverage) []coverageGroup {
+	if c.IsEmpty() {
+		return nil
+	}
+	var groups []coverageGroup
+	for _, g := range []coverageGroup{
+		{"Reviewed from the diff only (full contents over `max_file_size` / `max_total_size`)", c.DiffOnly},
+		{"Diff truncated (over `max_diff_size`)", c.TruncatedDiff},
+		{"Not reviewed (matches `ignore` or binary)", c.Excluded},
+	} {
+		if len(g.Files) > 0 {
+			groups = append(groups, g)
+		}
+	}
+	return groups
+}
+
+// renderCoverageNote renders a collapsed Markdown note listing changed files
+// the review did not see in full. Returns "" when coverage is complete, so
+// callers can append it unconditionally.
+func renderCoverageNote(c *ReviewCoverage) string {
+	groups := coverageGroups(c)
+	if len(groups) == 0 {
+		return ""
+	}
+	var parts []string
+	if n := len(c.DiffOnly) + len(c.TruncatedDiff); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d file%s reviewed partially", n, pluralS(n)))
+	}
+	if n := len(c.Excluded); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d not reviewed", n))
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n<details>\n<summary>\u2139\uFE0F Review coverage: %s</summary>\n\n", strings.Join(parts, ", "))
+	for _, g := range groups {
+		fmt.Fprintf(&b, "**%s**\n", g.Label)
+		for _, f := range g.Files {
+			fmt.Fprintf(&b, "- `%s`\n", strings.ReplaceAll(f, "`", "'"))
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("</details>\n")
+	return b.String()
+}
+
+// writeTerminalCoverage writes a dim footer listing changed files the review
+// did not see in full. Writes nothing when coverage is complete.
+func writeTerminalCoverage(b *strings.Builder, c *ReviewCoverage, colors bool) {
+	groups := coverageGroups(c)
+	if len(groups) == 0 {
+		return
+	}
+	b.WriteString("\n")
+	for _, g := range groups {
+		label := strings.ReplaceAll(g.Label, "`", "")
+		fmt.Fprintf(b, "  %s\n", applyStyle(colors, ansiDim, label+":"))
+		for _, f := range g.Files {
+			fmt.Fprintf(b, "  %s\n", applyStyle(colors, ansiDim, "  "+f))
+		}
+	}
 }
 
 // buildTerminalSummary builds a summary with severity counts and status breakdown.

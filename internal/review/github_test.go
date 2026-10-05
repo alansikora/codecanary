@@ -51,7 +51,7 @@ func TestEmbedBaselineMarkerFormat(t *testing.T) {
 }
 
 func TestBuildCleanReviewBody(t *testing.T) {
-	got := buildCleanReviewBody("abc123", ReviewSummary{})
+	got := buildCleanReviewBody("abc123", ReviewSummary{}, nil)
 	want := "CodeCanary reviewed this PR \u2014 no issues found.\n<!-- codecanary:review {\"sha\":\"abc123\"} -->\n"
 	if got != want {
 		t.Errorf("body =\n%q\nwant\n%q", got, want)
@@ -59,7 +59,7 @@ func TestBuildCleanReviewBody(t *testing.T) {
 }
 
 func TestBuildCleanReviewBodyNoSHA(t *testing.T) {
-	got := buildCleanReviewBody("", ReviewSummary{})
+	got := buildCleanReviewBody("", ReviewSummary{}, nil)
 	want := "CodeCanary reviewed this PR \u2014 no issues found."
 	if got != want {
 		t.Errorf("body =\n%q\nwant\n%q", got, want)
@@ -67,7 +67,7 @@ func TestBuildCleanReviewBodyNoSHA(t *testing.T) {
 }
 
 func TestBuildCleanReviewBodyWithSummary(t *testing.T) {
-	got := buildCleanReviewBody("abc123", ReviewSummary{NewFindings: 2, StillOpen: 1})
+	got := buildCleanReviewBody("abc123", ReviewSummary{NewFindings: 2, StillOpen: 1}, nil)
 	if !strings.Contains(got, statusBlockOpen) || !strings.Contains(got, statusBlockClose) {
 		t.Errorf("body missing status markers:\n%q", got)
 	}
@@ -83,7 +83,7 @@ func TestBuildCleanReviewBodyWithSummary(t *testing.T) {
 }
 
 func TestBuildAllClearReviewBody(t *testing.T) {
-	got := buildAllClearReviewBody("abc123", false, ReviewSummary{})
+	got := buildAllClearReviewBody("abc123", false, ReviewSummary{}, nil)
 	wantSuffix := "\n<!-- codecanary:review {\"sha\":\"abc123\"} -->\n"
 	if !strings.HasSuffix(got, wantSuffix) {
 		t.Errorf("body missing marker suffix:\n%q", got)
@@ -97,7 +97,7 @@ func TestBuildAllClearReviewBody(t *testing.T) {
 }
 
 func TestBuildAllClearReviewBodyMinimizeFailed(t *testing.T) {
-	got := buildAllClearReviewBody("abc123", true, ReviewSummary{})
+	got := buildAllClearReviewBody("abc123", true, ReviewSummary{}, nil)
 	if !strings.Contains(got, "could not be minimized") {
 		t.Errorf("expected minimize-warning text, got:\n%q", got)
 	}
@@ -108,7 +108,7 @@ func TestBuildAllClearReviewBodyMinimizeFailed(t *testing.T) {
 }
 
 func TestBuildActivityReviewBody(t *testing.T) {
-	got := buildActivityReviewBody("abc123", ReviewSummary{Dismissed: 1, Rebutted: 2, StillOpen: 3})
+	got := buildActivityReviewBody("abc123", ReviewSummary{Dismissed: 1, Rebutted: 2, StillOpen: 3}, nil)
 	if !strings.Contains(got, "no new issues found") {
 		t.Errorf("body missing activity copy:\n%q", got)
 	}

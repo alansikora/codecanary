@@ -780,8 +780,8 @@ func GetIncrementalDiff(baseSHA string) (string, error) {
 // commitSHA is embedded in a hidden marker so future runs treat it as the
 // baseline for incremental reviews, avoiding a redundant full re-review on the
 // next push.
-func PostCleanReview(repo string, prNumber int, commitSHA string, summary ReviewSummary) error {
-	return postSimpleReview(repo, prNumber, buildCleanReviewBody(commitSHA, summary))
+func PostCleanReview(repo string, prNumber int, commitSHA string, summary ReviewSummary, coverage *ReviewCoverage) error {
+	return postSimpleReview(repo, prNumber, buildCleanReviewBody(commitSHA, summary, coverage))
 }
 
 // PostAllClearReview posts a review when all previous findings have been
@@ -789,40 +789,42 @@ func PostCleanReview(repo string, prNumber int, commitSHA string, summary Review
 // visible old reviews. The commitSHA is embedded in a hidden marker so future
 // runs treat it as the baseline for incremental reviews; without it, the next
 // push would fall back to reviewing the entire PR again.
-func PostAllClearReview(repo string, prNumber int, commitSHA string, minimizeFailed bool, summary ReviewSummary) error {
-	return postSimpleReview(repo, prNumber, buildAllClearReviewBody(commitSHA, minimizeFailed, summary))
+func PostAllClearReview(repo string, prNumber int, commitSHA string, minimizeFailed bool, summary ReviewSummary, coverage *ReviewCoverage) error {
+	return postSimpleReview(repo, prNumber, buildAllClearReviewBody(commitSHA, minimizeFailed, summary, coverage))
 }
 
 // PostActivityReview posts a review when no new findings were raised but
 // there is cycle activity worth surfacing (dismissals, acknowledgments,
 // rebuttals, still-open threads). This keeps every commit push producing a
 // visible top-level status comment instead of silently logging.
-func PostActivityReview(repo string, prNumber int, commitSHA string, summary ReviewSummary) error {
-	return postSimpleReview(repo, prNumber, buildActivityReviewBody(commitSHA, summary))
+func PostActivityReview(repo string, prNumber int, commitSHA string, summary ReviewSummary, coverage *ReviewCoverage) error {
+	return postSimpleReview(repo, prNumber, buildActivityReviewBody(commitSHA, summary, coverage))
 }
 
 // buildCleanReviewBody renders the full Markdown body posted by
 // PostCleanReview. Split out from the poster so tests can assert the exact
 // string that lands on GitHub without having to mock gh.
-func buildCleanReviewBody(commitSHA string, summary ReviewSummary) string {
-	return withSummary("CodeCanary reviewed this PR \u2014 no issues found.", summary) + embedBaselineMarker(commitSHA)
+func buildCleanReviewBody(commitSHA string, summary ReviewSummary, coverage *ReviewCoverage) string {
+	body := "CodeCanary reviewed this PR \u2014 no issues found." + renderCoverageNote(coverage)
+	return withSummary(body, summary) + embedBaselineMarker(commitSHA)
 }
 
 // buildAllClearReviewBody renders the full Markdown body posted by
 // PostAllClearReview. Split out for the same reason as buildCleanReviewBody.
-func buildAllClearReviewBody(commitSHA string, minimizeFailed bool, summary ReviewSummary) string {
+func buildAllClearReviewBody(commitSHA string, minimizeFailed bool, summary ReviewSummary, coverage *ReviewCoverage) string {
 	body := "## \U0001F425 CodeCanary\n\n\u2705 All previous findings have been addressed. No new issues found. \u2728"
 	if minimizeFailed {
 		body += "\n\n> \u26A0\uFE0F Some previous review comments could not be minimized and may still be visible."
 	}
+	body += renderCoverageNote(coverage)
 	return withSummary(body, summary) + embedBaselineMarker(commitSHA)
 }
 
 // buildActivityReviewBody renders the body for a commit push that raised no
 // new findings but has cycle activity (dismissals/acknowledgments/rebuttals
 // or still-open threads carried forward).
-func buildActivityReviewBody(commitSHA string, summary ReviewSummary) string {
-	body := "## \U0001F425 CodeCanary\n\nReviewed this push \u2014 no new issues found."
+func buildActivityReviewBody(commitSHA string, summary ReviewSummary, coverage *ReviewCoverage) string {
+	body := "## \U0001F425 CodeCanary\n\nReviewed this push \u2014 no new issues found." + renderCoverageNote(coverage)
 	return withSummary(body, summary) + embedBaselineMarker(commitSHA)
 }
 
@@ -1197,58 +1199,6 @@ func MinimizeComment(nodeID string) error {
 		return fmt.Errorf("gh api graphql minimize: %w\n%s", err, string(out))
 	}
 	return nil
-}
-
-// FetchFileContents reads the full contents of changed files from disk.
-// It skips files that are too large, binary, deleted, or match ignore patterns.
-// Returns a map of path->content and a list of skipped file paths.
-func FetchFileContents(files []string, ignorePatterns []string, maxPerFile, maxTotal int) (map[string]string, []string) {
-	contents := make(map[string]string)
-	var skipped []string
-	totalSize := 0
-
-	for _, path := range files {
-		// Check ignore patterns.
-		if matchesIgnore(path, ignorePatterns) {
-			skipped = append(skipped, path)
-			continue
-		}
-
-		data, err := os.ReadFile(path)
-		if err != nil {
-			// File may have been deleted in this PR — skip gracefully.
-			continue
-		}
-
-		// Skip binary files (null bytes in first 512 bytes).
-		peek := data
-		if len(peek) > 512 {
-			peek = peek[:512]
-		}
-		if bytes.ContainsRune(peek, 0) {
-			skipped = append(skipped, path)
-			continue
-		}
-
-		size := len(data)
-
-		// Skip files exceeding per-file limit.
-		if size > maxPerFile {
-			skipped = append(skipped, path)
-			continue
-		}
-
-		// Stop if total budget would be exceeded.
-		if totalSize+size > maxTotal {
-			skipped = append(skipped, path)
-			continue
-		}
-
-		contents[path] = string(data)
-		totalSize += size
-	}
-
-	return contents, skipped
 }
 
 // isSetupPR detects whether this is the initial setup PR.

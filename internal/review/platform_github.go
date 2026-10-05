@@ -248,17 +248,17 @@ func (g *GithubPlatform) Publish(result *ReviewResult, pr *PRData, threads []Rev
 		}
 		Stderrf(ansiGreen, "Review posted to PR #%d\n", g.PRNumber)
 	case len(threads) > 0 && allResolved(threads, fixed):
-		if err := PostAllClearReview(g.Repo, g.PRNumber, result.SHA, minimizeFailed, summary); err != nil {
+		if err := PostAllClearReview(g.Repo, g.PRNumber, result.SHA, minimizeFailed, summary, result.Coverage); err != nil {
 			return fmt.Errorf("posting all-clear review: %w", err)
 		}
 		Stderrf(ansiGreen, "All clear! No issues remaining.\n")
 	case len(threads) > 0:
-		if err := PostActivityReview(g.Repo, g.PRNumber, result.SHA, summary); err != nil {
+		if err := PostActivityReview(g.Repo, g.PRNumber, result.SHA, summary, result.Coverage); err != nil {
 			return fmt.Errorf("posting activity review: %w", err)
 		}
 		Stderrf(ansiGreen, "Posted activity summary to PR #%d\n", g.PRNumber)
 	default:
-		if err := PostCleanReview(g.Repo, g.PRNumber, result.SHA, summary); err != nil {
+		if err := PostCleanReview(g.Repo, g.PRNumber, result.SHA, summary, result.Coverage); err != nil {
 			return fmt.Errorf("posting review: %w", err)
 		}
 		Stderrf(ansiGreen, "Review posted to PR #%d\n", g.PRNumber)
