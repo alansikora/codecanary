@@ -14,9 +14,21 @@ import (
 )
 
 // validCLIModels is the set of allowed model values for the Claude CLI provider.
-// Accepts both aliases (sonnet) and full model IDs (claude-sonnet-4-6).
+// Accepts both aliases (sonnet, which follows the current model) and full
+// model IDs to pin one (claude-sonnet-5-5).
 var validCLIModels = map[string]bool{
-	"haiku": true, "sonnet": true, "opus": true,
+	"haiku": true, "sonnet": true, "opus": true, "fable": true,
+	// Current generation.
+	"claude-fable-5-1":  true,
+	"claude-opus-5-5":   true,
+	"claude-sonnet-5-5": true,
+	"claude-haiku-4-5":  true,
+	// Previous models, still served.
+	"claude-fable-5":            true,
+	"claude-opus-5":             true,
+	"claude-sonnet-5":           true,
+	"claude-opus-4-8":           true,
+	"claude-opus-4-7":           true,
 	"claude-haiku-4-5-20251001": true,
 	"claude-sonnet-4-6":         true,
 	"claude-sonnet-4-5":         true,
@@ -47,7 +59,7 @@ func init() {
 
 func validateClaude(mc *ModelConfig) error {
 	if mc.Model != "" && !validCLIModels[mc.Model] {
-		return fmt.Errorf("invalid model %q for claude provider (valid: haiku, sonnet, opus)", mc.Model)
+		return fmt.Errorf("invalid model %q for claude provider (use an alias — haiku, sonnet, opus, fable — or a full model ID such as claude-sonnet-5-5)", mc.Model)
 	}
 	return nil
 }
