@@ -548,11 +548,12 @@ func runTriage(
 	}
 
 	// Try to compute an incremental diff (only changes since last review).
-	// This produces a smaller prompt when available. If it fails (e.g. shallow
-	// clone missing the previous SHA), we fall back to the full PR diff.
-	incrementalDiff, diffErr := platform.GetIncrementalDiff(previousSHA, pr.Files)
+	// This produces a smaller prompt when available. If it fails (e.g. the
+	// previous SHA or a merge-base cannot be fetched), we fall back to the
+	// full PR diff.
+	incrementalDiff, diffErr := platform.GetIncrementalDiff(previousSHA, pr)
 	if diffErr != nil {
-		fmt.Fprintf(os.Stderr, "Could not compute incremental diff, will use full PR diff for reevaluation\n")
+		fmt.Fprintf(os.Stderr, "Could not compute incremental diff (%v), will use full PR diff for reevaluation\n", diffErr)
 	} else {
 		allowed := make(map[string]bool, len(pr.Files))
 		for _, f := range pr.Files {
