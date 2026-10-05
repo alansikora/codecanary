@@ -139,6 +139,10 @@ func scopePRForPrompt(pr *PRData, fc FileContentsResult, maxDiffSize int) *Revie
 // file header and whole lines up to the file's share, then a marker line.
 // The result is deterministic for a given diff and budget. It returns the
 // paths of the files whose diff was cut, in diff order.
+//
+// The budget is approximate: a cut file always keeps its header (the lines
+// before the first hunk, typically under 200 bytes) and gains a marker line,
+// even when its share is smaller than that.
 func capDiff(diff string, budget int) (string, []string) {
 	if budget <= 0 || len(diff) <= budget {
 		return diff, nil

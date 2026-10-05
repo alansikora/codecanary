@@ -225,7 +225,7 @@ If telemetry is enabled (opt-in), fires an anonymous event with aggregate stats:
 
 **Sticky ack across pushes.** Once the bot has recorded a deferral on a thread, subsequent pushes preserve that classification (via `TriagePreviouslyAcked`) until the author adds a new reply. Without this, the next push would re-triage the thread as `TriageCodeChanged` (when the file was touched) or `TriageSkip` (when it wasn't), and the resolution reason would evaporate from the summary — flipping `Acknowledged by author: N` to `Still unresolved: N` and failing the commit status check on a thread the operator already deferred.
 
-**Context window fitting.** After building the prompt, the pipeline estimates token count and progressively trims file contents (largest first) then diff to fit the model's context window. This prevents API failures on large PRs.
+**Bounded prompt size, no post-build fitting.** Size is bounded up front in `prepareReview`, before the prompt is built: `max_file_size` and `max_total_size` cap full file contents (files over them are reviewed from the diff only), and `max_diff_size` caps the diff (`capDiff` trims the largest file diffs first). There is no token estimation or trimming after the prompt is built. Files reviewed partially are listed in the review's coverage note.
 
 **Finding validation.** All findings are validated against the PR diff regardless of what diff the LLM prompt contained. Line proximity checks (within 20 lines of an added line) catch hallucinated line numbers and prevent scope creep from rebase noise. Validation and posting share `anchorFinding`, so what is counted is exactly what gets a thread.
 

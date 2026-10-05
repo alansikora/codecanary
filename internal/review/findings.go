@@ -365,6 +365,10 @@ type findingAnchor struct {
 //     that line.
 //   - A line further than that: dropped (out of scope or hallucinated).
 //   - No line, or a file with no added lines: file-level.
+//
+// prFiles must already exclude files the review left out (ignore patterns,
+// binaries — see scopePRForPrompt), so the file-level fallback only fires
+// for files whose diff the reviewer actually saw.
 func anchorFinding(f Finding, prFiles map[string]bool, lines diffLineMap) findingAnchor {
 	if f.File == "" || !prFiles[f.File] {
 		return findingAnchor{Kind: anchorNone}
