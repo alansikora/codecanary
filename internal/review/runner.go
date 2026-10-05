@@ -95,10 +95,12 @@ type reviewContext struct {
 	ProjectDocs map[string]string
 	Env         []string
 	Tracker     *UsageTracker
+	Coverage    *ReviewCoverage // files the prompt does not show in full
 }
 
 // prepareReview loads config, project docs, file contents, and resolves the
-// Claude environment. Both the PR and local paths use this.
+// Claude environment. It also scopes pr.Diff for the prompt and records in
+// Coverage which files the prompt does not show in full. Both the PR and local paths use this.
 func prepareReview(pr *PRData, configPath string) (*reviewContext, error) {
 	cfg, err := loadReviewConfig(configPath)
 	if err != nil {
@@ -110,87 +112,46 @@ func prepareReview(pr *PRData, configPath string) (*reviewContext, error) {
 		fmt.Fprintf(os.Stderr, "Loaded %d project doc(s) for review context\n", len(projectDocs))
 	}
 
-	fileContents, skippedFiles := FetchFileContents(pr.Files, cfg.Ignore, cfg.EffectiveMaxFileSize(), cfg.EffectiveMaxTotalSize())
-	pr.FileContents = fileContents
-	if len(skippedFiles) > 0 {
-		fmt.Fprintf(os.Stderr, "Skipped %d large/ignored files: %s\n", len(skippedFiles), strings.Join(skippedFiles, ", "))
-
-		// Preserve the unfiltered diff for finding validation (line-number
-		// checks must run against the full PR diff), then strip skipped-file
-		// hunks from the diff/files that are sent to the LLM prompt.
-		if pr.FullDiff == "" {
-			pr.FullDiff = pr.Diff
-		}
-
-		skippedSet := make(map[string]bool, len(skippedFiles))
-		for _, f := range skippedFiles {
-			skippedSet[f] = true
-		}
-		allowedFiles := make(map[string]bool, len(pr.Files))
-		filtered := make([]string, 0, len(pr.Files))
-		for _, f := range pr.Files {
-			if !skippedSet[f] {
-				allowedFiles[f] = true
-				filtered = append(filtered, f)
-			}
-		}
-		pr.Files = filtered
-		pr.Diff = ScopeDiffToFiles(pr.Diff, allowedFiles)
-	}
+	fc := FetchFileContents(pr.Files, cfg.Ignore, cfg.EffectiveMaxFileSize(), cfg.EffectiveMaxTotalSize())
+	coverage := scopePRForPrompt(pr, fc, cfg.EffectiveMaxDiffSize())
 
 	return &reviewContext{
 		Config:      cfg,
 		ProjectDocs: projectDocs,
 		Env:         resolveEnv(),
 		Tracker:     &UsageTracker{},
+		Coverage:    coverage,
 	}, nil
 }
 
-// validateFindings filters findings to PR files, validates line proximity
-// against the PR diff, and removes non-actionable findings.
+// validateFindings keeps the findings that can be posted as a review thread
+// (see anchorFinding) and removes non-actionable ones.
 //
 // prDiff is always the PR diff (base..head from GitHub or merge-base diff
 // locally) — never the incremental diff. This ensures findings are scoped to
 // the PR's own changes regardless of what diff the LLM prompt contained,
-// filtering out rebase noise and hallucinated line numbers.
+// filtering out rebase noise and hallucinated line numbers. PostReview anchors
+// against the same diff and file list, so whatever survives here is posted.
 func validateFindings(findings []Finding, prFiles []string, prDiff string) []Finding {
-	fileSet := make(map[string]bool, len(prFiles))
-	for _, f := range prFiles {
-		fileSet[f] = true
-	}
+	files := fileSet(prFiles)
 	validLines := parseDiffLines(prDiff)
 
-	var filtered []Finding
+	var anchored []Finding
 	for _, f := range findings {
-		if f.File == "" || fileSet[f.File] {
-			filtered = append(filtered, f)
-		} else {
-			fmt.Fprintf(os.Stderr, "Dropped finding on file outside PR: %s\n", f.File)
-		}
-	}
-
-	// Validate line proximity: drop findings whose line is too far from any
-	// changed line in the PR diff. This keeps findings anchored to the PR's
-	// actual changes — preventing scope creep, filtering rebase noise, and
-	// catching hallucinated line numbers.
-	var lineValid []Finding
-	for _, f := range filtered {
-		if f.File == "" || f.Line <= 0 {
-			lineValid = append(lineValid, f)
+		if anchorFinding(f, files, validLines).Kind != anchorNone {
+			anchored = append(anchored, f)
 			continue
 		}
-		nearest := validLines.nearestLine(f.File, f.Line)
-		if nearest == 0 {
-			// File has no changed lines in the diff (e.g. mode-only change,
-			// binary file, pure deletion). Pass through — we can't validate.
-			lineValid = append(lineValid, f)
-		} else if abs(f.Line-nearest) <= MaxFindingProximity {
-			lineValid = append(lineValid, f)
-		} else {
+		switch {
+		case f.File == "":
+			fmt.Fprintf(os.Stderr, "Dropped finding with no file: %s\n", f.ID)
+		case !files[f.File]:
+			fmt.Fprintf(os.Stderr, "Dropped finding on file outside PR: %s\n", f.File)
+		default:
 			fmt.Fprintf(os.Stderr, "Dropped finding outside PR scope: %s (%s:%d)\n", f.ID, f.File, f.Line)
 		}
 	}
-	return FilterNonActionable(lineValid)
+	return FilterNonActionable(anchored)
 }
 
 // processFindings parses Claude's output, validates findings against the PR
@@ -449,6 +410,10 @@ func Run(opts RunOptions) error {
 			findings = FilterKnownDuplicates(findings, known)
 		}
 	}
+	findings, questions := SplitOpenQuestions(findings)
+	if len(questions) > 0 {
+		fmt.Fprintf(os.Stderr, "%d finding(s) need verification — listed as open questions, not threads\n", len(questions))
+	}
 
 	// 8. Build result.
 	headSHA, err := currentHEAD()
@@ -460,7 +425,11 @@ func Run(opts RunOptions) error {
 		Repo:      opts.Repo,
 		Findings:  findings,
 		StillOpen: stillOpenFindings,
+		Questions: questions,
 		SHA:       headSHA,
+	}
+	if !rctx.Coverage.IsEmpty() {
+		result.Coverage = rctx.Coverage
 	}
 
 	// 9. Publish results via the platform adapter.
@@ -548,11 +517,12 @@ func runTriage(
 	}
 
 	// Try to compute an incremental diff (only changes since last review).
-	// This produces a smaller prompt when available. If it fails (e.g. shallow
-	// clone missing the previous SHA), we fall back to the full PR diff.
-	incrementalDiff, diffErr := platform.GetIncrementalDiff(previousSHA, pr.Files)
+	// This produces a smaller prompt when available. If it fails (e.g. the
+	// previous SHA or a merge-base cannot be fetched), we fall back to the
+	// full PR diff.
+	incrementalDiff, diffErr := platform.GetIncrementalDiff(previousSHA, pr)
 	if diffErr != nil {
-		fmt.Fprintf(os.Stderr, "Could not compute incremental diff, will use full PR diff for reevaluation\n")
+		fmt.Fprintf(os.Stderr, "Could not compute incremental diff (%v), will use full PR diff for reevaluation\n", diffErr)
 	} else {
 		allowed := make(map[string]bool, len(pr.Files))
 		for _, f := range pr.Files {

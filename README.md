@@ -274,7 +274,7 @@ Install the skill once:
 codecanary install-skill
 ```
 
-This writes the embedded skill to `~/.claude/skills/codecanary-fix/SKILL.md`, where Claude Code discovers it in every session. Re-run the command after `codecanary upgrade` to pick up new versions.
+This writes the embedded skill to `~/.claude/skills/codecanary-fix/SKILL.md`, where Claude Code discovers it in every session. `codecanary upgrade` offers to refresh it when the embedded copy changes; otherwise run `codecanary install-skill --force`. The skill also tells you at startup when a newer codecanary release is out or the installed skill is stale (via the `version`, `update_available`, and `skill.stale` fields of `codecanary mode --output json`).
 
 Then in Claude Code, ask it to `handle codecanary` on your PR (or invoke `/codecanary-fix` directly) — the skill is auto-discovered and matched to your request via its frontmatter description. Two modes:
 

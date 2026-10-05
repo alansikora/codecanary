@@ -95,8 +95,8 @@ runs:
         PR_NUMBER: ${{ github.event.pull_request.number }}
       # Best-effort: deepening by the PR commit count makes the previous review
       # SHA available for incremental diffs in the common case (new commits pushed).
-      # After force-pushes or rebases the old SHA is rewritten and won't be found;
-      # the review falls back to the full PR diff automatically.
+      # After force-pushes or rebases, `codecanary review` fetches the old SHA and
+      # the base branch itself (see fetchIncrementalHistory in Go).
       run: |
         if [ -n "$PR_NUMBER" ]; then
           COMMITS=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.commits')

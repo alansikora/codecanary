@@ -243,13 +243,16 @@ func (g *GithubPlatform) Publish(result *ReviewResult, pr *PRData, threads []Rev
 
 	// POST path — pick the body shape that fits the cycle outcome. Every
 	// branch emits a top-level review so each push lands a visible status
-	// comment on the PR. The update notice rides along in whichever body is
-	// posted; it never changes which one, and in-place edits above keep the
-	// note the review was first posted with.
-	notes := g.Updates.Notice()
+	// comment on the PR. Open questions, the coverage note and the update
+	// notice ride along in whichever body is posted; they never change which
+	// one, and in-place edits above keep the notes the review was first
+	// posted with. The full findings body already renders open questions and
+	// coverage itself, so PostReview gets only the update notice.
+	notice := g.Updates.Notice()
+	notes := formatOpenQuestions(result.Questions) + renderCoverageNote(result.Coverage) + notice
 	switch {
 	case len(result.Findings) > 0:
-		if err := PostReview(g.Repo, g.PRNumber, result, pr.ValidationDiff(), result.SHA, notes, summary); err != nil {
+		if err := PostReview(g.Repo, g.PRNumber, result, pr.Files, pr.ValidationDiff(), result.SHA, notice, summary); err != nil {
 			return fmt.Errorf("posting review: %w", err)
 		}
 		Stderrf(ansiGreen, "Review posted to PR #%d\n", g.PRNumber)
@@ -282,8 +285,9 @@ func (g *GithubPlatform) SaveState(_ *ReviewResult, _ []Finding, _ bool) error {
 	return nil
 }
 
-func (g *GithubPlatform) GetIncrementalDiff(baseSHA string, _ []string) (string, error) {
-	return GetIncrementalDiff(baseSHA)
+func (g *GithubPlatform) GetIncrementalDiff(previousSHA string, pr *PRData) (string, error) {
+	baseRef := fetchIncrementalHistory(previousSHA, pr.BaseBranch)
+	return IncrementalDiff(previousSHA, baseRef)
 }
 
 func (g *GithubPlatform) ReportUsage(tracker *UsageTracker) {
