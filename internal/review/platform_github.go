@@ -122,6 +122,9 @@ type GithubPlatform struct {
 	Repo     string
 	PRNumber int
 	DryRun   bool
+	// Updates drives the outdated-install note on posted reviews; the
+	// zero value disables it.
+	Updates UpdateCheck
 }
 
 func (g *GithubPlatform) LoadPreviousFindings() ([]ReviewThread, string, int) {
@@ -240,25 +243,28 @@ func (g *GithubPlatform) Publish(result *ReviewResult, pr *PRData, threads []Rev
 
 	// POST path — pick the body shape that fits the cycle outcome. Every
 	// branch emits a top-level review so each push lands a visible status
-	// comment on the PR.
+	// comment on the PR. The update notice rides along in whichever body is
+	// posted; it never changes which one, and in-place edits above keep the
+	// note the review was first posted with.
+	notes := g.Updates.Notice()
 	switch {
 	case len(result.Findings) > 0:
-		if err := PostReview(g.Repo, g.PRNumber, result, pr.ValidationDiff(), result.SHA, summary); err != nil {
+		if err := PostReview(g.Repo, g.PRNumber, result, pr.ValidationDiff(), result.SHA, notes, summary); err != nil {
 			return fmt.Errorf("posting review: %w", err)
 		}
 		Stderrf(ansiGreen, "Review posted to PR #%d\n", g.PRNumber)
 	case len(threads) > 0 && allResolved(threads, fixed):
-		if err := PostAllClearReview(g.Repo, g.PRNumber, result.SHA, minimizeFailed, summary); err != nil {
+		if err := PostAllClearReview(g.Repo, g.PRNumber, result.SHA, minimizeFailed, notes, summary); err != nil {
 			return fmt.Errorf("posting all-clear review: %w", err)
 		}
 		Stderrf(ansiGreen, "All clear! No issues remaining.\n")
 	case len(threads) > 0:
-		if err := PostActivityReview(g.Repo, g.PRNumber, result.SHA, summary); err != nil {
+		if err := PostActivityReview(g.Repo, g.PRNumber, result.SHA, notes, summary); err != nil {
 			return fmt.Errorf("posting activity review: %w", err)
 		}
 		Stderrf(ansiGreen, "Posted activity summary to PR #%d\n", g.PRNumber)
 	default:
-		if err := PostCleanReview(g.Repo, g.PRNumber, result.SHA, summary); err != nil {
+		if err := PostCleanReview(g.Repo, g.PRNumber, result.SHA, notes, summary); err != nil {
 			return fmt.Errorf("posting review: %w", err)
 		}
 		Stderrf(ansiGreen, "Review posted to PR #%d\n", g.PRNumber)

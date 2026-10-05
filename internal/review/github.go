@@ -255,9 +255,10 @@ func abs(x int) int {
 
 // PostReview posts a PR review with inline comments using the GitHub API.
 // Findings with file and line information become inline comments; others are
-// included in the review body. The summary block is appended to the body so
-// the status dashboard appears on every CodeCanary top-level review.
-func PostReview(repo string, prNumber int, result *ReviewResult, diff string, commitSHA string, summary ReviewSummary) error {
+// included in the review body. notes (optional Markdown, e.g. the update
+// notice) follows the body, and the summary block is appended last so the
+// status dashboard appears on every CodeCanary top-level review.
+func PostReview(repo string, prNumber int, result *ReviewResult, diff string, commitSHA, notes string, summary ReviewSummary) error {
 	// Sort findings by severity before formatting.
 	sortFindings(result.Findings)
 
@@ -286,7 +287,7 @@ func PostReview(repo string, prNumber int, result *ReviewResult, diff string, co
 		}
 	}
 
-	body := withSummary(FormatReviewBody(result, canInline), summary)
+	body := withSummary(FormatReviewBody(result, canInline)+notes, summary)
 
 	payload := reviewPayload{
 		Event:    "COMMENT",
@@ -780,8 +781,8 @@ func GetIncrementalDiff(baseSHA string) (string, error) {
 // commitSHA is embedded in a hidden marker so future runs treat it as the
 // baseline for incremental reviews, avoiding a redundant full re-review on the
 // next push.
-func PostCleanReview(repo string, prNumber int, commitSHA string, summary ReviewSummary) error {
-	return postSimpleReview(repo, prNumber, buildCleanReviewBody(commitSHA, summary))
+func PostCleanReview(repo string, prNumber int, commitSHA, notes string, summary ReviewSummary) error {
+	return postSimpleReview(repo, prNumber, buildCleanReviewBody(commitSHA, notes, summary))
 }
 
 // PostAllClearReview posts a review when all previous findings have been
@@ -789,41 +790,44 @@ func PostCleanReview(repo string, prNumber int, commitSHA string, summary Review
 // visible old reviews. The commitSHA is embedded in a hidden marker so future
 // runs treat it as the baseline for incremental reviews; without it, the next
 // push would fall back to reviewing the entire PR again.
-func PostAllClearReview(repo string, prNumber int, commitSHA string, minimizeFailed bool, summary ReviewSummary) error {
-	return postSimpleReview(repo, prNumber, buildAllClearReviewBody(commitSHA, minimizeFailed, summary))
+func PostAllClearReview(repo string, prNumber int, commitSHA string, minimizeFailed bool, notes string, summary ReviewSummary) error {
+	return postSimpleReview(repo, prNumber, buildAllClearReviewBody(commitSHA, minimizeFailed, notes, summary))
 }
 
 // PostActivityReview posts a review when no new findings were raised but
 // there is cycle activity worth surfacing (dismissals, acknowledgments,
 // rebuttals, still-open threads). This keeps every commit push producing a
 // visible top-level status comment instead of silently logging.
-func PostActivityReview(repo string, prNumber int, commitSHA string, summary ReviewSummary) error {
-	return postSimpleReview(repo, prNumber, buildActivityReviewBody(commitSHA, summary))
+func PostActivityReview(repo string, prNumber int, commitSHA, notes string, summary ReviewSummary) error {
+	return postSimpleReview(repo, prNumber, buildActivityReviewBody(commitSHA, notes, summary))
 }
+
+// notes is optional Markdown appended to the body of the simple reviews
+// below (e.g. the update notice); pass "" for none.
 
 // buildCleanReviewBody renders the full Markdown body posted by
 // PostCleanReview. Split out from the poster so tests can assert the exact
 // string that lands on GitHub without having to mock gh.
-func buildCleanReviewBody(commitSHA string, summary ReviewSummary) string {
-	return withSummary("CodeCanary reviewed this PR \u2014 no issues found.", summary) + embedBaselineMarker(commitSHA)
+func buildCleanReviewBody(commitSHA, notes string, summary ReviewSummary) string {
+	return withSummary("CodeCanary reviewed this PR \u2014 no issues found."+notes, summary) + embedBaselineMarker(commitSHA)
 }
 
 // buildAllClearReviewBody renders the full Markdown body posted by
 // PostAllClearReview. Split out for the same reason as buildCleanReviewBody.
-func buildAllClearReviewBody(commitSHA string, minimizeFailed bool, summary ReviewSummary) string {
+func buildAllClearReviewBody(commitSHA string, minimizeFailed bool, notes string, summary ReviewSummary) string {
 	body := "## \U0001F425 CodeCanary\n\n\u2705 All previous findings have been addressed. No new issues found. \u2728"
 	if minimizeFailed {
 		body += "\n\n> \u26A0\uFE0F Some previous review comments could not be minimized and may still be visible."
 	}
-	return withSummary(body, summary) + embedBaselineMarker(commitSHA)
+	return withSummary(body+notes, summary) + embedBaselineMarker(commitSHA)
 }
 
 // buildActivityReviewBody renders the body for a commit push that raised no
 // new findings but has cycle activity (dismissals/acknowledgments/rebuttals
 // or still-open threads carried forward).
-func buildActivityReviewBody(commitSHA string, summary ReviewSummary) string {
+func buildActivityReviewBody(commitSHA, notes string, summary ReviewSummary) string {
 	body := "## \U0001F425 CodeCanary\n\nReviewed this push \u2014 no new issues found."
-	return withSummary(body, summary) + embedBaselineMarker(commitSHA)
+	return withSummary(body+notes, summary) + embedBaselineMarker(commitSHA)
 }
 
 // withSummary appends the status summary block to a review body. The block
