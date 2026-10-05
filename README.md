@@ -141,8 +141,8 @@ CodeCanary uses `.codecanary/config.yml` in your repo. The `provider` field is r
 ```yaml
 version: 1
 provider: anthropic
-review_model: claude-sonnet-4-6
-triage_model: claude-haiku-4-5-20251001
+review_model: claude-sonnet-5-5
+triage_model: claude-haiku-4-5
 ```
 
 ### Config with rules and context
@@ -150,8 +150,8 @@ triage_model: claude-haiku-4-5-20251001
 ```yaml
 version: 1
 provider: anthropic
-review_model: claude-sonnet-4-6
-triage_model: claude-haiku-4-5-20251001
+review_model: claude-sonnet-5-5
+triage_model: claude-haiku-4-5
 
 context: |
   Go REST API using chi router. Tests use testify.
@@ -205,7 +205,7 @@ triage_model: grok-4-1-fast-non-reasoning
 ```yaml
 version: 1
 provider: claude
-review_model: claude-sonnet-4-6
+review_model: claude-sonnet-5-5
 triage_model: haiku
 ```
 
