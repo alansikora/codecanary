@@ -2,6 +2,7 @@ package review
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -52,7 +53,12 @@ func FetchFileContents(files []string, ignorePatterns []string, maxPerFile, maxT
 			continue
 		}
 
-		data, err := os.ReadFile(path)
+		data, err := readRepoFile("", path)
+		if errors.Is(err, errSymlinkInPath) {
+			// Never follow a link out of the checkout; review its diff only.
+			res.Excluded = append(res.Excluded, path)
+			continue
+		}
 		if err != nil {
 			// File may have been deleted in this PR — skip gracefully.
 			continue

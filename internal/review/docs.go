@@ -60,7 +60,7 @@ func readProjectDocsFrom(root string, prFiles []string) map[string]string {
 		if len(docs) >= maxDocs {
 			break
 		}
-		data, err := os.ReadFile(filepath.Join(root, relPath))
+		data, err := readRepoFile(root, relPath)
 		if err != nil {
 			continue
 		}

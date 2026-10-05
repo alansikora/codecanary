@@ -119,12 +119,16 @@ jobs:
           BASE="${{ github.event.pull_request.base.sha }}"
           git -c "http.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)" \
             fetch --depth=1 origin "$BASE"
+          # A fork can commit these paths as symlinks; remove the links
+          # themselves so nothing below writes or deletes outside the checkout.
+          for d in .codecanary .claude; do
+            if [ -L "$d" ]; then rm -f "$d"; fi
+          done
           for f in .codecanary/config.yml .codecanary/review.yml .codecanary/review.local.yml .codecanary.yml; do
+            rm -f "$f"
             if git show "$BASE":"$f" > /tmp/base-cfg 2>/dev/null; then
               mkdir -p "$(dirname "$f")"
               cp /tmp/base-cfg "$f"
-            else
-              rm -f "$f"
             fi
           done
           rm -f .claude/settings.json .claude/settings.local.json .mcp.json
