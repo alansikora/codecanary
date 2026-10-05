@@ -480,9 +480,9 @@ func modelOptions(provider string) []huh.Option[string] {
 	switch provider {
 	case "anthropic":
 		return []huh.Option[string]{
-			huh.NewOption("claude-sonnet-4-6", "claude-sonnet-4-6"),
-			huh.NewOption("claude-opus-4-6", "claude-opus-4-6"),
-			huh.NewOption("claude-haiku-4-5-20251001", "claude-haiku-4-5-20251001"),
+			huh.NewOption("claude-sonnet-5-5", "claude-sonnet-5-5"),
+			huh.NewOption("claude-opus-5-5", "claude-opus-5-5"),
+			huh.NewOption("claude-haiku-4-5", "claude-haiku-4-5"),
 		}
 	case "openai":
 		return []huh.Option[string]{
