@@ -189,6 +189,7 @@ func TestBuildIncrementalPrompt_ResolvedSectionHandlesMissingFields(t *testing.T
 		t.Error("suggestion block should be omitted when empty")
 	}
 }
+
 // The Known Issues section needs enough context for the LLM to
 // recognize duplicates-with-different-wording and to spot when the
 // incremental diff invalidates an existing open finding. Title +
@@ -254,7 +255,6 @@ func TestBuildIncrementalPrompt_KnownIssuesOmittedWhenEmpty(t *testing.T) {
 	}
 }
 
-
 // An answered finding kept coming back reworded because the reviewer never
 // saw the answer. The author's latest reply rides along; the bot's own ack
 // replies do not.
@@ -277,10 +277,13 @@ func TestBuildIncrementalPrompt_KnownIssuesIncludesAuthorReply(t *testing.T) {
 	}
 }
 
-func TestLastAuthorReplyTruncates(t *testing.T) {
-	long := strings.Repeat("é", maxKnownIssueReply)
+// The cut lands inside a three-byte rune: the partial rune is dropped, so
+// the reply stays valid UTF-8 and ends on the last whole character.
+func TestLastAuthorReplyTruncatesMidRune(t *testing.T) {
+	long := "a" + strings.Repeat("€", maxKnownIssueReply)
 	got := lastAuthorReply(ReviewThread{Replies: []ThreadReply{{Body: long}}})
-	if len(got) > maxKnownIssueReply+len(" …") || !strings.HasSuffix(got, " …") || !utf8.ValidString(got) {
-		t.Errorf("reply not cut cleanly: len=%d", len(got))
+	want := "a" + strings.Repeat("€", (maxKnownIssueReply-1)/3) + " …"
+	if got != want || !utf8.ValidString(got) {
+		t.Errorf("reply not cut on a rune boundary: len=%d, want len=%d", len(got), len(want))
 	}
 }
