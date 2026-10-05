@@ -114,6 +114,9 @@ func FormatMarkdown(result *ReviewResult) string {
 
 	}
 
+	b.WriteString(formatOpenQuestions(result.Questions))
+	b.WriteString(renderCoverageNote(result.Coverage))
+
 	// Embed review data as hidden HTML comment for review data extraction.
 	jsonData, err := json.Marshal(result)
 	if err == nil {
@@ -127,6 +130,16 @@ func FormatMarkdown(result *ReviewResult) string {
 // NOTE: validSeverities in config.go is derived from this slice,
 // so any entry added here becomes an accepted config value.
 var severityLevels = []string{"critical", "bug", "warning", "suggestion", "nitpick"}
+
+// ValidateSeverity reports whether s is one of the canonical severity levels.
+func ValidateSeverity(s string) error {
+	for _, level := range severityLevels {
+		if s == level {
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid severity %q: must be one of: %s", s, strings.Join(severityLevels, ", "))
+}
 
 // countSeverities counts findings by severity across one or more lists.
 func countSeverities(lists ...[]Finding) (counts map[string]int, total int) {
@@ -153,46 +166,32 @@ func buildSeveritySummary(findings []Finding) string {
 }
 
 // FormatReviewBody renders the summary body for a PR review, including hidden
-// review data. Inline findings are posted as separate line comments.
-func FormatReviewBody(result *ReviewResult, canInline func(Finding) bool) string {
+// review data. Every finding is posted as its own comment (inline or
+// file-level, see buildReviewPosts); hasComments says whether any were, so
+// the body can point to them. Open questions are listed in a collapsed
+// section of their own.
+func FormatReviewBody(result *ReviewResult, hasComments bool) string {
 	var b strings.Builder
 
 	fmt.Fprintf(&b, "## \U0001F425 CodeCanary \u2014 PR #%d\n\n", result.PRNumber)
 
 	// Summary section.
-	if result.Summary != "" {
+	switch {
+	case result.Summary != "":
 		fmt.Fprintf(&b, "### Summary\n%s\n", result.Summary)
-	} else {
+	case len(result.Findings) == 0:
+		b.WriteString("### Summary\nNo issues found.\n")
+	default:
 		b.WriteString("### Summary\n")
 		b.WriteString(buildSeveritySummary(result.Findings))
 		b.WriteString("\n")
 	}
 
-	// Check if there are any inline (line-level) comments.
-	hasInline := false
-	for _, f := range result.Findings {
-		if canInline(f) {
-			hasInline = true
-			break
-		}
-	}
-	if hasInline {
-		b.WriteString("\n\U0001F4AC See inline comments for details.\n")
+	if hasComments {
+		b.WriteString("\n\U0001F4AC See the review comments for details.\n")
 	}
 
-	// Include findings that cannot be posted inline.
-	for _, f := range result.Findings {
-		if !canInline(f) {
-			b.WriteString("\n---\n\n")
-			icon := severityIcon(f.Severity)
-			fmt.Fprintf(&b, "### %s **%s** \u2014 `%s`\n\n", icon, f.Severity, f.ID)
-			fmt.Fprintf(&b, "**%s**\n\n", f.Title)
-			fmt.Fprintf(&b, "%s\n", f.Description)
-			if f.Suggestion != "" {
-				fmt.Fprintf(&b, "\n> **Suggestion**: %s\n", f.Suggestion)
-			}
-		}
-	}
+	b.WriteString(formatOpenQuestions(result.Questions))
 
 	// Fix-all prompt in a collapsible section.
 	if len(result.Findings) > 0 {
@@ -206,12 +205,38 @@ func FormatReviewBody(result *ReviewResult, canInline func(Finding) bool) string
 		b.WriteString("</details>\n")
 	}
 
+	b.WriteString(renderCoverageNote(result.Coverage))
+
 	// Embed review data as hidden HTML comment for review data extraction.
 	jsonData, err := json.Marshal(result)
 	if err == nil {
 		fmt.Fprintf(&b, "\n%s%s%s\n", reviewMarkerPrefixes[0], string(jsonData), reviewMarkerSuffix)
 	}
 
+	return b.String()
+}
+
+// formatOpenQuestions renders findings flagged needs_verification as a
+// collapsed Markdown section, or "" when there are none. Questions are not
+// threads: nothing to reply to or resolve, and they never block the PR.
+func formatOpenQuestions(questions []Finding) string {
+	if len(questions) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n<details>\n<summary>❓ Open questions (%d) — could not be verified from the diff; no reply needed</summary>\n\n", len(questions))
+	for _, q := range questions {
+		loc := q.File
+		if q.Line > 0 {
+			loc = fmt.Sprintf("%s:%d", q.File, q.Line)
+		}
+		fmt.Fprintf(&b, "- **%s** (`%s`)\n", q.Title, loc)
+		if d := strings.TrimSpace(q.Description); d != "" {
+			fmt.Fprintf(&b, "\n  %s\n", strings.ReplaceAll(d, "\n", "\n  "))
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("</details>\n")
 	return b.String()
 }
 
@@ -324,7 +349,99 @@ func FormatTerminal(result *ReviewResult) string {
 		b.WriteString("\n")
 	}
 
+	writeTerminalOpenQuestions(&b, result.Questions, colors)
+	writeTerminalCoverage(&b, result.Coverage, colors)
+
 	return b.String()
+}
+
+// writeTerminalOpenQuestions lists findings flagged needs_verification in a
+// short section after the findings. They are not saved as open findings.
+func writeTerminalOpenQuestions(b *strings.Builder, questions []Finding, colors bool) {
+	if len(questions) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "\n  %s\n", applyStyle(colors, ansiBold,
+		fmt.Sprintf("Open questions (%d) — could not be verified from the diff; not tracked", len(questions))))
+	for _, q := range questions {
+		loc := q.File
+		if q.Line > 0 {
+			loc = fmt.Sprintf("%s:%d", q.File, q.Line)
+		}
+		fmt.Fprintf(b, "\n  ? %s  %s\n", stripInlineMarkdown(q.Title, colors), applyStyle(colors, ansiDim, loc))
+		if d := strings.TrimSpace(q.Description); d != "" {
+			writeFormattedText(b, d, colors)
+		}
+	}
+	b.WriteString("\n")
+}
+
+// coverageGroup is one labelled bucket of a ReviewCoverage.
+type coverageGroup struct {
+	Label string
+	Files []string
+}
+
+// coverageGroups returns the non-empty coverage buckets with their labels,
+// in display order. Shared by the Markdown and terminal renderers.
+//
+// Excluded files (ignore patterns, binaries) are left out on purpose: they
+// are excluded by configuration on every review, so listing them would put
+// the note on every review and bury the files that were actually cut short.
+// They remain in ReviewCoverage for JSON output.
+func coverageGroups(c *ReviewCoverage) []coverageGroup {
+	if c.IsEmpty() {
+		return nil
+	}
+	var groups []coverageGroup
+	for _, g := range []coverageGroup{
+		{"Reviewed from the diff only (full contents over `max_file_size` / `max_total_size`)", c.DiffOnly},
+		{"Diff truncated (over `max_diff_size`)", c.TruncatedDiff},
+	} {
+		if len(g.Files) > 0 {
+			groups = append(groups, g)
+		}
+	}
+	return groups
+}
+
+// renderCoverageNote renders a collapsed Markdown note listing changed files
+// the review did not see in full. Returns "" when coverage is complete, so
+// callers can append it unconditionally.
+func renderCoverageNote(c *ReviewCoverage) string {
+	groups := coverageGroups(c)
+	if len(groups) == 0 {
+		return ""
+	}
+	n := len(c.DiffOnly) + len(c.TruncatedDiff)
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n<details>\n<summary>\u2139\uFE0F Review coverage: %d file%s reviewed partially</summary>\n\n", n, pluralS(n))
+	for _, g := range groups {
+		fmt.Fprintf(&b, "**%s**\n", g.Label)
+		for _, f := range g.Files {
+			fmt.Fprintf(&b, "- `%s`\n", strings.ReplaceAll(f, "`", "'"))
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("</details>\n")
+	return b.String()
+}
+
+// writeTerminalCoverage writes a dim footer listing changed files the review
+// did not see in full. Writes nothing when coverage is complete.
+func writeTerminalCoverage(b *strings.Builder, c *ReviewCoverage, colors bool) {
+	groups := coverageGroups(c)
+	if len(groups) == 0 {
+		return
+	}
+	b.WriteString("\n")
+	for _, g := range groups {
+		label := strings.ReplaceAll(g.Label, "`", "")
+		fmt.Fprintf(b, "  %s\n", applyStyle(colors, ansiDim, label+":"))
+		for _, f := range g.Files {
+			fmt.Fprintf(b, "  %s\n", applyStyle(colors, ansiDim, "  "+f))
+		}
+	}
 }
 
 // buildTerminalSummary builds a summary with severity counts and status breakdown.

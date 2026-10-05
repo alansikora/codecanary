@@ -5,10 +5,21 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/alansikora/codecanary/internal/review"
 )
 
 //go:embed codecanary.yml
 var canonicalWorkflow string
+
+// TemplateVersion returns the version declared by the
+// `# codecanary-workflow: v<N>` marker in the embedded workflow template.
+// The review bot compares it with the marker in a repo's workflow copy to
+// flag copies that predate the latest template. Bump the marker whenever
+// the template changes (TestTemplateVersionBumpedOnChange enforces it).
+func TemplateVersion() int {
+	return review.WorkflowTemplateVersion(canonicalWorkflow)
+}
 
 // Sentinel values in the canonical workflow that get replaced per-user.
 const (

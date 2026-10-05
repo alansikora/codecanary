@@ -69,23 +69,7 @@ block merges until a clean local review exists for the tip commit.`,
 			}
 		}
 
-		unresolved := 0
-		for _, f := range state.Findings {
-			if f.Actionable != nil && !*f.Actionable {
-				continue
-			}
-			unresolved++
-		}
-
-		statusState, desc := "success", "0 findings"
-		if unresolved > 0 {
-			statusState = "failure"
-			suffix := "s"
-			if unresolved == 1 {
-				suffix = ""
-			}
-			desc = fmt.Sprintf("%d unresolved finding%s", unresolved, suffix)
-		}
+		statusState, desc := review.CommitStatusForFindings(state.Findings)
 
 		if err := review.PostReviewCommitStatus(slug, sha, statusState, desc); err != nil {
 			return fmt.Errorf("posting commit status: %w", err)

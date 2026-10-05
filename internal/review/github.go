@@ -42,10 +42,10 @@ func parseRepoSlug(repo string) (owner, name string, err error) {
 }
 
 // MaxFindingProximity is the maximum number of lines a finding may be from the
-// nearest changed line in the PR diff. Findings beyond this distance are dropped
-// (runner.go) or demoted from inline to body (PostReview). This enforces review
+// nearest added line in the PR diff. Findings beyond this distance are dropped
+// (anchorFinding, used by both validation and PostReview). This enforces review
 // scope — keeping findings anchored to the PR's actual changes — and catches
-// hallucinated line numbers. A single constant ensures both checks stay in sync.
+// hallucinated line numbers.
 const MaxFindingProximity = 20
 
 // HTML comment markers for embedding and detecting review data.
@@ -253,47 +253,66 @@ func abs(x int) int {
 	return x
 }
 
-// PostReview posts a PR review with inline comments using the GitHub API.
-// Findings with file and line information become inline comments; others are
-// included in the review body. The summary block is appended to the body so
-// the status dashboard appears on every CodeCanary top-level review.
-func PostReview(repo string, prNumber int, result *ReviewResult, diff string, commitSHA string, summary ReviewSummary) error {
-	// Sort findings by severity before formatting.
+// fileComment is a file-level PR review comment, for POST
+// /repos/{owner}/{repo}/pulls/{n}/comments with subject_type "file". The
+// create-review endpoint's comments[] has no subject_type, so these are
+// posted one by one after the review.
+type fileComment struct {
+	Body        string `json:"body"`
+	CommitID    string `json:"commit_id"`
+	Path        string `json:"path"`
+	SubjectType string `json:"subject_type"`
+}
+
+// buildReviewPosts builds the review payload (body plus inline comments) and
+// the file-level comments for a review, without touching the network. Every
+// finding goes where anchorFinding puts it — against the same files and diff
+// validateFindings used — so each one gets a thread carrying its finding
+// marker. Findings anchorFinding would drop are left out; validation has
+// already removed them.
+func buildReviewPosts(result *ReviewResult, prFiles []string, diff, commitSHA, notes string, summary ReviewSummary) (reviewPayload, []fileComment) {
 	sortFindings(result.Findings)
 
-	// Parse the diff to find valid line positions for inline comments.
+	files := fileSet(prFiles)
 	validLines := parseDiffLines(diff)
 
-	// A finding can be inlined if its file is in the diff and the nearest
-	// valid line is within a reasonable distance. Without a bound, findings
-	// about code far from the diff get silently snapped to unrelated lines.
-	canInline := func(f Finding) bool {
-		if f.File == "" || f.Line <= 0 {
-			return false
-		}
-		nearest := validLines.nearestLine(f.File, f.Line)
-		return nearest > 0 && abs(f.Line-nearest) <= MaxFindingProximity
-	}
-
 	comments := make([]reviewComment, 0)
+	var fileComments []fileComment
 	for _, f := range result.Findings {
-		if canInline(f) {
+		a := anchorFinding(f, files, validLines)
+		switch a.Kind {
+		case anchorLine:
 			comments = append(comments, reviewComment{
 				Path: f.File,
-				Line: validLines.nearestLine(f.File, f.Line),
+				Line: a.Line,
 				Body: FormatFindingComment(&f),
+			})
+		case anchorFile:
+			fileComments = append(fileComments, fileComment{
+				Body:        FormatFindingComment(&f),
+				CommitID:    commitSHA,
+				Path:        f.File,
+				SubjectType: "file",
 			})
 		}
 	}
 
-	body := withSummary(FormatReviewBody(result, canInline), summary)
-
-	payload := reviewPayload{
+	body := withSummary(FormatReviewBody(result, len(comments)+len(fileComments) > 0)+notes, summary)
+	return reviewPayload{
 		Event:    "COMMENT",
 		Body:     body,
 		Comments: comments,
 		CommitID: commitSHA,
-	}
+	}, fileComments
+}
+
+// PostReview posts a PR review using the GitHub API. Findings anchored to an
+// added line become inline comments in the review; findings in PR files with
+// no line to anchor to become file-level comments posted right after it. The
+// summary block is appended to the body so the status dashboard appears on
+// every CodeCanary top-level review.
+func PostReview(repo string, prNumber int, result *ReviewResult, prFiles []string, diff string, commitSHA, notes string, summary ReviewSummary) error {
+	payload, fileComments := buildReviewPosts(result, prFiles, diff, commitSHA, notes, summary)
 
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
@@ -308,8 +327,28 @@ func PostReview(repo string, prNumber int, result *ReviewResult, diff string, co
 	// No fallback — if this fails, the apiError carries stderr and response
 	// body so the caller surfaces full diagnostics for debugging.
 	apiPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, name, prNumber)
-	_, err = ghAPIPOST(apiPath, payloadJSON)
-	return err
+	if _, err := ghAPIPOST(apiPath, payloadJSON); err != nil {
+		return err
+	}
+
+	// A failed file-level comment would leave a finding counted as new with
+	// no thread, so it fails the run rather than being skipped silently.
+	commentsPath := fmt.Sprintf("repos/%s/%s/pulls/%d/comments", owner, name, prNumber)
+	var failed []string
+	for _, c := range fileComments {
+		cJSON, err := json.Marshal(c)
+		if err != nil {
+			return fmt.Errorf("marshaling file comment payload: %w", err)
+		}
+		if _, err := ghAPIPOST(commentsPath, cJSON); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: could not post file-level comment on %s: %v\n", c.Path, err)
+			failed = append(failed, c.Path)
+		}
+	}
+	if len(failed) > 0 {
+		return fmt.Errorf("posting %d file-level comment(s) failed: %s", len(failed), strings.Join(failed, ", "))
+	}
+	return nil
 }
 
 // ReviewCommitStatusContext is the commit-status context the review bot
@@ -488,6 +527,15 @@ func FetchReviewThreads(repo string, prNumber int) ([]ReviewThread, error) {
 		line := comment.Line
 		if comment.Outdated && line == 0 && comment.OriginalLine > 0 {
 			line = comment.OriginalLine
+		}
+		// File-level comments (subject_type "file") have no line on GitHub.
+		// Fall back to the line the finding named, so triage snippets and
+		// prompts point at the code the finding is about. Stays 0 when the
+		// finding named none either.
+		if line == 0 && comment.OriginalLine == 0 {
+			if f, ok := findingFromEmbeddedJSON(comment.Body); ok && f.Line > 0 {
+				line = f.Line
+			}
 		}
 
 		threads = append(threads, ReviewThread{
@@ -761,27 +809,93 @@ func ScopeDiffToFiles(diff string, allowedFiles map[string]bool) string {
 	return strings.Join(result, "\n")
 }
 
-// validSHA matches a full-length lowercase hex Git SHA.
-var validSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
+// historyDeepenSteps are the --deepen amounts tried, in order, when a shallow
+// CI clone does not reach the merge-base of the PR and its base branch. The
+// first entry is also the --depth used for the initial fetches.
+var historyDeepenSteps = []int{100, 500, 2000}
 
-// GetIncrementalDiff gets the diff since a given SHA.
-func GetIncrementalDiff(baseSHA string) (string, error) {
-	if !validSHA.MatchString(baseSHA) {
-		return "", fmt.Errorf("invalid SHA format: %q", baseSHA)
+// fetchIncrementalHistory makes sure the clone has what IncrementalDiff needs
+// after a rebase or force-push: the previously reviewed commit (fetched by
+// SHA, which GitHub serves even once no branch points at it) and the base
+// branch with enough history to compute merge-bases. All steps are
+// best-effort; failures are logged and IncrementalDiff reports the missing
+// piece so the caller falls back to the full PR diff.
+//
+// Returns the base ref to compute merge-bases against, or "" when it is not
+// needed (linear history) or could not be fetched.
+func fetchIncrementalHistory(previousSHA, baseBranch string) string {
+	if !validSHA.MatchString(previousSHA) {
+		return ""
 	}
-	out, err := exec.Command("git", "diff", baseSHA+"..HEAD").Output()
-	if err != nil {
-		return "", fmt.Errorf("git diff: %w", err)
+	shallow := isShallowRepo()
+	depthArgs := func(arg string, n int) []string {
+		// Never pass --depth/--deepen to a full clone: it would make it shallow.
+		if !shallow {
+			return nil
+		}
+		return []string{fmt.Sprintf("%s=%d", arg, n)}
 	}
-	return string(out), nil
+
+	if !commitExists(previousSHA) {
+		fmt.Fprintf(os.Stderr, "Previous review commit %s not in clone (likely force-pushed); fetching it\n", shortSHA(previousSHA))
+		args := append([]string{"fetch", "--no-tags"}, depthArgs("--depth", historyDeepenSteps[0])...)
+		if _, err := gitOutput(append(args, "origin", previousSHA)...); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not fetch previous review commit: %v\n", err)
+			return ""
+		}
+	}
+	if linear, err := isAncestor(previousSHA, "HEAD"); err != nil || linear {
+		return ""
+	}
+	if baseBranch == "" {
+		return ""
+	}
+
+	baseRef := "refs/remotes/origin/" + baseBranch
+	refspec := "+refs/heads/" + baseBranch + ":" + baseRef
+	args := append([]string{"fetch", "--no-tags"}, depthArgs("--depth", historyDeepenSteps[0])...)
+	if _, err := gitOutput(append(args, "origin", refspec)...); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not fetch base branch %s: %v\n", baseBranch, err)
+		return ""
+	}
+	if !shallow {
+		return baseRef
+	}
+
+	// Shallow clone: deepen until both sides reach their merge-base with the base branch.
+	for _, n := range historyDeepenSteps {
+		if _, err := mergeBase(previousSHA, baseRef); err == nil {
+			if _, err := mergeBase("HEAD", baseRef); err == nil {
+				return baseRef
+			}
+		}
+		head, err := HeadSHA()
+		if err != nil {
+			break
+		}
+		args := append([]string{"fetch", "--no-tags"}, depthArgs("--deepen", n)...)
+		if _, err := gitOutput(append(args, "origin", previousSHA, head, refspec)...); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not deepen history: %v\n", err)
+			break
+		}
+	}
+	// The final deepen is not re-checked here; IncrementalDiff reports a
+	// merge-base that is still missing.
+	return baseRef
+}
+
+// isShallowRepo reports whether the working repository is a shallow clone.
+func isShallowRepo() bool {
+	out, err := gitOutput("rev-parse", "--is-shallow-repository")
+	return err == nil && strings.TrimSpace(out) == "true"
 }
 
 // PostCleanReview posts a review when the first review finds no issues. The
 // commitSHA is embedded in a hidden marker so future runs treat it as the
 // baseline for incremental reviews, avoiding a redundant full re-review on the
 // next push.
-func PostCleanReview(repo string, prNumber int, commitSHA string, summary ReviewSummary) error {
-	return postSimpleReview(repo, prNumber, buildCleanReviewBody(commitSHA, summary))
+func PostCleanReview(repo string, prNumber int, commitSHA, notes string, summary ReviewSummary) error {
+	return postSimpleReview(repo, prNumber, buildCleanReviewBody(commitSHA, notes, summary))
 }
 
 // PostAllClearReview posts a review when all previous findings have been
@@ -789,41 +903,44 @@ func PostCleanReview(repo string, prNumber int, commitSHA string, summary Review
 // visible old reviews. The commitSHA is embedded in a hidden marker so future
 // runs treat it as the baseline for incremental reviews; without it, the next
 // push would fall back to reviewing the entire PR again.
-func PostAllClearReview(repo string, prNumber int, commitSHA string, minimizeFailed bool, summary ReviewSummary) error {
-	return postSimpleReview(repo, prNumber, buildAllClearReviewBody(commitSHA, minimizeFailed, summary))
+func PostAllClearReview(repo string, prNumber int, commitSHA string, minimizeFailed bool, notes string, summary ReviewSummary) error {
+	return postSimpleReview(repo, prNumber, buildAllClearReviewBody(commitSHA, minimizeFailed, notes, summary))
 }
 
 // PostActivityReview posts a review when no new findings were raised but
 // there is cycle activity worth surfacing (dismissals, acknowledgments,
 // rebuttals, still-open threads). This keeps every commit push producing a
 // visible top-level status comment instead of silently logging.
-func PostActivityReview(repo string, prNumber int, commitSHA string, summary ReviewSummary) error {
-	return postSimpleReview(repo, prNumber, buildActivityReviewBody(commitSHA, summary))
+func PostActivityReview(repo string, prNumber int, commitSHA, notes string, summary ReviewSummary) error {
+	return postSimpleReview(repo, prNumber, buildActivityReviewBody(commitSHA, notes, summary))
 }
+
+// notes is optional Markdown appended to the body of the simple reviews
+// below (e.g. the open-questions section, the update notice); pass "" for none.
 
 // buildCleanReviewBody renders the full Markdown body posted by
 // PostCleanReview. Split out from the poster so tests can assert the exact
 // string that lands on GitHub without having to mock gh.
-func buildCleanReviewBody(commitSHA string, summary ReviewSummary) string {
-	return withSummary("CodeCanary reviewed this PR \u2014 no issues found.", summary) + embedBaselineMarker(commitSHA)
+func buildCleanReviewBody(commitSHA, notes string, summary ReviewSummary) string {
+	return withSummary("CodeCanary reviewed this PR \u2014 no issues found."+notes, summary) + embedBaselineMarker(commitSHA)
 }
 
 // buildAllClearReviewBody renders the full Markdown body posted by
 // PostAllClearReview. Split out for the same reason as buildCleanReviewBody.
-func buildAllClearReviewBody(commitSHA string, minimizeFailed bool, summary ReviewSummary) string {
+func buildAllClearReviewBody(commitSHA string, minimizeFailed bool, notes string, summary ReviewSummary) string {
 	body := "## \U0001F425 CodeCanary\n\n\u2705 All previous findings have been addressed. No new issues found. \u2728"
 	if minimizeFailed {
 		body += "\n\n> \u26A0\uFE0F Some previous review comments could not be minimized and may still be visible."
 	}
-	return withSummary(body, summary) + embedBaselineMarker(commitSHA)
+	return withSummary(body+notes, summary) + embedBaselineMarker(commitSHA)
 }
 
 // buildActivityReviewBody renders the body for a commit push that raised no
 // new findings but has cycle activity (dismissals/acknowledgments/rebuttals
 // or still-open threads carried forward).
-func buildActivityReviewBody(commitSHA string, summary ReviewSummary) string {
+func buildActivityReviewBody(commitSHA, notes string, summary ReviewSummary) string {
 	body := "## \U0001F425 CodeCanary\n\nReviewed this push \u2014 no new issues found."
-	return withSummary(body, summary) + embedBaselineMarker(commitSHA)
+	return withSummary(body+notes, summary) + embedBaselineMarker(commitSHA)
 }
 
 // withSummary appends the status summary block to a review body. The block
@@ -1197,58 +1314,6 @@ func MinimizeComment(nodeID string) error {
 		return fmt.Errorf("gh api graphql minimize: %w\n%s", err, string(out))
 	}
 	return nil
-}
-
-// FetchFileContents reads the full contents of changed files from disk.
-// It skips files that are too large, binary, deleted, or match ignore patterns.
-// Returns a map of path->content and a list of skipped file paths.
-func FetchFileContents(files []string, ignorePatterns []string, maxPerFile, maxTotal int) (map[string]string, []string) {
-	contents := make(map[string]string)
-	var skipped []string
-	totalSize := 0
-
-	for _, path := range files {
-		// Check ignore patterns.
-		if matchesIgnore(path, ignorePatterns) {
-			skipped = append(skipped, path)
-			continue
-		}
-
-		data, err := os.ReadFile(path)
-		if err != nil {
-			// File may have been deleted in this PR — skip gracefully.
-			continue
-		}
-
-		// Skip binary files (null bytes in first 512 bytes).
-		peek := data
-		if len(peek) > 512 {
-			peek = peek[:512]
-		}
-		if bytes.ContainsRune(peek, 0) {
-			skipped = append(skipped, path)
-			continue
-		}
-
-		size := len(data)
-
-		// Skip files exceeding per-file limit.
-		if size > maxPerFile {
-			skipped = append(skipped, path)
-			continue
-		}
-
-		// Stop if total budget would be exceeded.
-		if totalSize+size > maxTotal {
-			skipped = append(skipped, path)
-			continue
-		}
-
-		contents[path] = string(data)
-		totalSize += size
-	}
-
-	return contents, skipped
 }
 
 // isSetupPR detects whether this is the initial setup PR.

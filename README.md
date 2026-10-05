@@ -79,12 +79,16 @@ This runs the same provider and key selection, then:
 
 Once merged, CodeCanary reviews every PR on open and push. Draft PRs are skipped by default.
 
+**Keeping the workflow current.** The workflow file is yours to customize, so it doesn't update itself. Its `# codecanary-workflow: v<N>` line records which template it came from; when a newer template ships, the bot adds a one-line note to its reviews. Re-run `codecanary setup github` (it asks before overwriting) or copy the changes from [the template](internal/setup/codecanary.yml), keeping the marker line. The same kind of note appears when the workflow pins an old `codecanary_version`.
+
 ### Gating merges on clean reviews
 
 CodeCanary can block merges until a review comes back clean. After every review, the bot (and the local `codecanary signoff` command) posts a GitHub commit status under the context `CodeCanary / review`:
 
-- `success` — no unresolved findings (everything is either unraised, fixed by code, or handled by the author)
-- `failure` — one or more findings remain unresolved, with a description like `"3 unresolved findings"`
+- `success` — no unresolved blocking findings (everything is either unraised, fixed by code, handled by the author, or below `warning`)
+- `failure` — one or more findings at `warning` or above remain unresolved, with a description like `"3 unresolved blocking findings"`
+
+Suggestions and nitpicks are still posted on the PR but don't fail the status (its description reads like `"2 non-blocking findings open"`), so they never force another push.
 
 To turn this into a required check, add `CodeCanary / review` to your repo's required status checks via whichever branch protection mechanism you use (rulesets, classic branch protection rules, etc.). GitHub accepts any context name; if a review has already run, it will also show up in autocomplete.
 
@@ -137,8 +141,8 @@ CodeCanary uses `.codecanary/config.yml` in your repo. The `provider` field is r
 ```yaml
 version: 1
 provider: anthropic
-review_model: claude-sonnet-4-6
-triage_model: claude-haiku-4-5-20251001
+review_model: claude-sonnet-5-5
+triage_model: claude-haiku-4-5
 ```
 
 ### Config with rules and context
@@ -146,8 +150,8 @@ triage_model: claude-haiku-4-5-20251001
 ```yaml
 version: 1
 provider: anthropic
-review_model: claude-sonnet-4-6
-triage_model: claude-haiku-4-5-20251001
+review_model: claude-sonnet-5-5
+triage_model: claude-haiku-4-5
 
 context: |
   Go REST API using chi router. Tests use testify.
@@ -201,7 +205,7 @@ triage_model: grok-4-1-fast-non-reasoning
 ```yaml
 version: 1
 provider: claude
-review_model: claude-sonnet-4-6
+review_model: claude-sonnet-5-5
 triage_model: haiku
 ```
 
@@ -270,7 +274,7 @@ Install the skill once:
 codecanary install-skill
 ```
 
-This writes the embedded skill to `~/.claude/skills/codecanary-fix/SKILL.md`, where Claude Code discovers it in every session. Re-run the command after `codecanary upgrade` to pick up new versions.
+This writes the embedded skill to `~/.claude/skills/codecanary-fix/SKILL.md`, where Claude Code discovers it in every session. `codecanary upgrade` offers to refresh it when the embedded copy changes; otherwise run `codecanary install-skill --force`. The skill also tells you at startup when a newer codecanary release is out or the installed skill is stale (via the `version`, `update_available`, and `skill.stale` fields of `codecanary mode --output json`).
 
 Then in Claude Code, ask it to `handle codecanary` on your PR (or invoke `/codecanary-fix` directly) — the skill is auto-discovered and matched to your request via its frontmatter description. Two modes:
 

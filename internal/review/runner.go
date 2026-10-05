@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 
@@ -14,17 +15,45 @@ import (
 
 // RunOptions configures a review run.
 type RunOptions struct {
-	Repo       string
-	PRNumber   int
-	ConfigPath string
-	Output     string // "markdown" or "json"
-	Post       bool
-	DryRun     bool
-	ReplyOnly  bool           // evaluate thread replies only, skip new findings
-	ClaudePath string         // override claude CLI binary path (overrides config claude_path)
-	Version    string         // binary version (for telemetry)
-	PR         *PRData        // pre-fetched PRData (used in local mode)
-	Platform   ReviewPlatform // environment adapter (GitHub or local)
+	Repo           string
+	PRNumber       int
+	ConfigPath     string
+	Output         string // "markdown" or "json"
+	Post           bool
+	DryRun         bool
+	ReplyOnly      bool           // evaluate thread replies only, skip new findings
+	ClaudePath     string         // override claude CLI binary path (overrides config claude_path)
+	FailOnSeverity string         // non-zero exit when findings at or above this severity exist
+	Version        string         // binary version (for telemetry)
+	PR             *PRData        // pre-fetched PRData (used in local mode)
+	Platform       ReviewPlatform // environment adapter (GitHub or local)
+}
+
+// FailOnSeverityError is returned when --fail-on is set and findings at or
+// above the given severity threshold are found. It is a distinct type so
+// callers can detect it via errors.As.
+type FailOnSeverityError struct {
+	Severity string
+	Count    int
+}
+
+func (e *FailOnSeverityError) Error() string {
+	return fmt.Sprintf("found %d finding(s) at or above severity %q (--fail-on %s)", e.Count, e.Severity, e.Severity)
+}
+
+// countAtOrAboveSeverity counts the findings that meet or exceed a severity
+// threshold. It spans both new findings and the ones still open from previous
+// reviews: a run that raises nothing new but leaves unresolved findings above
+// the threshold is exactly the state --fail-on exists to catch.
+func countAtOrAboveSeverity(result *ReviewResult, severity string) int {
+	threshold := severityOrder(severity)
+	var count int
+	for _, f := range slices.Concat(result.Findings, result.StillOpen) {
+		if severityOrder(f.Severity) <= threshold {
+			count++
+		}
+	}
+	return count
 }
 
 // allowedEnvPrefixes lists environment variable prefixes passed to the LLM subprocess.
@@ -95,10 +124,12 @@ type reviewContext struct {
 	ProjectDocs map[string]string
 	Env         []string
 	Tracker     *UsageTracker
+	Coverage    *ReviewCoverage // files the prompt does not show in full
 }
 
 // prepareReview loads config, project docs, file contents, and resolves the
-// Claude environment. Both the PR and local paths use this.
+// Claude environment. It also scopes pr.Diff for the prompt and records in
+// Coverage which files the prompt does not show in full. Both the PR and local paths use this.
 func prepareReview(pr *PRData, configPath string) (*reviewContext, error) {
 	cfg, err := loadReviewConfig(configPath)
 	if err != nil {
@@ -110,87 +141,46 @@ func prepareReview(pr *PRData, configPath string) (*reviewContext, error) {
 		fmt.Fprintf(os.Stderr, "Loaded %d project doc(s) for review context\n", len(projectDocs))
 	}
 
-	fileContents, skippedFiles := FetchFileContents(pr.Files, cfg.Ignore, cfg.EffectiveMaxFileSize(), cfg.EffectiveMaxTotalSize())
-	pr.FileContents = fileContents
-	if len(skippedFiles) > 0 {
-		fmt.Fprintf(os.Stderr, "Skipped %d large/ignored files: %s\n", len(skippedFiles), strings.Join(skippedFiles, ", "))
-
-		// Preserve the unfiltered diff for finding validation (line-number
-		// checks must run against the full PR diff), then strip skipped-file
-		// hunks from the diff/files that are sent to the LLM prompt.
-		if pr.FullDiff == "" {
-			pr.FullDiff = pr.Diff
-		}
-
-		skippedSet := make(map[string]bool, len(skippedFiles))
-		for _, f := range skippedFiles {
-			skippedSet[f] = true
-		}
-		allowedFiles := make(map[string]bool, len(pr.Files))
-		filtered := make([]string, 0, len(pr.Files))
-		for _, f := range pr.Files {
-			if !skippedSet[f] {
-				allowedFiles[f] = true
-				filtered = append(filtered, f)
-			}
-		}
-		pr.Files = filtered
-		pr.Diff = ScopeDiffToFiles(pr.Diff, allowedFiles)
-	}
+	fc := FetchFileContents(pr.Files, cfg.Ignore, cfg.EffectiveMaxFileSize(), cfg.EffectiveMaxTotalSize())
+	coverage := scopePRForPrompt(pr, fc, cfg.EffectiveMaxDiffSize())
 
 	return &reviewContext{
 		Config:      cfg,
 		ProjectDocs: projectDocs,
 		Env:         resolveEnv(),
 		Tracker:     &UsageTracker{},
+		Coverage:    coverage,
 	}, nil
 }
 
-// validateFindings filters findings to PR files, validates line proximity
-// against the PR diff, and removes non-actionable findings.
+// validateFindings keeps the findings that can be posted as a review thread
+// (see anchorFinding) and removes non-actionable ones.
 //
 // prDiff is always the PR diff (base..head from GitHub or merge-base diff
 // locally) — never the incremental diff. This ensures findings are scoped to
 // the PR's own changes regardless of what diff the LLM prompt contained,
-// filtering out rebase noise and hallucinated line numbers.
+// filtering out rebase noise and hallucinated line numbers. PostReview anchors
+// against the same diff and file list, so whatever survives here is posted.
 func validateFindings(findings []Finding, prFiles []string, prDiff string) []Finding {
-	fileSet := make(map[string]bool, len(prFiles))
-	for _, f := range prFiles {
-		fileSet[f] = true
-	}
+	files := fileSet(prFiles)
 	validLines := parseDiffLines(prDiff)
 
-	var filtered []Finding
+	var anchored []Finding
 	for _, f := range findings {
-		if f.File == "" || fileSet[f.File] {
-			filtered = append(filtered, f)
-		} else {
-			fmt.Fprintf(os.Stderr, "Dropped finding on file outside PR: %s\n", f.File)
-		}
-	}
-
-	// Validate line proximity: drop findings whose line is too far from any
-	// changed line in the PR diff. This keeps findings anchored to the PR's
-	// actual changes — preventing scope creep, filtering rebase noise, and
-	// catching hallucinated line numbers.
-	var lineValid []Finding
-	for _, f := range filtered {
-		if f.File == "" || f.Line <= 0 {
-			lineValid = append(lineValid, f)
+		if anchorFinding(f, files, validLines).Kind != anchorNone {
+			anchored = append(anchored, f)
 			continue
 		}
-		nearest := validLines.nearestLine(f.File, f.Line)
-		if nearest == 0 {
-			// File has no changed lines in the diff (e.g. mode-only change,
-			// binary file, pure deletion). Pass through — we can't validate.
-			lineValid = append(lineValid, f)
-		} else if abs(f.Line-nearest) <= MaxFindingProximity {
-			lineValid = append(lineValid, f)
-		} else {
+		switch {
+		case f.File == "":
+			fmt.Fprintf(os.Stderr, "Dropped finding with no file: %s\n", f.ID)
+		case !files[f.File]:
+			fmt.Fprintf(os.Stderr, "Dropped finding on file outside PR: %s\n", f.File)
+		default:
 			fmt.Fprintf(os.Stderr, "Dropped finding outside PR scope: %s (%s:%d)\n", f.ID, f.File, f.Line)
 		}
 	}
-	return FilterNonActionable(lineValid)
+	return FilterNonActionable(anchored)
 }
 
 // processFindings parses Claude's output, validates findings against the PR
@@ -365,6 +355,7 @@ func Run(opts RunOptions) error {
 	var prompt string
 	var fixed []fixedThread
 	var stillOpenFindings []Finding
+	var incrementalDiff string
 	// A previous SHA alone is enough to enter the incremental path. When
 	// previous findings were all resolved (reviewThreads empty), we still
 	// want to scope the next review to commits since that baseline instead
@@ -372,7 +363,7 @@ func Run(opts RunOptions) error {
 	isIncremental := previousSHA != ""
 
 	if isIncremental {
-		prompt, fixed, stillOpenFindings = runTriage(
+		prompt, fixed, stillOpenFindings, incrementalDiff = runTriage(
 			pr, cfg, rctx.ProjectDocs, triageProvider, tracker, platform,
 			reviewThreads, previousSHA, startIndex, opts,
 		)
@@ -439,6 +430,18 @@ func Run(opts RunOptions) error {
 				findings = nil
 			}
 		}
+		if isIncremental {
+			findings = FilterLateFindings(findings, incrementalDiff)
+			known := make([]Finding, len(reviewThreads))
+			for i := range reviewThreads {
+				known[i] = threadFinding(platform, reviewThreads, i)
+			}
+			findings = FilterKnownDuplicates(findings, known)
+		}
+	}
+	findings, questions := SplitOpenQuestions(findings)
+	if len(questions) > 0 {
+		fmt.Fprintf(os.Stderr, "%d finding(s) need verification — listed as open questions, not threads\n", len(questions))
 	}
 
 	// 8. Build result.
@@ -451,7 +454,11 @@ func Run(opts RunOptions) error {
 		Repo:      opts.Repo,
 		Findings:  findings,
 		StillOpen: stillOpenFindings,
+		Questions: questions,
 		SHA:       headSHA,
+	}
+	if !rctx.Coverage.IsEmpty() {
+		result.Coverage = rctx.Coverage
 	}
 
 	// 9. Publish results via the platform adapter.
@@ -477,6 +484,15 @@ func Run(opts RunOptions) error {
 	filesChanged := len(FilesFromDiff(prDiffForSize))
 	tracker.SetPRSize(linesAdded, linesRemoved, filesChanged)
 	platform.ReportUsage(tracker)
+
+	// 11b. --fail-on: compute whether findings meet the severity threshold.
+	// Deferred until after telemetry so that failing runs still emit usage data.
+	var failOnErr error
+	if opts.FailOnSeverity != "" {
+		if count := countAtOrAboveSeverity(result, opts.FailOnSeverity); count > 0 {
+			failOnErr = &FailOnSeverityError{Severity: opts.FailOnSeverity, Count: count}
+		}
+	}
 
 	// 12. Anonymous telemetry (fire-and-forget).
 	if !opts.DryRun && telemetry.Enabled() {
@@ -519,18 +535,19 @@ func Run(opts RunOptions) error {
 		})
 	}
 
-	return nil
+	return failOnErr
 }
 
 // runTriage handles the incremental review: classify previous threads, evaluate
 // via LLM, handle resolutions, and build the incremental prompt.
-// Returns the prompt, fixed threads, and still-open findings.
+// Returns the prompt, fixed threads, still-open findings, and the incremental
+// diff the prompt reviewed ("" when it fell back to the full PR diff).
 func runTriage(
 	pr *PRData, cfg *ReviewConfig, projectDocs map[string]string,
 	triageProvider ModelProvider, tracker *UsageTracker, platform ReviewPlatform,
 	reviewThreads []ReviewThread, previousSHA string, startIndex int,
 	opts RunOptions,
-) (string, []fixedThread, []Finding) {
+) (string, []fixedThread, []Finding, string) {
 	if len(reviewThreads) > 0 {
 		Stderrf(ansiBold, "Re-evaluating %d unresolved thread(s) (base %s)...\n", len(reviewThreads), shortSHA(previousSHA))
 	} else {
@@ -538,11 +555,12 @@ func runTriage(
 	}
 
 	// Try to compute an incremental diff (only changes since last review).
-	// This produces a smaller prompt when available. If it fails (e.g. shallow
-	// clone missing the previous SHA), we fall back to the full PR diff.
-	incrementalDiff, diffErr := platform.GetIncrementalDiff(previousSHA, pr.Files)
+	// This produces a smaller prompt when available. If it fails (e.g. the
+	// previous SHA or a merge-base cannot be fetched), we fall back to the
+	// full PR diff.
+	incrementalDiff, diffErr := platform.GetIncrementalDiff(previousSHA, pr)
 	if diffErr != nil {
-		fmt.Fprintf(os.Stderr, "Could not compute incremental diff, will use full PR diff for reevaluation\n")
+		fmt.Fprintf(os.Stderr, "Could not compute incremental diff (%v), will use full PR diff for reevaluation\n", diffErr)
 	} else {
 		allowed := make(map[string]bool, len(pr.Files))
 		for _, f := range pr.Files {
@@ -606,7 +624,7 @@ func runTriage(
 	}
 
 	if opts.ReplyOnly {
-		return "", fixed, nil
+		return "", fixed, nil, ""
 	}
 
 	// Phase 2: Build review prompt for new findings.
@@ -626,16 +644,7 @@ func runTriage(
 			continue
 		}
 		unresolved = append(unresolved, t)
-		// Use original finding from local state when available (lossless).
-		// Fall back to FindingFromThread for GitHub mode (has embedded JSON).
-		if lp, ok := platform.(*LocalPlatform); ok {
-			if f, ok := lp.SavedFinding(i); ok {
-				f.Status = "still open"
-				stillOpenFindings = append(stillOpenFindings, f)
-				continue
-			}
-		}
-		stillOpenFindings = append(stillOpenFindings, FindingFromThread(t))
+		stillOpenFindings = append(stillOpenFindings, threadFinding(platform, reviewThreads, i))
 	}
 
 	// Build resolved context for the incremental review prompt (anti-ping-pong).
@@ -660,15 +669,7 @@ func runTriage(
 			continue
 		}
 		t := reviewThreads[f.Index]
-		var finding Finding
-		if lp, ok := platform.(*LocalPlatform); ok {
-			if saved, ok := lp.SavedFinding(f.Index); ok {
-				finding = saved
-			}
-		}
-		if finding.Title == "" && finding.Description == "" {
-			finding = FindingFromThread(t)
-		}
+		finding := threadFinding(platform, reviewThreads, f.Index)
 		title := finding.Title
 		if title == "" {
 			title = t.Body
@@ -705,7 +706,7 @@ func runTriage(
 	} else if strings.TrimSpace(incrementalDiff) == "" {
 		// No new changes — return previous findings as still-open.
 		Stderrf(ansiGreen, "No new changes since last review\n")
-		return "", fixed, stillOpenFindings
+		return "", fixed, stillOpenFindings, ""
 	} else {
 		incFiles := FilesFromDiff(incrementalDiff)
 		incContents := make(map[string]string, len(incFiles))
@@ -722,7 +723,23 @@ func runTriage(
 		prompt = BuildIncrementalPrompt(incrementalDiff, cfg, unresolved, opts.PRNumber, startIndex, incContents, incFiles, resolvedCtx, projectDocs)
 	}
 
-	return prompt, fixed, stillOpenFindings
+	if diffErr != nil {
+		return prompt, fixed, stillOpenFindings, ""
+	}
+	return prompt, fixed, stillOpenFindings, incrementalDiff
+}
+
+// threadFinding returns the finding behind threads[i], marked "still open".
+// Local state keeps the original finding losslessly; GitHub threads carry it
+// in their embedded JSON marker, which FindingFromThread reads.
+func threadFinding(platform ReviewPlatform, threads []ReviewThread, i int) Finding {
+	if lp, ok := platform.(*LocalPlatform); ok {
+		if f, ok := lp.SavedFinding(i); ok && (f.Title != "" || f.Description != "") {
+			f.Status = "still open"
+			return f
+		}
+	}
+	return FindingFromThread(threads[i])
 }
 
 // loadReviewConfig loads the review config from the given path, or

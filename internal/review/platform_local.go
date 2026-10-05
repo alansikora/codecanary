@@ -69,14 +69,16 @@ func (l *LocalPlatform) SaveState(result *ReviewResult, stillOpen []Finding, _ b
 	return nil
 }
 
-func (l *LocalPlatform) GetIncrementalDiff(baseSHA string, prFiles []string) (string, error) {
-	diff, err := GetIncrementalDiff(baseSHA)
+func (l *LocalPlatform) GetIncrementalDiff(previousSHA string, pr *PRData) (string, error) {
+	// Local clones have full history; the base branch is the local ref the
+	// branch diff was computed against.
+	diff, err := IncrementalDiff(previousSHA, pr.BaseBranch)
 	if err != nil {
 		return "", err
 	}
 
 	// Always include uncommitted changes in local mode.
-	return appendWorkingTreeDiff(diff, prFiles)
+	return appendWorkingTreeDiff(diff, pr.Files)
 }
 
 func (l *LocalPlatform) ReportUsage(tracker *UsageTracker) {

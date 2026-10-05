@@ -106,36 +106,7 @@ func BuildPrompt(pr *PRData, cfg *ReviewConfig, startIndex int, projectDocs map[
 	writeFencedBlock(&b, "diff", pr.Diff)
 	b.WriteString("\n")
 
-	// Output format instructions.
-	b.WriteString("## Output Format\n")
-	b.WriteString("Return your findings as a JSON array inside a ```json code fence. Each finding must have these fields:\n\n")
-	b.WriteString("- `id` (string): The rule ID that was violated, or a short kebab-case identifier for general findings.\n")
-	b.WriteString("- `file` (string): The file path where the issue was found. **Must be one of the exact paths listed in \"Files in This Diff\" above.** If a file path does not appear in that list, do NOT reference it. If your finding relates to a file not in the diff (e.g. a downstream consequence), set `file` and `line` to the diff location that triggers the issue and mention the affected file in `description`.\n")
-	b.WriteString("- `line` (int): The line number in the file. **Must be a line that was added or modified in the diff** (a `+` line in the diff hunk). If your finding is about a side effect on a distant line, set `line` to the diff line that *causes* the issue and describe the affected location in `description`.\n")
-	b.WriteString("- `severity` (string): One of \"critical\", \"bug\", \"warning\", \"suggestion\", or \"nitpick\".\n")
-	b.WriteString("  - \"critical\": Security vulnerabilities, data loss, crashes.\n")
-	b.WriteString("  - \"bug\": A logic error that causes incorrect runtime behavior for real inputs. Missing test coverage, unused parameters, typos in identifiers that happen to compile, or \"what if a future caller…\" concerns do NOT qualify — use \"suggestion\" or \"nitpick\" for those. If you cannot name the concrete input and the concrete wrong output, it is not a bug.\n")
-	b.WriteString("  - \"warning\": Potential issues, performance problems, code smells.\n")
-	b.WriteString("  - \"suggestion\": Better patterns, readability improvements.\n")
-	b.WriteString("  - \"nitpick\": Minor style, naming, formatting.\n")
-	b.WriteString("- `title` (string): A short title for the finding.\n")
-	b.WriteString("- `description` (string): A concise explanation of the issue — 2-3 sentences max. State what is wrong and why it matters. Do not repeat the code or walk through the logic step by step.\n")
-	b.WriteString("- `suggestion` (string, optional): A concise suggested fix — 1-2 sentences of prose, then a code block if helpful. Do not explain what the code block does. For suggestions about broader patterns or improvements beyond the current PR scope, recommend opening a separate PR — do not imply they should fix it here.\n")
-	first := startIndex + 1
-	fixRefPrefix := fmt.Sprintf("%d", pr.Number)
-	if pr.Number == 0 {
-		fixRefPrefix = "local"
-	}
-	fmt.Fprintf(&b, "- `fix_ref` (string): A reference ID in the format `%s-<index>` where index starts at %d (e.g. `%s-%d`, `%s-%d`).\n", fixRefPrefix, first, fixRefPrefix, first, fixRefPrefix, first+1)
-	b.WriteString("- `actionable` (boolean): Set to `false` if your analysis concludes the code is correct and no change is needed. Set to `true` if the finding requires the author to act. **Prefer returning an empty array over emitting findings with `actionable: false`.**\n")
-	b.WriteString("\n**IMPORTANT — JSON escaping:** When your description or suggestion references code containing backslash sequences (e.g. `\\n`, `\\t`, `\\\"`), you MUST double-escape the backslash in the JSON string value. For example, to mention `fmt.Print(\"\\n\")` in a JSON string, write `fmt.Print(\"\\\\n\")`. A single `\\n` in JSON is a newline character, not the literal text `\\n`.\n")
-	b.WriteString("\n**Do not include findings where your conclusion is that the code is correct or no action is needed.** If you evaluate something and determine it is fine, omit it entirely rather than reporting it. Specifically: if you begin analyzing a potential issue but then realize the code handles it correctly, do NOT emit a finding that walks through the concern and then concludes \"this is actually fine\" or \"no bug here\" — simply drop it. Every finding you emit must represent a real, actionable problem.\n")
-	b.WriteString("\n**Check against project documentation before emitting.** The \"Project Documentation\" section above defines conventions for this codebase (e.g. \"don't add error handling for scenarios that can't happen\", \"keep the core engine agnostic\"). Before emitting a finding, verify it does not contradict those conventions. If your suggested fix would violate a project-doc rule, drop the finding — the author has already made that tradeoff deliberately.\n")
-	b.WriteString("\n**Label uncertainty from external behavior.** If your finding's validity depends on the behavior of a third-party API, webhook payload shape, framework internal, or other system you cannot verify from the diff, file contents, and project docs above, you MUST (a) cap severity at \"suggestion\" and (b) state the assumption in `description` (e.g. \"Assumes `github.event.pull_request.number` is unset on `pull_request_review_comment` events — verify against GitHub's webhook docs before acting.\"). A finding that asserts external behavior as fact without this label is a false-positive risk.\n")
-	b.WriteString("\n**CRITICAL: Do NOT invent or hallucinate file paths, function names, or code that does not appear in the diff or the provided file contents. If a file or function is not shown above, do not reference it.**\n")
-	b.WriteString("\nIf there are no findings, return an empty array: `[]`.\n")
-	b.WriteString("\nExample:\n```json\n[\n  {\n    \"id\": \"rule-id\",\n    \"file\": \"src/main.go\",\n    \"line\": 42,\n    \"severity\": \"warning\",\n    \"title\": \"Short title\",\n    \"description\": \"The value is used after the error check, so a non-nil error silently proceeds with stale data.\",\n    \"suggestion\": \"Return early on error.\\n\\n```go\\nif err != nil {\\n    return err\\n}\\n```\",\n")
-	fmt.Fprintf(&b, "    \"fix_ref\": \"%s-%d\",\n    \"actionable\": true\n  }\n]\n```\n", fixRefPrefix, first)
+	writeOutputFormat(&b, pr.Number, startIndex, false)
 
 	return b.String()
 }
@@ -156,49 +127,6 @@ type ResolvedContext struct {
 	Suggestion  string
 	Reason      string // "code_change", "dismissed", "acknowledged", "rebutted"
 	Rationale   string
-}
-
-// Deprecated: BuildReevaluatePrompt is replaced by per-thread evaluation in triage.go.
-// Kept temporarily for reference; will be removed in a future release.
-func BuildReevaluatePrompt(threads []ReviewThread, incrementalDiff string) string {
-	var b strings.Builder
-
-	b.WriteString("You are a code reviewer. You previously left findings on a pull request. The author has pushed new changes.\n\n")
-	b.WriteString("## Previous Findings\n")
-	b.WriteString("Here are the unresolved findings from previous reviews:\n\n")
-
-	for i, t := range threads {
-		fmt.Fprintf(&b, "- **thread-%d** at `%s:%d`\n", i, t.Path, t.Line)
-		// Extract the first line of the body as the severity+rule summary.
-		firstLine := t.Body
-		if idx := strings.Index(t.Body, "\n"); idx >= 0 {
-			firstLine = t.Body[:idx]
-		}
-		fmt.Fprintf(&b, "  %s\n", firstLine)
-		for _, r := range t.Replies {
-			normalizedBody := strings.ReplaceAll(r.Body, "\n", " ")
-			fmt.Fprintf(&b, "  > **@%s** replied: %s\n", r.Author, normalizedBody)
-		}
-	}
-
-	b.WriteString("\n## Changes Since Last Review\n")
-	writeFencedBlock(&b, "diff", incrementalDiff)
-	b.WriteString("\n")
-
-	b.WriteString("## Task\n")
-	b.WriteString("Determine which of the previous findings should be resolved.\n\n")
-	b.WriteString("A finding should be resolved if ANY of the following apply:\n")
-	b.WriteString("1. **Fixed by code changes** — the new diff addresses the issue.\n")
-	b.WriteString("2. **Dismissed by the author** — a human reply explicitly asks the reviewer to dismiss, ignore, or skip the finding (e.g. \"dismiss this\", \"you can safely dismiss\", \"please ignore\", \"skip this one\"). The author is exercising their authority to close the thread.\n")
-	b.WriteString("3. **Acknowledged by the author** — a human reply indicates the finding is intentional, accepted as-is, or will be addressed separately (e.g. \"that's fine\", \"intentional\", \"will fix in a future PR\", \"tracked in issue #N\").\n")
-	b.WriteString("4. **Rebutted by the author** — a human reply provides a concrete technical explanation showing the finding is not applicable, the concern is mitigated, or the tradeoff is justified in this context (e.g. the behaviour cannot occur due to framework semantics, the impact is negligible because of how the system is configured, or a project convention makes the approach intentional). A vague disagreement like \"I don't think so\" does NOT qualify — the reply must cite specific technical details, framework behaviour, or project constraints.\n\n")
-	b.WriteString("A reply that merely asks a question or expresses disagreement without substantive technical reasoning should NOT count.\n\n")
-	b.WriteString("Return a JSON array of objects for findings that should be resolved inside a ```json code fence.\n")
-	b.WriteString("Each object must have `thread` (the thread ID) and `reason` (one of `code_change`, `dismissed`, `acknowledged`, or `rebutted`).\n")
-	b.WriteString("If none should be resolved, return an empty array: `[]`.\n\n")
-	b.WriteString("Example:\n```json\n[{\"thread\": \"thread-0\", \"reason\": \"code_change\"}, {\"thread\": \"thread-1\", \"reason\": \"dismissed\"}, {\"thread\": \"thread-2\", \"reason\": \"rebutted\"}]\n```\n")
-
-	return b.String()
 }
 
 // BuildIncrementalPrompt reviews only new code, avoiding duplicate reports.
@@ -242,15 +170,7 @@ func BuildIncrementalPrompt(diff string, cfg *ReviewConfig, knownIssues []Review
 		b.WriteString("\n")
 	}
 
-	// Known issues to avoid duplicating.
-	if len(knownIssues) > 0 {
-		b.WriteString("## Known Issues (DO NOT DUPLICATE)\n")
-		b.WriteString("These issues are already reported and unresolved. Do NOT report them again:\n\n")
-		for _, t := range knownIssues {
-			fmt.Fprintf(&b, "- `%s:%d`\n", t.Path, t.Line)
-		}
-		b.WriteString("\n")
-	}
+	writeKnownIssuesSection(&b, knownIssues)
 
 	// Recently resolved issues — anti-ping-pong context.
 	if len(resolved) > 0 {
@@ -306,36 +226,7 @@ func BuildIncrementalPrompt(diff string, cfg *ReviewConfig, knownIssues []Review
 	writeFencedBlock(&b, "diff", diff)
 	b.WriteString("\n")
 
-	// Output format instructions.
-	b.WriteString("## Output Format\n")
-	b.WriteString("Return your findings as a JSON array inside a ```json code fence. Each finding must have these fields:\n\n")
-	b.WriteString("- `id` (string): The rule ID that was violated, or a short kebab-case identifier for general findings.\n")
-	b.WriteString("- `file` (string): The file path where the issue was found. **Must be one of the exact paths listed in \"Files in This Diff\" above.** If a file path does not appear in that list, do NOT reference it. If your finding relates to a downstream file not in the diff, set `file` and `line` to the diff location that triggers the issue and mention the affected file in `description`.\n")
-	b.WriteString("- `line` (int): The line number in the file. **Must be a line that was added or modified in the diff** (a `+` line in the diff hunk). If your finding is about a side effect on a distant line, set `line` to the diff line that *causes* the issue and describe the affected location in `description`.\n")
-	b.WriteString("- `severity` (string): One of \"critical\", \"bug\", \"warning\", \"suggestion\", or \"nitpick\".\n")
-	b.WriteString("  - \"critical\": Security vulnerabilities, data loss, crashes.\n")
-	b.WriteString("  - \"bug\": A logic error that causes incorrect runtime behavior for real inputs. Missing test coverage, unused parameters, typos in identifiers that happen to compile, or \"what if a future caller…\" concerns do NOT qualify — use \"suggestion\" or \"nitpick\" for those. If you cannot name the concrete input and the concrete wrong output, it is not a bug.\n")
-	b.WriteString("  - \"warning\": Potential issues, performance problems, code smells.\n")
-	b.WriteString("  - \"suggestion\": Better patterns, readability improvements.\n")
-	b.WriteString("  - \"nitpick\": Minor style, naming, formatting.\n")
-	b.WriteString("- `title` (string): A short title for the finding.\n")
-	b.WriteString("- `description` (string): A concise explanation of the issue — 2-3 sentences max. State what is wrong and why it matters. Do not repeat the code or walk through the logic step by step.\n")
-	b.WriteString("- `suggestion` (string, optional): A concise suggested fix — 1-2 sentences of prose, then a code block if helpful. Do not explain what the code block does. For suggestions about broader patterns or improvements beyond the current PR scope, recommend opening a separate PR — do not imply they should fix it here.\n")
-	first := startIndex + 1
-	fixRefPrefix := fmt.Sprintf("%d", prNumber)
-	if prNumber == 0 {
-		fixRefPrefix = "local"
-	}
-	fmt.Fprintf(&b, "- `fix_ref` (string): A reference ID in the format `%s-<index>` where index starts at %d (e.g. `%s-%d`, `%s-%d`).\n", fixRefPrefix, first, fixRefPrefix, first, fixRefPrefix, first+1)
-	b.WriteString("- `actionable` (boolean): Set to `false` if your analysis concludes the code is correct and no change is needed. Set to `true` if the finding requires the author to act. **Prefer returning an empty array over emitting findings with `actionable: false`.**\n")
-	b.WriteString("\n**IMPORTANT — JSON escaping:** When your description or suggestion references code containing backslash sequences (e.g. `\\n`, `\\t`, `\\\"`), you MUST double-escape the backslash in the JSON string value. For example, to mention `fmt.Print(\"\\n\")` in a JSON string, write `fmt.Print(\"\\\\n\")`. A single `\\n` in JSON is a newline character, not the literal text `\\n`.\n")
-	b.WriteString("\n**Do not include findings where your conclusion is that the code is correct or no action is needed.** If you evaluate something and determine it is fine, omit it entirely rather than reporting it. Specifically: if you begin analyzing a potential issue but then realize the code handles it correctly, do NOT emit a finding that walks through the concern and then concludes \"this is actually fine\" or \"no bug here\" — simply drop it. Every finding you emit must represent a real, actionable problem.\n")
-	b.WriteString("\n**Check against project documentation before emitting.** The \"Project Documentation\" section above defines conventions for this codebase (e.g. \"don't add error handling for scenarios that can't happen\", \"keep the core engine agnostic\"). Before emitting a finding, verify it does not contradict those conventions. If your suggested fix would violate a project-doc rule, drop the finding — the author has already made that tradeoff deliberately.\n")
-	b.WriteString("\n**Label uncertainty from external behavior.** If your finding's validity depends on the behavior of a third-party API, webhook payload shape, framework internal, or other system you cannot verify from the diff, file contents, and project docs above, you MUST (a) cap severity at \"suggestion\" and (b) state the assumption in `description` (e.g. \"Assumes `github.event.pull_request.number` is unset on `pull_request_review_comment` events — verify against GitHub's webhook docs before acting.\"). A finding that asserts external behavior as fact without this label is a false-positive risk.\n")
-	b.WriteString("\n**CRITICAL: Do NOT invent or hallucinate file paths, function names, or code that does not appear in the diff or the provided file contents. If a file or function is not shown above, do not reference it.**\n")
-	b.WriteString("\nOnly report NEW issues found in the incremental diff. If there are no new findings, return an empty array: `[]`.\n")
-	b.WriteString("\nExample:\n```json\n[\n  {\n    \"id\": \"rule-id\",\n    \"file\": \"src/main.go\",\n    \"line\": 42,\n    \"severity\": \"warning\",\n    \"title\": \"Short title\",\n    \"description\": \"The value is used after the error check, so a non-nil error silently proceeds with stale data.\",\n    \"suggestion\": \"Return early on error.\\n\\n```go\\nif err != nil {\\n    return err\\n}\\n```\",\n")
-	fmt.Fprintf(&b, "    \"fix_ref\": \"%s-%d\",\n    \"actionable\": true\n  }\n]\n```\n", fixRefPrefix, first)
+	writeOutputFormat(&b, prNumber, startIndex, true)
 
 	return b.String()
 }
@@ -406,4 +297,104 @@ func writeFileContents(b *strings.Builder, fileContents map[string]string, files
 		writeFencedBlock(b, "", numbered.String())
 		b.WriteString("\n")
 	}
+}
+
+// writeKnownIssuesSection renders the still-open findings carried into the
+// incremental review with enough context (title, severity, description) for
+// the LLM to (a) avoid emitting duplicates with different wording and (b)
+// recognize when the incremental diff invalidates an open finding's premise.
+//
+// The previous version of this section emitted only `path:line`, which left
+// the LLM with no way to tell why the finding was open in the first place.
+// That made it hard to relate new findings to existing ones, and impossible
+// to flag "evidence that an open finding is now wrong."
+//
+// Untrusted body text is neutralised via escapeAllTags — the same treatment
+// applied to the Recently Resolved Issues section.
+func writeKnownIssuesSection(b *strings.Builder, knownIssues []ReviewThread) {
+	if len(knownIssues) == 0 {
+		return
+	}
+	b.WriteString("## Known Issues (Open)\n")
+	b.WriteString("These findings from prior reviews are still open. Do NOT emit them again — including as variants with different wording. Where the author has replied (for example, that they checked and nothing needs to change), the question is settled: do not raise the same concern again in any form.\n\n")
+	b.WriteString("**If the incremental diff provides new evidence that an open finding's premise is wrong** (e.g. a documentation update or refactor in the diff makes the original concern moot, an assumption no longer holds, or the relevant code path is now unreachable), do NOT silently re-emit the original finding. Instead, emit a NEW finding anchored to the relevant diff line whose `description` notes the conflict (e.g. \"Contradicts open finding at `path:line`: …\"). Don't fabricate evidence — only flag this when the incremental diff actually undermines the open finding.\n\n")
+	for _, t := range knownIssues {
+		f := FindingFromThread(t)
+		title := f.Title
+		if title == "" {
+			title = "(no title)"
+		}
+		fmt.Fprintf(b, "### `%s:%d` — %s\n", t.Path, t.Line, escapeAllTags(title))
+		if f.Severity != "" {
+			fmt.Fprintf(b, "**Severity:** %s\n", f.Severity)
+		}
+		if f.Description != "" {
+			fmt.Fprintf(b, "\n**Description:**\n%s\n", escapeAllTags(f.Description))
+		}
+		if reply := lastAuthorReply(t); reply != "" {
+			fmt.Fprintf(b, "\n**Author's reply:**\n%s\n", escapeAllTags(reply))
+		}
+		b.WriteString("\n")
+	}
+}
+
+// maxKnownIssueReply caps how much of an author's reply goes into the
+// Known Issues section. The gist ("checked, no caller remains") comes first.
+const maxKnownIssueReply = 600
+
+// lastAuthorReply returns the latest reply on t that is not one of the bot's
+// ack replies, cut to maxKnownIssueReply bytes, or "" when there is none.
+func lastAuthorReply(t ReviewThread) string {
+	for i := len(t.Replies) - 1; i >= 0; i-- {
+		body := strings.TrimSpace(t.Replies[i].Body)
+		if body == "" || isAckReply(body) {
+			continue
+		}
+		if len(body) > maxKnownIssueReply {
+			body = strings.ToValidUTF8(body[:maxKnownIssueReply], "") + " …"
+		}
+		return body
+	}
+	return ""
+}
+
+// writeOutputFormat renders the "## Output Format" block shared by the full
+// and incremental review prompts: the finding JSON schema, the emission rules,
+// and an example. incremental only changes the closing instruction, which
+// restricts the review to issues in the incremental diff.
+func writeOutputFormat(b *strings.Builder, prNumber, startIndex int, incremental bool) {
+	b.WriteString("## Output Format\n")
+	b.WriteString("Return your findings as a JSON array inside a ```json code fence. Each finding must have these fields:\n\n")
+	b.WriteString("- `id` (string): The rule ID that was violated, or a short kebab-case identifier for general findings.\n")
+	b.WriteString("- `file` (string): The file path where the issue was found. **Must be one of the exact paths listed in \"Files in This Diff\" above.** If a file path does not appear in that list, do NOT reference it. If your finding relates to a file not in the diff (e.g. a downstream consequence), set `file` and `line` to the diff location that triggers the issue and mention the affected file in `description`.\n")
+	b.WriteString("- `line` (int): The line number in the file. **Must be a line that was added or modified in the diff** (a `+` line in the diff hunk). If your finding is about a side effect on a distant line, set `line` to the diff line that *causes* the issue and describe the affected location in `description`.\n")
+	b.WriteString("- `severity` (string): One of \"critical\", \"bug\", \"warning\", \"suggestion\", or \"nitpick\".\n")
+	b.WriteString("  - \"critical\": Security vulnerabilities, data loss, crashes.\n")
+	b.WriteString("  - \"bug\": A logic error that causes incorrect runtime behavior for real inputs. Missing test coverage, unused parameters, typos in identifiers that happen to compile, or \"what if a future caller…\" concerns do NOT qualify — use \"suggestion\" or \"nitpick\" for those. If you cannot name the concrete input and the concrete wrong output, it is not a bug.\n")
+	b.WriteString("  - \"warning\": Potential issues, performance problems, code smells.\n")
+	b.WriteString("  - \"suggestion\": Better patterns, readability improvements.\n")
+	b.WriteString("  - \"nitpick\": Minor style, naming, formatting.\n")
+	b.WriteString("- `title` (string): A short title for the finding.\n")
+	b.WriteString("- `description` (string): A concise explanation of the issue — 2-3 sentences max. State what is wrong and why it matters. Do not repeat the code or walk through the logic step by step.\n")
+	b.WriteString("- `suggestion` (string, optional): A concise suggested fix — 1-2 sentences of prose, then a code block if helpful. Do not explain what the code block does. For suggestions about broader patterns or improvements beyond the current PR scope, recommend opening a separate PR — do not imply they should fix it here.\n")
+	first := startIndex + 1
+	fixRefPrefix := fmt.Sprintf("%d", prNumber)
+	if prNumber == 0 {
+		fixRefPrefix = "local"
+	}
+	fmt.Fprintf(b, "- `fix_ref` (string): A reference ID in the format `%s-<index>` where index starts at %d (e.g. `%s-%d`, `%s-%d`).\n", fixRefPrefix, first, fixRefPrefix, first, fixRefPrefix, first+1)
+	b.WriteString("- `actionable` (boolean): Set to `false` if your analysis concludes the code is correct and no change is needed. Set to `true` if the finding requires the author to act. **Prefer returning an empty array over emitting findings with `actionable: false`.**\n")
+	b.WriteString("- `needs_verification` (boolean, optional): Set to `true` when the finding is an open question you could not settle — its validity depends on code, callers, configuration, or behavior that is not in the diff, file contents, or project docs above (e.g. \"is anything else still calling the removed helper?\", \"does the dispatcher pass this argument through?\"). These are not posted as review threads and do not block the PR; they are listed as open questions in the review summary. Omit the field when the diff and files above are enough to confirm the issue. Never title a finding \"Verify …\" without setting this flag.\n")
+	b.WriteString("\n**IMPORTANT — JSON escaping:** When your description or suggestion references code containing backslash sequences (e.g. `\\n`, `\\t`, `\\\"`), you MUST double-escape the backslash in the JSON string value. For example, to mention `fmt.Print(\"\\n\")` in a JSON string, write `fmt.Print(\"\\\\n\")`. A single `\\n` in JSON is a newline character, not the literal text `\\n`.\n")
+	b.WriteString("\n**Do not include findings where your conclusion is that the code is correct or no action is needed.** If you evaluate something and determine it is fine, omit it entirely rather than reporting it. Specifically: if you begin analyzing a potential issue but then realize the code handles it correctly, do NOT emit a finding that walks through the concern and then concludes \"this is actually fine\" or \"no bug here\" — simply drop it. Every finding you emit must represent a real, actionable problem.\n")
+	b.WriteString("\n**Check against project documentation before emitting.** The \"Project Documentation\" section above defines conventions for this codebase (e.g. \"don't add error handling for scenarios that can't happen\", \"keep the core engine agnostic\"). Before emitting a finding, verify it does not contradict those conventions. If your suggested fix would violate a project-doc rule, drop the finding — the author has already made that tradeoff deliberately.\n")
+	b.WriteString("\n**Label uncertainty.** If your finding's validity depends on something you cannot confirm from the diff, file contents, and project docs above — a third-party API, webhook payload shape, framework internal, or code and callers not shown — you MUST (a) cap severity at \"suggestion\", (b) state the assumption in `description` (e.g. \"Assumes `github.event.pull_request.number` is unset on `pull_request_review_comment` events — verify against GitHub's webhook docs before acting.\"), and (c) set `needs_verification: true`. A finding that asserts unverified behavior as fact is a false-positive risk. If the diff and files above already show the problem, it is not uncertain — report it as a regular finding without the flag.\n")
+	b.WriteString("\n**CRITICAL: Do NOT invent or hallucinate file paths, function names, or code that does not appear in the diff or the provided file contents. If a file or function is not shown above, do not reference it.**\n")
+	if incremental {
+		b.WriteString("\nOnly report NEW issues found in the incremental diff. If there are no new findings, return an empty array: `[]`.\n")
+	} else {
+		b.WriteString("\nIf there are no findings, return an empty array: `[]`.\n")
+	}
+	b.WriteString("\nExample:\n```json\n[\n  {\n    \"id\": \"rule-id\",\n    \"file\": \"src/main.go\",\n    \"line\": 42,\n    \"severity\": \"warning\",\n    \"title\": \"Short title\",\n    \"description\": \"The value is used after the error check, so a non-nil error silently proceeds with stale data.\",\n    \"suggestion\": \"Return early on error.\\n\\n```go\\nif err != nil {\\n    return err\\n}\\n```\",\n")
+	fmt.Fprintf(b, "    \"fix_ref\": \"%s-%d\",\n    \"actionable\": true\n  }\n]\n```\n", fixRefPrefix, first)
 }

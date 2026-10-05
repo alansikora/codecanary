@@ -68,11 +68,10 @@ command after upgrading codecanary to pick up any updates.`,
 		usingDefaultDest := destFlag == ""
 		dest := destFlag
 		if usingDefaultDest {
-			home, err := os.UserHomeDir()
+			dest, err = defaultSkillPath()
 			if err != nil {
 				return fmt.Errorf("locating home directory: %w", err)
 			}
-			dest = filepath.Join(home, ".claude", "skills", "codecanary-fix", "SKILL.md")
 		}
 
 		// Distinguish "file exists" from other Stat errors (e.g.
@@ -144,16 +143,25 @@ func removeLegacyLoopSkill() {
 	}
 }
 
+// defaultSkillPath is where `codecanary install-skill` writes the skill
+// when no --dest is given: ~/.claude/skills/codecanary-fix/SKILL.md.
+func defaultSkillPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".claude", "skills", "codecanary-fix", "SKILL.md"), nil
+}
+
 // skillNeedsUpgrade reports whether the codecanary-fix skill is installed
 // at the default user-scoped path and whether its content differs from
 // the copy embedded in this binary. destPath is returned regardless so
 // callers can surface it in error messages or prompts.
 func skillNeedsUpgrade() (installed bool, differs bool, destPath string, err error) {
-	home, err := os.UserHomeDir()
+	destPath, err = defaultSkillPath()
 	if err != nil {
 		return false, false, "", err
 	}
-	destPath = filepath.Join(home, ".claude", "skills", "codecanary-fix", "SKILL.md")
 
 	existing, err := os.ReadFile(destPath)
 	if err != nil {

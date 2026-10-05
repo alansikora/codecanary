@@ -25,10 +25,12 @@ type ReviewPlatform interface {
 	// SaveState persists findings for future incremental reviews.
 	SaveState(result *ReviewResult, stillOpen []Finding, isIncremental bool) error
 
-	// GetIncrementalDiff returns the diff since the given SHA.
+	// GetIncrementalDiff returns what changed on the PR since previousSHA
+	// was reviewed (see IncrementalDiff; rebase-aware, so a rebase without
+	// author changes yields ""). pr supplies the base branch and file set.
 	// In CI this is committed changes only. Locally it also includes
-	// uncommitted working-tree changes scoped to the given file set.
-	GetIncrementalDiff(baseSHA string, prFiles []string) (string, error)
+	// uncommitted working-tree changes scoped to the PR files.
+	GetIncrementalDiff(previousSHA string, pr *PRData) (string, error)
 
 	// ReportUsage handles usage data (best-effort). On GitHub this writes
 	// to GITHUB_ENV. Locally this prints a usage table to stderr.

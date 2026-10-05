@@ -122,6 +122,9 @@ type GithubPlatform struct {
 	Repo     string
 	PRNumber int
 	DryRun   bool
+	// Updates drives the outdated-install note on posted reviews; the
+	// zero value disables it.
+	Updates UpdateCheck
 }
 
 func (g *GithubPlatform) LoadPreviousFindings() ([]ReviewThread, string, int) {
@@ -240,25 +243,31 @@ func (g *GithubPlatform) Publish(result *ReviewResult, pr *PRData, threads []Rev
 
 	// POST path — pick the body shape that fits the cycle outcome. Every
 	// branch emits a top-level review so each push lands a visible status
-	// comment on the PR.
+	// comment on the PR. Open questions, the coverage note and the update
+	// notice ride along in whichever body is posted; they never change which
+	// one, and in-place edits above keep the notes the review was first
+	// posted with. The full findings body already renders open questions and
+	// coverage itself, so PostReview gets only the update notice.
+	notice := g.Updates.Notice()
+	notes := formatOpenQuestions(result.Questions) + renderCoverageNote(result.Coverage) + notice
 	switch {
 	case len(result.Findings) > 0:
-		if err := PostReview(g.Repo, g.PRNumber, result, pr.ValidationDiff(), result.SHA, summary); err != nil {
+		if err := PostReview(g.Repo, g.PRNumber, result, pr.Files, pr.ValidationDiff(), result.SHA, notice, summary); err != nil {
 			return fmt.Errorf("posting review: %w", err)
 		}
 		Stderrf(ansiGreen, "Review posted to PR #%d\n", g.PRNumber)
 	case len(threads) > 0 && allResolved(threads, fixed):
-		if err := PostAllClearReview(g.Repo, g.PRNumber, result.SHA, minimizeFailed, summary); err != nil {
+		if err := PostAllClearReview(g.Repo, g.PRNumber, result.SHA, minimizeFailed, notes, summary); err != nil {
 			return fmt.Errorf("posting all-clear review: %w", err)
 		}
 		Stderrf(ansiGreen, "All clear! No issues remaining.\n")
 	case len(threads) > 0:
-		if err := PostActivityReview(g.Repo, g.PRNumber, result.SHA, summary); err != nil {
+		if err := PostActivityReview(g.Repo, g.PRNumber, result.SHA, notes, summary); err != nil {
 			return fmt.Errorf("posting activity review: %w", err)
 		}
 		Stderrf(ansiGreen, "Posted activity summary to PR #%d\n", g.PRNumber)
 	default:
-		if err := PostCleanReview(g.Repo, g.PRNumber, result.SHA, summary); err != nil {
+		if err := PostCleanReview(g.Repo, g.PRNumber, result.SHA, notes, summary); err != nil {
 			return fmt.Errorf("posting review: %w", err)
 		}
 		Stderrf(ansiGreen, "Review posted to PR #%d\n", g.PRNumber)
@@ -276,8 +285,9 @@ func (g *GithubPlatform) SaveState(_ *ReviewResult, _ []Finding, _ bool) error {
 	return nil
 }
 
-func (g *GithubPlatform) GetIncrementalDiff(baseSHA string, _ []string) (string, error) {
-	return GetIncrementalDiff(baseSHA)
+func (g *GithubPlatform) GetIncrementalDiff(previousSHA string, pr *PRData) (string, error) {
+	baseRef := fetchIncrementalHistory(previousSHA, pr.BaseBranch)
+	return IncrementalDiff(previousSHA, baseRef)
 }
 
 func (g *GithubPlatform) ReportUsage(tracker *UsageTracker) {
@@ -290,10 +300,10 @@ func (g *GithubPlatform) ReportUsage(tracker *UsageTracker) {
 }
 
 // postReviewCommitStatus POSTs a `CodeCanary / review` commit status on the
-// reviewed SHA. state=success when no unresolved findings remain for the
-// PR (new findings this cycle + threads still open with no classification
-// both at zero); state=failure otherwise. Teams can require this check in
-// branch protection to gate merges on a clean review.
+// reviewed SHA. state=failure while any blocking finding (severity at or
+// above blockingSeverity) is unresolved — new this cycle or still open with
+// no classification; state=success otherwise. Teams can require this check
+// in branch protection to gate merges on a clean review.
 //
 // Skipped silently when the SHA is empty (non-pr-loop contexts that
 // accidentally share the adapter). Failures are logged as warnings — the
@@ -311,27 +321,4 @@ func (g *GithubPlatform) postReviewCommitStatus(sha string, summary ReviewSummar
 	}
 	Stderrf(ansiGreen, "Posted %s = %s on %s (%s)\n",
 		ReviewCommitStatusContext, state, shortSHA(sha), desc)
-}
-
-// commitStatusFromSummary maps a ReviewSummary to the (state, description)
-// pair sent to the commit status API. Pulled out so the mapping is
-// unit-testable without network access.
-//
-// An "unresolved" count combines new findings this cycle with threads that
-// were already open and remain unclassified — either kind should fail the
-// required check. Everything classified by triage (resolved by code, file
-// removed, dismissed, acknowledged, rebutted) counts as handled.
-func commitStatusFromSummary(summary ReviewSummary) (state, desc string) {
-	unresolved := summary.NewFindings + summary.StillOpen
-	if unresolved > 0 {
-		suffix := "s"
-		if unresolved == 1 {
-			suffix = ""
-		}
-		return "failure", fmt.Sprintf("%d unresolved finding%s", unresolved, suffix)
-	}
-	if summary.ResolvedByCode+summary.FileRemoved+summary.Dismissed+summary.Acknowledged+summary.Rebutted > 0 {
-		return "success", "all findings resolved"
-	}
-	return "success", "no findings"
 }

@@ -71,7 +71,7 @@ func TestFormatReviewBody_ContainsFixAll(t *testing.T) {
 		},
 	}
 
-	body := FormatReviewBody(result, func(f Finding) bool { return true })
+	body := FormatReviewBody(result, true)
 
 	if !strings.Contains(body, "<details>") {
 		t.Error("expected <details> block")
@@ -90,7 +90,7 @@ func TestFormatReviewBody_NoFindings_NoFixAll(t *testing.T) {
 		Findings: []Finding{},
 	}
 
-	body := FormatReviewBody(result, func(f Finding) bool { return false })
+	body := FormatReviewBody(result, false)
 
 	if strings.Contains(body, "<details>") {
 		t.Error("should not contain <details> when there are no findings")

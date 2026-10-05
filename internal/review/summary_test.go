@@ -32,7 +32,7 @@ func TestComputeReviewSummary(t *testing.T) {
 		{Index: 2, Reason: "rebutted"},
 		{Index: 3, Reason: "file_removed"},
 	}
-	findings := []Finding{{ID: "a"}, {ID: "b"}}
+	findings := []Finding{{ID: "a", Severity: "bug"}, {ID: "b", Severity: "nitpick"}}
 
 	got := computeReviewSummary(threads, fixed, findings)
 	want := ReviewSummary{
@@ -42,6 +42,7 @@ func TestComputeReviewSummary(t *testing.T) {
 		Dismissed:      1,
 		Rebutted:       1,
 		StillOpen:      1, // thread index 4 not in fixed
+		Blocking:       2, // the bug, and thread 4 (no severity reads as warning)
 	}
 	if got != want {
 		t.Errorf("summary = %+v, want %+v", got, want)
@@ -87,6 +88,21 @@ func TestReplaceSummaryBlockStripsWhenEmpty(t *testing.T) {
 	}
 }
 
+func TestComputeReviewSummaryBlockingSkipsMinorAndHandled(t *testing.T) {
+	threads := []ReviewThread{
+		{Body: "💡 **suggestion** — `s`\n\nOpen suggestion."},
+		{Body: "🐛 **bug** — `b`\n\nDismissed bug."},
+		{Body: "🐛 **bug** — `c`\n\nOpen bug."},
+	}
+	fixed := []fixedThread{{Index: 1, Reason: "dismissed"}}
+	findings := []Finding{{ID: "n", Severity: "nitpick"}, {ID: "w", Severity: "warning"}}
+
+	got := computeReviewSummary(threads, fixed, findings)
+	if got.Blocking != 2 {
+		t.Errorf("Blocking = %d, want 2 (the new warning and the open bug)", got.Blocking)
+	}
+}
+
 func TestCommitStatusFromSummary(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -102,27 +118,39 @@ func TestCommitStatusFromSummary(t *testing.T) {
 		},
 		{
 			name:     "new finding fails",
-			summary:  ReviewSummary{NewFindings: 1},
+			summary:  ReviewSummary{NewFindings: 1, Blocking: 1},
 			wantSt:   "failure",
-			wantDesc: "1 unresolved finding",
+			wantDesc: "1 unresolved blocking finding",
 		},
 		{
 			name:     "multiple new findings uses plural",
-			summary:  ReviewSummary{NewFindings: 3},
+			summary:  ReviewSummary{NewFindings: 3, Blocking: 3},
 			wantSt:   "failure",
-			wantDesc: "3 unresolved findings",
+			wantDesc: "3 unresolved blocking findings",
 		},
 		{
 			name:     "still-open thread fails even without new findings",
-			summary:  ReviewSummary{StillOpen: 2},
+			summary:  ReviewSummary{StillOpen: 2, Blocking: 2},
 			wantSt:   "failure",
-			wantDesc: "2 unresolved findings",
+			wantDesc: "2 unresolved blocking findings",
 		},
 		{
 			name:     "new + still-open are summed",
-			summary:  ReviewSummary{NewFindings: 1, StillOpen: 1},
+			summary:  ReviewSummary{NewFindings: 1, StillOpen: 1, Blocking: 2},
 			wantSt:   "failure",
-			wantDesc: "2 unresolved findings",
+			wantDesc: "2 unresolved blocking findings",
+		},
+		{
+			name:     "only non-blocking findings open is success",
+			summary:  ReviewSummary{NewFindings: 2, StillOpen: 1, Blocking: 0},
+			wantSt:   "success",
+			wantDesc: "3 non-blocking findings open",
+		},
+		{
+			name:     "blocking count drives the description, not the total",
+			summary:  ReviewSummary{NewFindings: 3, Blocking: 1},
+			wantSt:   "failure",
+			wantDesc: "1 unresolved blocking finding",
 		},
 		{
 			name:     "resolved-by-code with no unresolved is success",
@@ -150,9 +178,9 @@ func TestCommitStatusFromSummary(t *testing.T) {
 		},
 		{
 			name:     "mix of resolved and unresolved still fails",
-			summary:  ReviewSummary{ResolvedByCode: 2, Dismissed: 1, StillOpen: 1},
+			summary:  ReviewSummary{ResolvedByCode: 2, Dismissed: 1, StillOpen: 1, Blocking: 1},
 			wantSt:   "failure",
-			wantDesc: "1 unresolved finding",
+			wantDesc: "1 unresolved blocking finding",
 		},
 	}
 	for _, tc := range cases {
