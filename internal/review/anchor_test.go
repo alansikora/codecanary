@@ -73,7 +73,7 @@ func TestValidatedFindingsAreAllPosted(t *testing.T) {
 	}
 
 	result := &ReviewResult{PRNumber: 6069, Findings: kept, SHA: "abc"}
-	payload, fileComments := buildReviewPosts(result, anchorPRFiles, deletionOnlyDiff, "abc", ReviewSummary{NewFindings: len(kept)})
+	payload, fileComments := buildReviewPosts(result, anchorPRFiles, deletionOnlyDiff, "abc", "", ReviewSummary{NewFindings: len(kept)})
 	if got := len(payload.Comments) + len(fileComments); got != len(kept) {
 		t.Fatalf("posted %d comments for %d validated findings", got, len(kept))
 	}
@@ -88,7 +88,7 @@ func TestBuildReviewPosts_FileLevelPayload(t *testing.T) {
 		},
 		SHA: "deadbeef",
 	}
-	payload, fileComments := buildReviewPosts(result, anchorPRFiles, deletionOnlyDiff, "deadbeef", ReviewSummary{NewFindings: 2})
+	payload, fileComments := buildReviewPosts(result, anchorPRFiles, deletionOnlyDiff, "deadbeef", "", ReviewSummary{NewFindings: 2})
 
 	if len(payload.Comments) != 1 || payload.Comments[0].Path != "cli.rb" || payload.Comments[0].Line != 63 {
 		t.Fatalf("inline comments = %+v, want one on cli.rb:63", payload.Comments)

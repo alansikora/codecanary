@@ -79,6 +79,8 @@ This runs the same provider and key selection, then:
 
 Once merged, CodeCanary reviews every PR on open and push. Draft PRs are skipped by default.
 
+**Keeping the workflow current.** The workflow file is yours to customize, so it doesn't update itself. Its `# codecanary-workflow: v<N>` line records which template it came from; when a newer template ships, the bot adds a one-line note to its reviews. Re-run `codecanary setup github` (it asks before overwriting) or copy the changes from [the template](internal/setup/codecanary.yml), keeping the marker line. The same kind of note appears when the workflow pins an old `codecanary_version`.
+
 ### Gating merges on clean reviews
 
 CodeCanary can block merges until a review comes back clean. After every review, the bot (and the local `codecanary signoff` command) posts a GitHub commit status under the context `CodeCanary / review`:

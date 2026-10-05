@@ -1,5 +1,10 @@
 # Source of truth: internal/setup/codecanary.yml (must be identical).
 # Run `go test ./internal/setup/` to verify sync.
+#
+# Template version. CodeCanary compares it with the template it ships and
+# adds a note to its reviews when this file is older. Keep this line when
+# customizing; update it only when you take the changes from a newer template.
+# codecanary-workflow: v1
 name: CodeCanary
 on:
   pull_request_target:

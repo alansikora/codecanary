@@ -1,8 +1,11 @@
 package setup
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -99,5 +102,48 @@ func TestGenerateWorkflow_InvalidInputs(t *testing.T) {
 				t.Error("expected error for invalid input")
 			}
 		})
+	}
+}
+
+// templateFingerprint pins the embedded workflow template at the version
+// in templateFingerprintVersion. It is the SHA-256 of the template with
+// the `# codecanary-workflow: v<N>` marker line removed.
+//
+// When this test fails you changed the template: bump the marker in
+// internal/setup/codecanary.yml (and .github/workflows/codecanary.yml) to
+// the next version, then update both constants below. The bump is what
+// makes the review bot tell consumer repos their copy is outdated.
+const (
+	templateFingerprintVersion = 1
+	templateFingerprint        = "899fc0cc1a02121d1f210d6098eb226188a12191be05bb01a7cdea38bc060353"
+)
+
+var markerLine = regexp.MustCompile(`(?m)^[ \t]*#[ \t]*codecanary-workflow:[ \t]*v\d+[ \t]*\n`)
+
+func TestTemplateVersionBumpedOnChange(t *testing.T) {
+	v := TemplateVersion()
+	if v < 1 {
+		t.Fatalf("embedded template has no `# codecanary-workflow: v<N>` marker")
+	}
+	sum := sha256.Sum256([]byte(markerLine.ReplaceAllString(canonicalWorkflow, "")))
+	got := hex.EncodeToString(sum[:])
+	switch {
+	case v == templateFingerprintVersion && got != templateFingerprint:
+		t.Errorf("workflow template changed but its marker is still v%d: bump it to v%d "+
+			"in both workflow files, then set templateFingerprintVersion = %d and "+
+			"templateFingerprint = %q", v, v+1, v+1, got)
+	case v != templateFingerprintVersion:
+		t.Errorf("template marker is v%d: set templateFingerprintVersion = %d and "+
+			"templateFingerprint = %q", v, v, got)
+	}
+}
+
+func TestGenerateWorkflow_KeepsTemplateMarker(t *testing.T) {
+	got, err := GenerateWorkflow("MY_API_KEY", "v1")
+	if err != nil {
+		t.Fatalf("GenerateWorkflow() error: %v", err)
+	}
+	if !strings.Contains(got, "# codecanary-workflow: v") {
+		t.Error("generated workflow lost the template version marker")
 	}
 }

@@ -270,7 +270,7 @@ type fileComment struct {
 // validateFindings used — so each one gets a thread carrying its finding
 // marker. Findings anchorFinding would drop are left out; validation has
 // already removed them.
-func buildReviewPosts(result *ReviewResult, prFiles []string, diff, commitSHA string, summary ReviewSummary) (reviewPayload, []fileComment) {
+func buildReviewPosts(result *ReviewResult, prFiles []string, diff, commitSHA, notes string, summary ReviewSummary) (reviewPayload, []fileComment) {
 	sortFindings(result.Findings)
 
 	files := fileSet(prFiles)
@@ -297,7 +297,7 @@ func buildReviewPosts(result *ReviewResult, prFiles []string, diff, commitSHA st
 		}
 	}
 
-	body := withSummary(FormatReviewBody(result, len(comments)+len(fileComments) > 0), summary)
+	body := withSummary(FormatReviewBody(result, len(comments)+len(fileComments) > 0)+notes, summary)
 	return reviewPayload{
 		Event:    "COMMENT",
 		Body:     body,
@@ -311,8 +311,8 @@ func buildReviewPosts(result *ReviewResult, prFiles []string, diff, commitSHA st
 // no line to anchor to become file-level comments posted right after it. The
 // summary block is appended to the body so the status dashboard appears on
 // every CodeCanary top-level review.
-func PostReview(repo string, prNumber int, result *ReviewResult, prFiles []string, diff string, commitSHA string, summary ReviewSummary) error {
-	payload, fileComments := buildReviewPosts(result, prFiles, diff, commitSHA, summary)
+func PostReview(repo string, prNumber int, result *ReviewResult, prFiles []string, diff string, commitSHA, notes string, summary ReviewSummary) error {
+	payload, fileComments := buildReviewPosts(result, prFiles, diff, commitSHA, notes, summary)
 
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
@@ -916,7 +916,7 @@ func PostActivityReview(repo string, prNumber int, commitSHA, notes string, summ
 }
 
 // notes is optional Markdown appended to the body of the simple reviews
-// below (e.g. the open-questions section); pass "" for none.
+// below (e.g. the open-questions section, the update notice); pass "" for none.
 
 // buildCleanReviewBody renders the full Markdown body posted by
 // PostCleanReview. Split out from the poster so tests can assert the exact

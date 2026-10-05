@@ -69,3 +69,22 @@ func TestParseSemver(t *testing.T) {
 		})
 	}
 }
+
+func TestIsStable(t *testing.T) {
+	tests := []struct {
+		v    string
+		want bool
+	}{
+		{"v0.6.24", true},
+		{"0.6.24", true},
+		{"v0.6.24-SNAPSHOT-d0d9bc4", false}, // canary build
+		{"dev", false},
+		{"", false},
+		{"v1.2", false},
+	}
+	for _, tt := range tests {
+		if got := IsStable(tt.v); got != tt.want {
+			t.Errorf("IsStable(%q) = %v, want %v", tt.v, got, tt.want)
+		}
+	}
+}

@@ -96,6 +96,26 @@ func IsNewer(current, latest string) bool {
 	return lat[2] > cur[2]
 }
 
+// IsStable reports whether v is a plain release version ("vX.Y.Z" or
+// "X.Y.Z"). Canary builds carry a pre-release suffix (goreleaser snapshots
+// are "vX.Y.Z-SNAPSHOT-<sha>", built from main after the last release) and
+// local builds are "dev"; neither is stable.
+func IsStable(v string) bool {
+	return parseSemver(v) != nil && !strings.Contains(v, "-")
+}
+
+// LatestRelease returns the tag of the latest stable release (GitHub's
+// "latest" release, which never points at the canary pre-release). Unlike
+// CheckCached it neither reads nor writes the home-directory cache and
+// works in CI; the caller bounds it with ctx.
+func LatestRelease(ctx context.Context) (string, error) {
+	rel, err := fetchRelease(ctx, "latest")
+	if err != nil {
+		return "", err
+	}
+	return rel.TagName, nil
+}
+
 func parseSemver(v string) []int {
 	v = strings.TrimPrefix(v, "v")
 	parts := strings.SplitN(v, ".", 3)
