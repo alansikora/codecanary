@@ -379,6 +379,7 @@ Track this state across iterations:
       - If no finding was applied this cycle (all skipped), there is
         nothing to push and no new review to request: leave the PR
         ready, and go to **exit handling**.
+      - Run `go build ./...` and `go test ./...` if any Go files changed.
       - Otherwise commit every applied fix in **one** commit (message as
         above) and push once. The PR is a draft (step 8).
       - Run `codecanary checks <PR> --watch --output json`. It waits for
