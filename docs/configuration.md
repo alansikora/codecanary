@@ -300,3 +300,17 @@ With `review_on: ready`, CodeCanary reviews a pull request when it opens (not as
 Draft PRs are skipped by default in the GitHub Actions workflow. When you convert a draft to ready, CodeCanary triggers automatically.
 
 To review draft PRs, remove the `github.event.pull_request.draft == false` condition from the workflow `if` in `.github/workflows/codecanary.yml`.
+
+## Fork pull requests
+
+The workflow runs on `pull_request_target`, so a PR from a fork is reviewed with the base repository's secrets in the environment. Recent `actions/checkout` releases refuse to check out fork code in that context unless the workflow opts in. The template opts in (`allow-unsafe-pr-checkout: true`) because nothing from the fork's checkout is executed. Each source of control the fork could have is closed off:
+
+| What the fork controls | Guard |
+|---|---|
+| CodeCanary config (`.codecanary/config.yml`, `review.yml`, `review.local.yml`, legacy `.codecanary.yml`) | Taken from the base branch. A file the base branch doesn't have is deleted, so a fork can't add one, for example a `config.yml` with its own `claude_args` or `claude_review_tools`. |
+| Claude Code project settings (`.claude/settings*.json`: hooks, `env`, `apiKeyHelper`) and `.mcp.json` | Every Claude CLI call ignores them ([project config isolation](#project-config-isolation)), and the workflow also deletes them on fork PRs, so the protection doesn't rest on a single CLI flag. |
+| Git credentials | On fork PRs the checkout doesn't persist the token in `.git/config` (`persist-credentials` is false for forks). |
+| Reviewer tools | Off unless the base branch's config enables `claude_review_tools`. A fork can't turn them on. |
+| Symbolic links | A PR file that is a symlink is reviewed from its diff only; its target is never read. Project docs are never read through a symlink that leaves the repository or points into `.git` (`readRepoFile`); such a doc is skipped with a log line. Links inside the repository, like `CLAUDE.md -> AGENTS.md`, still load as project docs. Otherwise a fork could commit `notes.md -> /proc/self/environ` and get the process environment, provider secret included, into the prompt. The workflow also removes `.codecanary` / `.claude` symlinks before pinning config, so pinning can't write or delete outside the checkout. |
+
+What a fork can still do is put text in its diff, CLAUDE.md files or `.claude/rules` that tries to steer the review, for example to hide a problem or raise a false one. Without tools or project settings, the reviewer can't read secrets or run anything, so the most a fork can do is shape the review's text.
