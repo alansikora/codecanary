@@ -293,7 +293,7 @@ CodeCanary automatically reads `CLAUDE.md` files from your repo root, `.claude/`
 
 ## Reviewing once, at ready
 
-With `review_on: ready`, CodeCanary reviews a pull request when it opens (not as a draft), reopens or turns ready for review, and skips the pushes after that. It suits a flow where a draft is where the work happens: CI runs on every push to the draft, and the PR turns ready only when it is done. To review a change made after ready, move the PR to draft and back to ready. Replies on CodeCanary's threads are still evaluated.
+With `review_on: ready`, CodeCanary reviews a pull request when it opens (not as a draft), reopens or turns ready for review, and skips the pushes after that. It suits a flow where a draft is where the work happens: CI runs on every push to the draft, and the PR turns ready only when it is done. To review a change made after ready, move the PR to draft and back to ready. Replies on CodeCanary's threads are still evaluated. A skipped push still gets a `CodeCanary / review` status, so a required check doesn't block the PR: it fails while a blocking finding (warning or above) is open and passes otherwise.
 
 ## Draft PRs
 

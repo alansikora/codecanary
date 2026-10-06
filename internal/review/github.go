@@ -53,7 +53,7 @@ const MaxFindingProximity = 20
 var reviewMarkerPrefixes = []string{"<!-- codecanary:review ", "<!-- clanopy:review "}
 
 const (
-	reviewMarkerSuffix = " -->"
+	reviewMarkerSuffix  = " -->"
 	findingMarkerPrefix = "<!-- codecanary:finding "
 	ackMarkerPrefix     = "<!-- codecanary:ack:"
 	legacyAckPrefix     = "<!-- clanopy:ack:"
@@ -68,7 +68,7 @@ type PRData struct {
 	BaseBranch   string
 	HeadBranch   string
 	Diff         string
-	FullDiff     string            // unfiltered diff for finding validation (set by prepareReview)
+	FullDiff     string // unfiltered diff for finding validation (set by prepareReview)
 	Files        []string
 	FileContents map[string]string // path -> full file content
 }
@@ -85,9 +85,9 @@ func (pr *PRData) ValidationDiff() string {
 
 // ghPRView is the JSON shape returned by gh pr view.
 type ghPRView struct {
-	Title       string `json:"title"`
-	Body        string `json:"body"`
-	Author      struct {
+	Title  string `json:"title"`
+	Body   string `json:"body"`
+	Author struct {
 		Login string `json:"login"`
 	} `json:"author"`
 	BaseRefName string `json:"baseRefName"`
@@ -444,7 +444,7 @@ type graphQLThreadsResponse struct {
 					Nodes []struct {
 						ID         string `json:"id"`
 						IsResolved bool   `json:"isResolved"`
-						Comments struct {
+						Comments   struct {
 							Nodes []struct {
 								Body         string `json:"body"`
 								Path         string `json:"path"`

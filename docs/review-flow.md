@@ -26,6 +26,10 @@ State files are keyed by `owner/repo/branch` so the same branch name across diff
 
 ## Pipeline Steps
 
+### 0. Skip check
+
+Before fetching anything, `Run()` asks the platform whether this run should review at all (`ReviewPlatform.SkipReview`). Locally the answer is always no. On GitHub, `review_on: ready` skips a push (`synchronize` event) to a PR that is already ready; reply-only runs are never skipped. A skipped push still gets a `CodeCanary / review` commit status on its HEAD, because statuses are keyed by commit and a required check would otherwise block the PR. The status comes from the open threads without a model call: `failure` while a blocking thread (warning or above) is open and not acknowledged, `success` otherwise. The description ends with "push not reviewed (review_on: ready)".
+
 ### 1. Fetch PR data
 
 **GitHub PR** (`--post`): Fetches PR metadata (title, body, author, branches) and diff via `gh pr view` and `gh pr diff`.

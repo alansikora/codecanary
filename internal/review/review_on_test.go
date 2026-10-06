@@ -3,6 +3,7 @@ package review
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -53,5 +54,46 @@ func TestReviewOnValidation(t *testing.T) {
 	cfg := &ReviewConfig{ReviewOn: "sometimes"}
 	if err := cfg.Validate(); err == nil {
 		t.Error("Validate accepted review_on: sometimes")
+	}
+}
+
+// A push review_on: ready skips still gets a status: failing while a blocking
+// thread is open, passing otherwise. Acknowledged threads count as handled.
+func TestSkippedPushStatus(t *testing.T) {
+	bug := ReviewThread{Body: "🐛 **bug** — `b`\n\nOpen bug."}
+	nit := ReviewThread{Body: "⚪ **nitpick** — `n`\n\nOpen nitpick."}
+	ackedBug := ReviewThread{
+		Body:    "🐛 **bug** — `a`\n\nDismissed bug.",
+		Replies: []ThreadReply{{Author: "codecanary-bot[bot]", Body: "Keeping this open.\n<!-- codecanary:ack:dismissed -->"}},
+	}
+
+	cases := []struct {
+		name    string
+		threads []ReviewThread
+		want    string
+	}{
+		{"no threads", nil, "success"},
+		{"only a nitpick open", []ReviewThread{nit}, "success"},
+		{"a blocking thread open", []ReviewThread{nit, bug}, "failure"},
+		{"blocking thread acknowledged", []ReviewThread{ackedBug}, "success"},
+	}
+	for _, c := range cases {
+		state, desc := skippedPushStatus(c.threads)
+		if state != c.want {
+			t.Errorf("%s: state = %q (%s), want %q", c.name, state, desc, c.want)
+		}
+		if !strings.Contains(desc, "review_on: ready") {
+			t.Errorf("%s: description should say the push wasn't reviewed, got %q", c.name, desc)
+		}
+		if len(desc) > 140 {
+			t.Errorf("%s: description is %d chars; GitHub caps commit status descriptions at 140", c.name, len(desc))
+		}
+	}
+}
+
+func TestLocalPlatformNeverSkips(t *testing.T) {
+	skip, err := (&LocalPlatform{}).SkipReview(&ReviewConfig{ReviewOn: ReviewOnReady}, false)
+	if skip || err != nil {
+		t.Errorf("LocalPlatform.SkipReview = %v, %v; want false, nil", skip, err)
 	}
 }

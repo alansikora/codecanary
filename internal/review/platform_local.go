@@ -87,3 +87,8 @@ func (l *LocalPlatform) ReportUsage(tracker *UsageTracker) {
 		fmt.Fprint(os.Stderr, FormatUsageTable(tracker, colorsEnabled()))
 	}
 }
+
+// SkipReview never skips: review_on governs GitHub pull request events.
+func (l *LocalPlatform) SkipReview(_ *ReviewConfig, _ bool) (bool, error) {
+	return false, nil
+}
