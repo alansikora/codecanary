@@ -55,8 +55,9 @@ func FetchFileContents(files []string, ignorePatterns []string, maxPerFile, maxT
 
 		data, err := readRepoFile("", path)
 		if errors.Is(err, errSymlinkInPath) {
-			// Never follow a link out of the checkout; review its diff only.
-			res.Excluded = append(res.Excluded, path)
+			// Never read through a link out of the checkout. Its diff (the
+			// link's target path) is still reviewed.
+			res.DiffOnly = append(res.DiffOnly, path)
 			continue
 		}
 		if err != nil {
@@ -124,7 +125,7 @@ func scopePRForPrompt(pr *PRData, fc FileContentsResult, maxDiffSize int) *Revie
 	}
 	if len(fc.DiffOnly) > 0 {
 		// Too large for full contents, but still part of the review.
-		fmt.Fprintf(os.Stderr, "Reviewing %d file(s) from the diff only (contents over max_file_size/max_total_size): %s\n", len(fc.DiffOnly), strings.Join(fc.DiffOnly, ", "))
+		fmt.Fprintf(os.Stderr, "Reviewing %d file(s) from the diff only (contents over max_file_size/max_total_size, or a symlink leaving the repository): %s\n", len(fc.DiffOnly), strings.Join(fc.DiffOnly, ", "))
 	}
 
 	if capped, truncated := capDiff(pr.Diff, maxDiffSize); len(truncated) > 0 {

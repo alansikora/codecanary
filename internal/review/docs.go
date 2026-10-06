@@ -1,6 +1,7 @@
 package review
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -61,6 +62,10 @@ func readProjectDocsFrom(root string, prFiles []string) map[string]string {
 			break
 		}
 		data, err := readRepoFile(root, relPath)
+		if errors.Is(err, errSymlinkInPath) {
+			Stderrf(ansiYellow, "Skipping project doc %s: it links outside the repository\n", relPath)
+			continue
+		}
 		if err != nil {
 			continue
 		}

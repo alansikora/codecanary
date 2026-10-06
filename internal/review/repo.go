@@ -25,19 +25,20 @@ func gitRepoRoot() string {
 	return strings.TrimSpace(string(out))
 }
 
-// errSymlinkInPath is returned by readRepoFile for a path that goes through a
-// symbolic link.
-var errSymlinkInPath = errors.New("path goes through a symbolic link")
+// errSymlinkInPath is returned by readRepoFile for a path that goes through
+// a symbolic link leading outside the repository, or into its .git directory.
+var errSymlinkInPath = errors.New("path goes through a symbolic link that leaves the repository")
 
 // readRepoFile reads rel, a path relative to root (or to the current
-// directory when root is ""), refusing any path in which a component is a
-// symbolic link. In CI the checkout is the PR's code, and on a fork PR an
+// directory when root is ""). A path that goes through a symbolic link is
+// read only when the link's real target stays inside root and outside
+// root/.git. In CI the checkout is the PR's code, and on a fork PR an
 // attacker could commit a link such as notes.md -> /proc/self/environ: a
 // plain os.ReadFile would put the process environment, provider secret
 // included, into the prompt, where injected instructions could get it
-// quoted in a public finding. Links that stay inside the repository are
-// refused too: a review reads the diff of a link (its target path), not the
-// target's contents.
+// quoted in a public finding. .git is excluded because on same-repo PRs the
+// checkout keeps the token in .git/config. Links inside the repository, such
+// as CLAUDE.md -> AGENTS.md, keep working.
 //
 // PR file paths are repository-relative. An absolute rel (tests only) is
 // checked from its parent directory down, since the parent of a temp dir can
@@ -62,8 +63,17 @@ func readRepoFile(root, rel string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if resolved != path {
+	if resolved != path && !insideRepo(realRoot, resolved) {
 		return nil, fmt.Errorf("%s: %w", rel, errSymlinkInPath)
 	}
-	return os.ReadFile(path)
+	return os.ReadFile(resolved)
+}
+
+// insideRepo reports whether path is under root and not under root/.git.
+func insideRepo(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	return rel != ".git" && !strings.HasPrefix(rel, ".git"+string(filepath.Separator))
 }
