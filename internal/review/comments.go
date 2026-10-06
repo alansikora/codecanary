@@ -153,6 +153,7 @@ type ReviewStatus struct {
 // ghStatusRollup is the subset of `gh pr view --json ...` we parse.
 type ghStatusRollup struct {
 	HeadRefOid        string `json:"headRefOid"`
+	IsDraft           bool   `json:"isDraft"`
 	StatusCheckRollup []struct {
 		Name       string `json:"name"`
 		Status     string `json:"status"`
@@ -165,7 +166,7 @@ type ghStatusRollup struct {
 // the check isn't present (e.g. the action hasn't started yet).
 func FetchReviewStatus(repo string, prNumber int) (ReviewStatus, error) {
 	args := []string{"pr", "view", fmt.Sprintf("%d", prNumber),
-		"--json", "headRefOid,statusCheckRollup"}
+		"--json", "headRefOid,isDraft,statusCheckRollup"}
 	if repo != "" {
 		args = append(args, "--repo", repo)
 	}
@@ -177,15 +178,44 @@ func FetchReviewStatus(repo string, prNumber int) (ReviewStatus, error) {
 	if err := json.Unmarshal(out, &rollup); err != nil {
 		return ReviewStatus{}, fmt.Errorf("parsing pr view: %w", err)
 	}
+	return reviewStatusFromRollup(rollup), nil
+}
+
+// reviewStatusFromRollup picks the state of the `review` check from a head
+// commit's check rollup, which can hold several runs of it: a push made
+// while the PR was a draft leaves a `skipped` one, and marking the PR ready
+// starts another on the same commit. So:
+//   - any run still queued or in progress → that state (still waiting);
+//   - else a completed run that wasn't skipped → that run's result;
+//   - else only skipped runs: on a draft PR no review is coming, so report
+//     completed/skipped; on a ready PR the next run hasn't been created yet,
+//     so report nothing (keep waiting).
+func reviewStatusFromRollup(rollup ghStatusRollup) ReviewStatus {
 	rs := ReviewStatus{HeadSHA: rollup.HeadRefOid}
+	var done *ReviewStatus
+	sawSkipped := false
 	for _, c := range rollup.StatusCheckRollup {
-		if strings.EqualFold(c.Name, reviewCheckName) {
-			rs.Status = strings.ToLower(c.Status)
-			rs.Conclusion = strings.ToLower(c.Conclusion)
-			break
+		if !strings.EqualFold(c.Name, reviewCheckName) {
+			continue
+		}
+		status, conclusion := strings.ToLower(c.Status), strings.ToLower(c.Conclusion)
+		switch {
+		case status != "completed":
+			rs.Status, rs.Conclusion = status, conclusion
+			return rs
+		case conclusion == "skipped":
+			sawSkipped = true
+		case done == nil:
+			done = &ReviewStatus{HeadSHA: rs.HeadSHA, Status: status, Conclusion: conclusion}
 		}
 	}
-	return rs, nil
+	if done != nil {
+		return *done
+	}
+	if sawSkipped && rollup.IsDraft {
+		rs.Status, rs.Conclusion = "completed", "skipped"
+	}
+	return rs
 }
 
 // graphQLFindingsResponse is the JSON shape of the reviewThreads query
