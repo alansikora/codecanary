@@ -395,7 +395,7 @@ func coverageGroups(c *ReviewCoverage) []coverageGroup {
 	}
 	var groups []coverageGroup
 	for _, g := range []coverageGroup{
-		{"Reviewed from the diff only (contents over `max_file_size` / `max_total_size`, or a symlink leaving the repository)", c.DiffOnly},
+		{"Reviewed from the diff only (contents over `max_file_size` / `max_total_size`, or a symlink)", c.DiffOnly},
 		{"Diff truncated (over `max_diff_size`)", c.TruncatedDiff},
 	} {
 		if len(g.Files) > 0 {

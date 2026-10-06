@@ -43,8 +43,8 @@ func TestReadRepoFileSymlinks(t *testing.T) {
 		}
 	}
 
-	// FetchFileContents reads PR files relative to the cwd. A link out of the
-	// repo is reviewed from its diff only: never read, never dropped.
+	// FetchFileContents reads PR files relative to the cwd. Links are reviewed
+	// from their diff only: never read, never dropped.
 	t.Chdir(repo)
 	external := []string{"notes.md", filepath.Join("linkdir", "environ"), "gitcfg"}
 	res := FetchFileContents(append([]string{"real.go", "inside-link.go"}, external...), nil, 1<<20, 1<<20)
@@ -53,11 +53,13 @@ func TestReadRepoFileSymlinks(t *testing.T) {
 			t.Fatalf("secret leaked into contents via %s", path)
 		}
 	}
-	if _, ok := res.Contents["inside-link.go"]; !ok {
-		t.Errorf("a link inside the repo should be read, got %v", res.Contents)
+	// A PR file that is itself a link (even one inside the repo) is reviewed
+	// from its diff: its contents would be the target's, under another name.
+	if _, ok := res.Contents["inside-link.go"]; ok {
+		t.Errorf("a PR file that is a symlink should not get contents")
 	}
-	if got, want := strings.Join(res.DiffOnly, ","), strings.Join(external, ","); got != want {
-		t.Errorf("DiffOnly = %q, want the external links %q", got, want)
+	if got, want := strings.Join(res.DiffOnly, ","), strings.Join(append([]string{"inside-link.go"}, external...), ","); got != want {
+		t.Errorf("DiffOnly = %q, want %q", got, want)
 	}
 	if len(res.Excluded) != 0 {
 		t.Errorf("links shouldn't be excluded from the review, got %v", res.Excluded)

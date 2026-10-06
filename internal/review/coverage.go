@@ -53,10 +53,17 @@ func FetchFileContents(files []string, ignorePatterns []string, maxPerFile, maxT
 			continue
 		}
 
+		// A PR file that is itself a symlink has a one-line diff (its target
+		// path); showing the target's contents under the link's name would
+		// let findings anchor to lines the link doesn't have. Review the diff.
+		if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+			res.DiffOnly = append(res.DiffOnly, path)
+			continue
+		}
 		data, err := readRepoFile("", path)
 		if errors.Is(err, errSymlinkInPath) {
-			// Never read through a link out of the checkout. Its diff (the
-			// link's target path) is still reviewed.
+			// Never read through a link out of the checkout (a symlinked
+			// parent directory). The file's diff is still reviewed.
 			res.DiffOnly = append(res.DiffOnly, path)
 			continue
 		}
@@ -125,7 +132,7 @@ func scopePRForPrompt(pr *PRData, fc FileContentsResult, maxDiffSize int) *Revie
 	}
 	if len(fc.DiffOnly) > 0 {
 		// Too large for full contents, but still part of the review.
-		fmt.Fprintf(os.Stderr, "Reviewing %d file(s) from the diff only (contents over max_file_size/max_total_size, or a symlink leaving the repository): %s\n", len(fc.DiffOnly), strings.Join(fc.DiffOnly, ", "))
+		fmt.Fprintf(os.Stderr, "Reviewing %d file(s) from the diff only (contents over max_file_size/max_total_size, or a symlink): %s\n", len(fc.DiffOnly), strings.Join(fc.DiffOnly, ", "))
 	}
 
 	if capped, truncated := capDiff(pr.Diff, maxDiffSize); len(truncated) > 0 {
