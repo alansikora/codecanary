@@ -60,13 +60,13 @@ func TestFormatReviewBody_ContainsFixAll(t *testing.T) {
 		PRNumber: 42,
 		Findings: []Finding{
 			{
-				ID:       "test-id",
-				File:     "a.go",
-				Line:     1,
-				Severity: "warning",
-				Title:    "Test",
+				ID:          "test-id",
+				File:        "a.go",
+				Line:        1,
+				Severity:    "warning",
+				Title:       "Test",
 				Description: "Test desc",
-				FixRef:   "42-1",
+				FixRef:      "42-1",
 			},
 		},
 	}

@@ -33,6 +33,9 @@ claude_review_tools: ""         # opt-in tool allowlist for the review call (cla
                                 # before emitting findings. Empty = no tools (single-shot).
                                 # Allowed tools: Read, Grep, Glob (confined to the repo root).
 
+review_on: push                 # push (default): review every push; ready: review when the PR
+                                # opens, reopens or turns ready, and skip pushes (see "Reviewing once, at ready")
+
 max_budget_usd: 0.50            # per-review spending limit in USD (default: 0 = unlimited)
 timeout_minutes: 5              # per-invocation timeout
 max_file_size: 102400           # per-file content limit in bytes (default 100KB)
@@ -287,6 +290,10 @@ Add `review.local.yml` to your `.gitignore` so it is not committed:
 ## Project docs auto-discovery
 
 CodeCanary automatically reads `CLAUDE.md` files from your repo root, `.claude/` directory, and top-level subdirectories. These are injected into the review prompt as additional context. Per-file cap is 4KB, total cap is 12KB.
+
+## Reviewing once, at ready
+
+With `review_on: ready`, CodeCanary reviews a pull request when it opens (not as a draft), reopens or turns ready for review, and skips the pushes after that. It suits a flow where a draft is where the work happens: CI runs on every push to the draft, and the PR turns ready only when it is done. To review a change made after ready, move the PR to draft and back to ready. Replies on CodeCanary's threads are still evaluated. A skipped push still gets a `CodeCanary / review` status, so a required check doesn't block the PR: it fails while a blocking finding (warning or above) is open and passes otherwise.
 
 ## Draft PRs
 

@@ -52,7 +52,19 @@ type ReviewConfig struct {
 	// gets tools.
 	ClaudeReviewTools string            `yaml:"claude_review_tools"`
 	Evaluation        *EvaluationConfig `yaml:"evaluation"`
+	// ReviewOn picks which pull request events review in GitHub mode: "push"
+	// (the default, also "") reviews every push; "ready" reviews when the PR
+	// opens, reopens or turns ready for review, and skips pushes to a PR that
+	// is already ready (move it to draft and back to ready for a new review).
+	// Thread replies are evaluated either way.
+	ReviewOn string `yaml:"review_on"`
 }
+
+// Valid ReviewOn values.
+const (
+	ReviewOnPush  = "push"
+	ReviewOnReady = "ready"
+)
 
 // ModelConfig holds the provider and model settings needed to construct a
 // single ModelProvider instance. Used internally to build review and triage
@@ -219,6 +231,9 @@ func (c *ReviewConfig) Validate() error {
 	}
 	if c.MaxBudgetUSD < 0 {
 		return fmt.Errorf("max_budget_usd must be non-negative, got %f", c.MaxBudgetUSD)
+	}
+	if c.ReviewOn != "" && c.ReviewOn != ReviewOnPush && c.ReviewOn != ReviewOnReady {
+		return fmt.Errorf("invalid review_on %q (valid: %s, %s)", c.ReviewOn, ReviewOnPush, ReviewOnReady)
 	}
 	if c.Provider == "" {
 		return fmt.Errorf("provider is required (valid: %s)", strings.Join(providerNames(), ", "))

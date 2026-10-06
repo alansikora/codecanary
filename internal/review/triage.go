@@ -15,13 +15,13 @@ import (
 type ThreadClassification int
 
 const (
-	TriageSkip               ThreadClassification = iota // no code changes at all
-	TriageCodeChanged                                    // diff touches finding location (outdated)
-	TriageHasReply                                       // thread has human replies
-	TriageCodeChangedReply                               // both code changed AND has replies
-	TriageCrossFileChange                                // diff has changes but NOT in this thread's file
-	TriageFileRemovedFromPR                              // file no longer in the PR
-	TriagePreviouslyAcked                                // bot already ack'd a deferral; no new human reply since
+	TriageSkip              ThreadClassification = iota // no code changes at all
+	TriageCodeChanged                                   // diff touches finding location (outdated)
+	TriageHasReply                                      // thread has human replies
+	TriageCodeChangedReply                              // both code changed AND has replies
+	TriageCrossFileChange                               // diff has changes but NOT in this thread's file
+	TriageFileRemovedFromPR                             // file no longer in the PR
+	TriagePreviouslyAcked                               // bot already ack'd a deferral; no new human reply since
 )
 
 // TriagedThread pairs a ReviewThread with its classification and context.

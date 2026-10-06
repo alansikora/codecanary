@@ -272,6 +272,24 @@ func Run(opts RunOptions) error {
 		}
 	}
 
+	// Propagate resolved repo to the platform adapter.
+	if gp, ok := platform.(*GithubPlatform); ok && gp.Repo == "" && opts.Repo != "" {
+		gp.Repo = opts.Repo
+	}
+
+	// 1b. Let the platform skip the run before any PR data is fetched (e.g.
+	// review_on: ready on a push). A config that fails to load is reported
+	// by prepareReview below.
+	if cfg, err := loadReviewConfig(opts.ConfigPath); err == nil {
+		skip, err := platform.SkipReview(cfg, opts.ReplyOnly)
+		if err != nil {
+			return err
+		}
+		if skip {
+			return nil
+		}
+	}
+
 	// 2. Fetch PR data if not pre-fetched (GitHub mode).
 	if pr == nil {
 		if opts.Repo == "" {
@@ -279,10 +297,6 @@ func Run(opts RunOptions) error {
 				return fmt.Errorf("detecting repo: %w", detectRepoErr)
 			}
 			return fmt.Errorf("detecting repo: could not determine repository")
-		}
-		// Propagate resolved repo to the platform adapter.
-		if gp, ok := platform.(*GithubPlatform); ok && gp.Repo == "" {
-			gp.Repo = opts.Repo
 		}
 
 		fetched, err := FetchPR(opts.Repo, opts.PRNumber)

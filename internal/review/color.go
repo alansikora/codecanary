@@ -10,16 +10,16 @@ import (
 
 // ANSI escape codes.
 const (
-	ansiReset     = "\033[0m"
-	ansiBold      = "\033[1m"
-	ansiDim       = "\033[2m"
-	ansiRed       = "\033[31m"
-	ansiGreen     = "\033[32m"
-	ansiYellow    = "\033[33m"
-	ansiBlue      = "\033[34m"
-	ansiCyan      = "\033[36m"
-	ansiGray      = "\033[90m"
-	ansiBoldRed   = "\033[1;31m"
+	ansiReset      = "\033[0m"
+	ansiBold       = "\033[1m"
+	ansiDim        = "\033[2m"
+	ansiRed        = "\033[31m"
+	ansiGreen      = "\033[32m"
+	ansiYellow     = "\033[33m"
+	ansiBlue       = "\033[34m"
+	ansiCyan       = "\033[36m"
+	ansiGray       = "\033[90m"
+	ansiBoldRed    = "\033[1;31m"
 	ansiBoldYellow = "\033[1;33m"
 )
 

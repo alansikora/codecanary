@@ -35,6 +35,13 @@ type ReviewPlatform interface {
 	// ReportUsage handles usage data (best-effort). On GitHub this writes
 	// to GITHUB_ENV. Locally this prints a usage table to stderr.
 	ReportUsage(tracker *UsageTracker)
+
+	// SkipReview reports whether this run should not review at all under the
+	// config, and settles what a skipped run still owes. On GitHub that is
+	// review_on: ready on a push to a ready PR; the new HEAD still gets a
+	// commit status, derived from the open threads, so a required check
+	// doesn't block the PR. Locally it never skips.
+	SkipReview(cfg *ReviewConfig, replyOnly bool) (bool, error)
 }
 
 // combineFindings strips the Status field from stillOpen findings (so persisted
