@@ -266,7 +266,7 @@ The `codecanary-fix` Claude skill wraps the review pipeline in a confirm-and-app
 
 | Mode | PR | Workflow | Findings source | Cycle finalization |
 |---|---|---|---|---|
-| `pr-loop` | yes | yes | `codecanary findings --watch` (bot posts on push) | commit + push; bot re-runs |
+| `pr-loop` | yes | yes | `codecanary findings --watch` (bot posts on push, or when the PR turns ready) | `review_on: push`: commit + push; bot re-runs. `review_on: ready`: draft, one commit + push, wait for required checks (`codecanary checks --watch`), mark ready; bot re-runs. Failing checks stop the loop with the PR left as a draft |
 | `local-loop-git` | yes | no | `codecanary review` (local engine) | commit on PR branch, **no push**; operator is asked at session end whether to push accumulated commits |
 | `local-loop-nogit` | no | — | `codecanary review` (local engine) | no commits, no pushes; fixes applied in place |
 

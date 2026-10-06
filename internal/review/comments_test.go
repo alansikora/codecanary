@@ -85,3 +85,40 @@ func TestParseFindingMarkersHandlesMalformedJSON(t *testing.T) {
 		t.Fatalf("expected 0 findings from malformed marker, got %d", len(got))
 	}
 }
+
+func rollupOf(draft bool, runs ...[2]string) ghStatusRollup {
+	r := ghStatusRollup{HeadRefOid: "abc", IsDraft: draft}
+	for _, run := range runs {
+		r.StatusCheckRollup = append(r.StatusCheckRollup, struct {
+			Name       string `json:"name"`
+			Status     string `json:"status"`
+			Conclusion string `json:"conclusion"`
+		}{"review", run[0], run[1]})
+	}
+	return r
+}
+
+// With review_on: ready the loop pushes to a draft (the review job is
+// skipped), then marks the PR ready, which starts a new run on the same
+// commit. The watcher must wait for that run, not return the skipped one.
+func TestReviewStatusFromRollup(t *testing.T) {
+	cases := []struct {
+		name               string
+		rollup             ghStatusRollup
+		wantStatus, wantCo string
+	}{
+		{"no run yet", rollupOf(false), "", ""},
+		{"single completed run", rollupOf(false, [2]string{"COMPLETED", "SUCCESS"}), "completed", "success"},
+		{"in progress", rollupOf(false, [2]string{"IN_PROGRESS", ""}), "in_progress", ""},
+		{"ready PR, only the draft push's skipped run", rollupOf(false, [2]string{"COMPLETED", "SKIPPED"}), "", ""},
+		{"ready PR, skipped run then a queued one", rollupOf(false, [2]string{"COMPLETED", "SKIPPED"}, [2]string{"QUEUED", ""}), "queued", ""},
+		{"ready PR, skipped run then a finished one", rollupOf(false, [2]string{"COMPLETED", "SKIPPED"}, [2]string{"COMPLETED", "SUCCESS"}), "completed", "success"},
+		{"draft PR, skipped: no review is coming", rollupOf(true, [2]string{"COMPLETED", "SKIPPED"}), "completed", "skipped"},
+	}
+	for _, c := range cases {
+		got := reviewStatusFromRollup(c.rollup)
+		if got.Status != c.wantStatus || got.Conclusion != c.wantCo {
+			t.Errorf("%s: got %q/%q, want %q/%q", c.name, got.Status, got.Conclusion, c.wantStatus, c.wantCo)
+		}
+	}
+}

@@ -135,3 +135,34 @@ func TestModeOutput_Skill(t *testing.T) {
 }
 
 func ptr(s string) *string { return &s }
+
+// review_on comes from the repo's committed config, which is what the bot
+// runs with; it defaults to push when unset or when there is no config.
+func TestRepoReviewOn(t *testing.T) {
+	t.Setenv("GITHUB_ACTIONS", "")
+	write := func(t *testing.T, body string) {
+		t.Helper()
+		dir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(dir, ".codecanary"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, ".codecanary", "config.yml"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Chdir(dir)
+	}
+	base := "version: 1\nprovider: claude\nreview_model: sonnet\ntriage_model: haiku\n"
+
+	write(t, base+"review_on: ready\n")
+	if got := repoReviewOn(); got != "ready" {
+		t.Errorf("review_on: ready → %q", got)
+	}
+	write(t, base)
+	if got := repoReviewOn(); got != "push" {
+		t.Errorf("unset review_on → %q, want push", got)
+	}
+	t.Chdir(t.TempDir())
+	if got := repoReviewOn(); got != "push" {
+		t.Errorf("no config → %q, want push", got)
+	}
+}

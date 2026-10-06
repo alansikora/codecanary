@@ -113,6 +113,7 @@ Same required-check config works for both paths: the bot satisfies the check on 
 | `codecanary review [pr-number]` | Review a PR or local diff |
 | `codecanary findings [pr-number]` | Fetch bot findings for a PR (markdown or JSON) |
 | `codecanary reply --url <URL> --body <text>` | Post a reply on a review-comment thread (used by the skill when skipping) |
+| `codecanary checks [pr-number]` | Report a PR's required checks other than CodeCanary's own; `--watch` waits until they pass or one fails (used by the skill with `review_on: ready`) |
 | `codecanary signoff` | Post a `CodeCanary / review` commit status from the last local review (see [gating merges](#gating-merges-on-clean-reviews)) |
 | `codecanary install-skill` | Install the `codecanary-fix` Claude Code skill |
 | `codecanary setup [local\|github]` | Interactive setup wizard |
@@ -280,7 +281,7 @@ This writes the embedded skill to `~/.claude/skills/codecanary-fix/SKILL.md`, wh
 
 Then in Claude Code, ask it to `handle codecanary` on your PR (or invoke `/codecanary-fix` directly) — the skill is auto-discovered and matched to your request via its frontmatter description. Two modes:
 
-- **PR mode** (default) — watches the GitHub Actions review check via `codecanary findings --watch`, renders a triage table, asks you to confirm which fixes to apply, commits and pushes, then loops on the next review. Every finding you defer gets a reply posted on its review thread explaining why, via `codecanary reply`.
+- **PR mode** (default) — watches the GitHub Actions review check via `codecanary findings --watch`, renders a triage table, asks you to confirm which fixes to apply, commits and pushes, then loops on the next review. In repos with `review_on: ready`, where pushes to a ready PR aren't reviewed, each cycle moves the PR to draft, pushes the fixes in one commit, waits for the required checks (`codecanary checks --watch`) and marks the PR ready again to request the next review; if the checks fail it stops and leaves the PR as a draft. Every finding you defer gets a reply posted on its review thread explaining why, via `codecanary reply`.
 - **Local mode** — triggered automatically when no PR is detected for the current branch. Single pass against your dirty working tree. Applies approved fixes without committing or pushing.
 
 The full skill contract lives at [internal/skills/codecanary-fix/SKILL.md](internal/skills/codecanary-fix/SKILL.md).
