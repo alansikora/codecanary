@@ -316,7 +316,8 @@ Track this state across iterations:
      (e.g. thread already resolved), surface the error to the operator
      and continue with the remaining skips.
 
-     **A finding you FIXED sometimes needs a reply too.** The bot's
+     **A finding you FIXED sometimes needs a reply too** (`pr-loop`
+     only; local modes have no threads). The bot's
      triage re-reads each unresolved thread against the new code and
      resolves the ones it can see were fixed — that is the normal path
      and it needs nothing from you. It fails when the fix isn't visible
@@ -417,14 +418,21 @@ Exit the loop (and tell the operator *why*) whenever any of these hold:
 
   **Rule out the benign explanations first — a recurrence is not by
   itself a disagreement.** Before escalating, for each repeating
-  `fix_ref`: read the file at head to confirm the issue is actually
-  still there, and check whether you ever replied on the thread. A
-  finding you fixed correctly but never replied to will recur whenever
-  triage couldn't see the fix, and it recurs *identically* — same
-  `fix_ref`, title, file and line. Escalating that sends the operator
-  hunting for a defect that isn't there. It needs a reply (step 9),
-  not a stop. Escalate only when the issue is still present in the code
-  at head after your fix.
+  `fix_ref`, read the file at head to confirm the issue is actually
+  still there. Escalate only when it is. When the code at head no
+  longer has the issue, the finding came back without being live:
+  - **`pr-loop`**: check whether you ever replied on the thread. A
+    finding you fixed correctly but never replied to recurs whenever
+    triage couldn't see the fix, and it recurs *identically* — same
+    `fix_ref`, title, file and line. It needs a reply naming the
+    commit (step 9), not a stop.
+  - **`local-loop-git` / `local-loop-nogit`**: there is no thread to
+    reply to. Tell the operator the reviewer re-flagged a finding the
+    code no longer has, and add its `fix_ref` to `DEFERRED_FIX_REFS`
+    so it doesn't surface again this session.
+
+  Escalating either case sends the operator hunting for a defect that
+  isn't there.
 
 Always proceed to the **exit handling** section after stopping — it
 is where the push prompt for `local-loop-git` lives.
