@@ -5,20 +5,21 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
 
 // CallUsage captures token usage and cost for a single Claude CLI invocation.
 type CallUsage struct {
-	Phase       string  `json:"phase"`
-	Model       string  `json:"model"`
-	InputTokens int     `json:"input_tokens"`
-	OutputTokens int    `json:"output_tokens"`
-	CacheReadTokens   int `json:"cache_read_tokens,omitempty"`
-	CacheCreateTokens int `json:"cache_creation_tokens,omitempty"`
-	CostUSD     float64 `json:"cost_usd"`
-	DurationMS  int     `json:"duration_ms"`
+	Phase             string  `json:"phase"`
+	Model             string  `json:"model"`
+	InputTokens       int     `json:"input_tokens"`
+	OutputTokens      int     `json:"output_tokens"`
+	CacheReadTokens   int     `json:"cache_read_tokens,omitempty"`
+	CacheCreateTokens int     `json:"cache_creation_tokens,omitempty"`
+	CostUSD           float64 `json:"cost_usd"`
+	DurationMS        int     `json:"duration_ms"`
 }
 
 // UsageReport is the top-level structure written to the usage JSON file.
@@ -139,9 +140,17 @@ func (u *UsageTracker) Report(repo string, prNumber int) *UsageReport {
 }
 
 // WriteUsageEnv writes the usage report as a CODECANARY_USAGE env var
-// to $GITHUB_ENV so subsequent workflow steps can read it. No-op outside
-// GitHub Actions.
+// to $GITHUB_ENV so subsequent workflow steps can read it, and a markdown
+// summary to $GITHUB_STEP_SUMMARY. Each is a no-op when its own env var is
+// unset, so neither depends on the other being present.
 func WriteUsageEnv(report *UsageReport) error {
+	// Written first, and independently: the two variables travel together in
+	// GitHub Actions, but gating the summary on GITHUB_ENV would make it
+	// silently unreachable anywhere only GITHUB_STEP_SUMMARY is set.
+	if err := writeStepSummary(report); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to write GitHub Step Summary: %v\n", err)
+	}
+
 	path := os.Getenv("GITHUB_ENV")
 	if path == "" {
 		return nil
@@ -160,6 +169,66 @@ func WriteUsageEnv(report *UsageReport) error {
 
 	if _, err := fmt.Fprintf(f, "CODECANARY_USAGE=%s\n", data); err != nil {
 		return fmt.Errorf("writing to GITHUB_ENV: %w", err)
+	}
+
+	return nil
+}
+
+// formatInt formats an integer with thousands separators (e.g. 1234567 -> "1,234,567").
+// Iterates by byte index since fmt.Sprintf("%d", n) produces ASCII-only output.
+func formatInt(n int) string {
+	s := fmt.Sprintf("%d", n)
+	if n < 0 {
+		s = s[1:]
+	}
+	var result []byte
+	for i := 0; i < len(s); i++ {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			result = append(result, ',')
+		}
+		result = append(result, s[i])
+	}
+	if n < 0 {
+		return "-" + string(result)
+	}
+	return string(result)
+}
+
+// writeStepSummary appends a markdown usage table to $GITHUB_STEP_SUMMARY.
+// No-op if $GITHUB_STEP_SUMMARY is not set or if the report has no calls.
+func writeStepSummary(report *UsageReport) error {
+	path := os.Getenv("GITHUB_STEP_SUMMARY")
+	if path == "" {
+		return nil
+	}
+	if len(report.Calls) == 0 {
+		return nil
+	}
+
+	// Render the whole table first so a partial write can't leave a
+	// half-formed table in the job summary.
+	var b strings.Builder
+	b.WriteString("## CodeCanary Usage\n\n")
+	b.WriteString("| Phase | Model | Input tokens | Output tokens | Cost |\n")
+	b.WriteString("|-------|-------|-------------|---------------|------|\n")
+	for _, c := range report.Calls {
+		fmt.Fprintf(&b, "| %s | %s | %s | %s | $%.4f |\n",
+			c.Phase, c.Model,
+			formatInt(c.InputTokens), formatInt(c.OutputTokens),
+			c.CostUSD)
+	}
+	fmt.Fprintf(&b, "| **Total** | | **%s** | **%s** | **$%.4f** |\n",
+		formatInt(report.TotalInputTokens), formatInt(report.TotalOutputTokens),
+		report.TotalCostUSD)
+
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("opening GITHUB_STEP_SUMMARY: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	if _, err := f.WriteString(b.String()); err != nil {
+		return fmt.Errorf("writing GITHUB_STEP_SUMMARY: %w", err)
 	}
 
 	return nil
@@ -191,7 +260,7 @@ type claudeJSONResponse struct {
 	APIErrorStatus int     `json:"api_error_status"` // HTTP status when is_error is true (e.g. 429 on rate limit)
 	CostUSD        float64 `json:"total_cost_usd"`
 	DurationMS     int     `json:"duration_ms"`
-	Usage      struct {
+	Usage          struct {
 		InputTokens              int `json:"input_tokens"`
 		OutputTokens             int `json:"output_tokens"`
 		CacheReadInputTokens     int `json:"cache_read_input_tokens"`

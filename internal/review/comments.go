@@ -152,7 +152,7 @@ type ReviewStatus struct {
 
 // ghStatusRollup is the subset of `gh pr view --json ...` we parse.
 type ghStatusRollup struct {
-	HeadRefOid       string `json:"headRefOid"`
+	HeadRefOid        string `json:"headRefOid"`
 	StatusCheckRollup []struct {
 		Name       string `json:"name"`
 		Status     string `json:"status"`

@@ -209,6 +209,8 @@ review_model: claude-sonnet-5-5
 triage_model: haiku
 ```
 
+With the Claude CLI provider you can opt the reviewer into read-only `Read,Grep,Glob` tool use (`claude_review_tools`) so it can check code outside the diff before flagging it; file access is confined to the repository. See [Reviewer tool use](docs/configuration.md#reviewer-tool-use) for the security model before enabling it on repos that take fork PRs.
+
 You can also create a `.codecanary/review.local.yml` for personal overrides (gitignored) — its rules, context, and ignore patterns are appended to the shared `review.yml`.
 
 For the full config reference including budget controls, size limits, timeouts, evaluation context, and the `review.yml` override file, see [docs/configuration.md](docs/configuration.md).

@@ -37,7 +37,7 @@ type PricingEntry struct {
 // MaxTokensEntry maps a model name substring to its maximum output token limit.
 // Matched the same way as PricingEntry — first substring match wins.
 type MaxTokensEntry struct {
-	Substring      string
+	Substring       string
 	MaxOutputTokens int
 }
 

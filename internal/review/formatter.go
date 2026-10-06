@@ -131,6 +131,16 @@ func FormatMarkdown(result *ReviewResult) string {
 // so any entry added here becomes an accepted config value.
 var severityLevels = []string{"critical", "bug", "warning", "suggestion", "nitpick"}
 
+// ValidateSeverity reports whether s is one of the canonical severity levels.
+func ValidateSeverity(s string) error {
+	for _, level := range severityLevels {
+		if s == level {
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid severity %q: must be one of: %s", s, strings.Join(severityLevels, ", "))
+}
+
 // countSeverities counts findings by severity across one or more lists.
 func countSeverities(lists ...[]Finding) (counts map[string]int, total int) {
 	counts = map[string]int{}
@@ -385,7 +395,7 @@ func coverageGroups(c *ReviewCoverage) []coverageGroup {
 	}
 	var groups []coverageGroup
 	for _, g := range []coverageGroup{
-		{"Reviewed from the diff only (full contents over `max_file_size` / `max_total_size`)", c.DiffOnly},
+		{"Reviewed from the diff only (contents over `max_file_size` / `max_total_size`, or a symlink)", c.DiffOnly},
 		{"Diff truncated (over `max_diff_size`)", c.TruncatedDiff},
 	} {
 		if len(g.Files) > 0 {

@@ -1,6 +1,7 @@
 package review
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -321,4 +322,61 @@ func (g *GithubPlatform) postReviewCommitStatus(sha string, summary ReviewSummar
 	}
 	Stderrf(ansiGreen, "Posted %s = %s on %s (%s)\n",
 		ReviewCommitStatusContext, state, shortSHA(sha), desc)
+}
+
+// githubEventAction is the `action` of the pull request event the workflow
+// runs for (e.g. "synchronize", "ready_for_review"), or "" outside Actions.
+func githubEventAction() string {
+	path := os.Getenv("GITHUB_EVENT_PATH")
+	if path == "" {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var event struct {
+		Action string `json:"action"`
+	}
+	if json.Unmarshal(data, &event) != nil {
+		return ""
+	}
+	return event.Action
+}
+
+// SkipReview skips a push to a ready PR under review_on: ready. Statuses are
+// keyed by commit, so the new HEAD would otherwise have no CodeCanary status
+// and a required check would block the PR; it gets one derived from the open
+// threads instead, without calling the model.
+func (g *GithubPlatform) SkipReview(cfg *ReviewConfig, replyOnly bool) (bool, error) {
+	if !skipsPush(cfg, replyOnly, githubEventAction()) {
+		return false, nil
+	}
+	fmt.Fprintf(os.Stderr, "review_on: ready — a push to a ready pull request is not reviewed; move it to draft and back to ready for a new review\n")
+	sha, err := currentHEAD()
+	if err != nil {
+		return true, fmt.Errorf("skipped push: %w", err)
+	}
+	threads, _, _ := g.LoadPreviousFindings()
+	state, desc := skippedPushStatus(threads)
+	if err := PostReviewCommitStatus(g.Repo, sha, state, desc); err != nil {
+		return true, fmt.Errorf("posting %s status for a skipped push: %w", ReviewCommitStatusContext, err)
+	}
+	Stderrf(ansiGreen, "Posted %s = %s on %s (%s)\n", ReviewCommitStatusContext, state, shortSHA(sha), desc)
+	return true, nil
+}
+
+// skippedPushStatus is the commit status for a push review_on: ready didn't
+// review: the same rule as a reviewed push, applied to the threads still
+// open. Threads the author already answered and the bot acknowledged count as
+// handled, as they do in a review.
+func skippedPushStatus(threads []ReviewThread) (state, desc string) {
+	var open []ReviewThread
+	for _, t := range threads {
+		if !hasAcknowledgmentReply(t) {
+			open = append(open, t)
+		}
+	}
+	state, desc = commitStatusFromSummary(computeReviewSummary(open, nil, nil))
+	return state, desc + "; push not reviewed (review_on: ready)"
 }

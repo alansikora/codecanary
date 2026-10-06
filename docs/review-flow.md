@@ -26,6 +26,10 @@ State files are keyed by `owner/repo/branch` so the same branch name across diff
 
 ## Pipeline Steps
 
+### 0. Skip check
+
+Before fetching anything, `Run()` asks the platform whether this run should review at all (`ReviewPlatform.SkipReview`). Locally the answer is always no. On GitHub, `review_on: ready` skips a push (`synchronize` event) to a PR that is already ready; reply-only runs are never skipped. A skipped push still gets a `CodeCanary / review` commit status on its HEAD, because statuses are keyed by commit and a required check would otherwise block the PR. The status comes from the open threads without a model call: `failure` while a blocking thread (warning or above) is open and not acknowledged, `success` otherwise. The description ends with "push not reviewed (review_on: ready)".
+
 ### 1. Fetch PR data
 
 **GitHub PR** (`--post`): Fetches PR metadata (title, body, author, branches) and diff via `gh pr view` and `gh pr diff`.
@@ -43,7 +47,7 @@ If the PR is a setup PR (only adds workflow files with no real code changes), th
 - **Path-scoped rules**: Discovers Claude Code rule files under `.claude/rules/*.md`. Each may carry YAML frontmatter (`description`, `paths`); a rule is included only when a changed file matches one of its `paths` globs (no `paths` = always included), reusing the same full-path matcher (`matchesAny`) as `review.yml` rule scoping. Rules have their own byte budget (8KB per file, 32KB total) separate from the CLAUDE.md caps, and merge into the same project-docs context.
 - **File contents** (`FetchFileContents`, `scopePRForPrompt` in `coverage.go`): Reads changed files from disk and sorts them into three groups:
   - *Full contents*: read into the prompt, up to `max_file_size` per file (default 100KB) and `max_total_size` in total (default 500KB), in PR file order.
-  - *Diff only*: files over `max_file_size`, or that would push the total past `max_total_size`. Their contents are left out of the prompt, but they stay in the file list and their hunks stay in the diff, so their changes are still reviewed (and their previous threads are triaged normally rather than auto-resolved as "file removed").
+  - *Diff only*: files over `max_file_size`, files that would push the total past `max_total_size`, PR files that are symlinks (their diff is the target path; the target's contents would be shown under the wrong name), and paths through a symlinked directory that leaves the repository or goes into `.git` (`readRepoFile`). Their contents are left out of the prompt, but they stay in the file list and their hunks stay in the diff, so their changes are still reviewed (and their previous threads are triaged normally rather than auto-resolved as "file removed").
   - *Excluded*: files matching an `ignore` pattern, and binary files. These leave the review entirely: they are dropped from the file list and their hunks are removed from the prompt diff (via `ScopeDiffToFiles`).
 
   Files that can't be read (deleted in the PR) are in none of the groups; their diff is reviewed as usual.
@@ -59,6 +63,8 @@ Two `ModelProvider` instances are created from config:
 - **Triage provider**: A cheaper model for re-evaluating previous findings (configured via `triage_model` in config).
 
 Each provider is constructed via the factory registry in `provider.go`. The provider name determines which adapter handles the API call (Anthropic, OpenAI, OpenRouter, or Claude CLI).
+
+**Claude CLI specifics** (`provider_claude.go`): every call — review and triage — runs with `--setting-sources user --strict-mcp-config` and `disableAllHooks` in the generated `--settings`, so the checked-out PR's own `.claude/` settings, hooks and `.mcp.json` servers never load; the CLI's environment is the filtered env above minus GitHub tokens and the raw `CODECANARY_PROVIDER_SECRET` (mapped to `CLAUDE_CODE_OAUTH_TOKEN` first). Calls are single-shot (`--tools ""`) unless `claude_review_tools` is set, in which case only the **review** provider gets `--tools Read,Grep,Glob` (or a subset) so it can check claims against code outside the diff. Those calls are confined to the repository root: the CLI runs from `git rev-parse --show-toplevel` with `--restricted`, `--permission-mode dontAsk`, `blockReadsOutsideWorkingDirectories` and `Read` deny rules for credential and system paths. No repo root, or a user `--settings` in `claude_args`, turns tools off. See [configuration.md](configuration.md#reviewer-tool-use) for the security model.
 
 ### 4. Load previous findings
 
@@ -116,7 +122,7 @@ Two diffs serve different purposes:
 | `TriagePreviouslyAcked` | Bot already posted a `<!-- codecanary:ack:* -->` reply and no human reply since | Auto-resolved by Go code (no LLM) -- prior reason carried forward |
 | `TriageSkip` | No activity diff, not outdated, no replies | Skipped (no LLM) |
 | `TriageCodeChanged` | GitHub outdated flag, or file in PR diff | LLM evaluates with file-scoped diff + file snippet |
-| `TriageHasReply` | Human replied (no code changes) | LLM evaluates reply intent |
+| `TriageHasReply` | Human replied (no code changes) | LLM evaluates reply intent with a file snippet around the finding |
 | `TriageCodeChangedReply` | Both code changed and human replied | LLM evaluates both |
 | `TriageCrossFileChange` | Changes in other files only | LLM evaluates with full PR diff |
 | `TriageFileRemovedFromPR` | File no longer in PR | Auto-resolved by Go code (no LLM) -- thread resolved on GitHub |
@@ -218,11 +224,15 @@ After the review is posted (or updated in place), `GithubPlatform.Publish` also 
 
 ### 10. Report usage
 
-**GitHub PR** (`--post`): Writes token counts and cost to `GITHUB_ENV` for downstream workflow steps.
+**GitHub PR** (`--post`): Writes token counts and cost to `GITHUB_ENV` for downstream workflow steps, and appends a per-phase markdown table (phase, model, input/output tokens, cost) to `GITHUB_STEP_SUMMARY` so the run's cost is visible on the Actions job page without opening the logs. Both are no-ops outside GitHub Actions, and the step summary is skipped when the report has no calls.
 
 **Local**: Prints a usage summary table to stderr (model, tokens, cost, duration) if running in a terminal.
 
-### 11. Telemetry
+### 11. Exit status
+
+With `--fail-on <severity>`, `Run()` returns a `FailOnSeverityError` when any finding is at or above that severity in the canonical order (`critical`, `bug`, `warning`, `suggestion`, `nitpick`), making the CLI exit non-zero so CI can gate on review results. The check runs *after* publishing, saving state and reporting usage, so a failing threshold never costs the PR its comments or its telemetry. The flag value is validated up front against `review.ValidateSeverity`, which reads the same `severityLevels` slice that config validation uses.
+
+### 12. Telemetry
 
 If telemetry is enabled (opt-in), fires an anonymous event with aggregate stats: provider, platform, finding counts by severity, token counts, cost, and duration. No code content is sent.
 
@@ -241,6 +251,8 @@ If telemetry is enabled (opt-in), fires an anonymous event with aggregate stats:
 **Anti-ping-pong.** The incremental prompt includes recently resolved findings so the LLM doesn't re-raise similar issues. Non-code resolutions (dismissed, acknowledged, rebutted) keep threads open for re-triage on future pushes, but post ack replies to avoid duplicate acknowledgments.
 
 **Sticky ack across pushes.** Once the bot has recorded a deferral on a thread, subsequent pushes preserve that classification (via `TriagePreviouslyAcked`) until the author adds a new reply. Without this, the next push would re-triage the thread as `TriageCodeChanged` (when the file was touched) or `TriageSkip` (when it wasn't), and the resolution reason would evaporate from the summary — flipping `Acknowledged by author: N` to `Still unresolved: N` and failing the commit status check on a thread the operator already deferred.
+
+**The PR checkout is untrusted input to the Claude CLI.** Under `pull_request_target` the CLI runs inside the PR head with a provider secret in its environment, so nothing in that checkout may configure it: project settings, hooks and `.mcp.json` are excluded on every call, not just when tools are on. Reviewer tool use is opt-in and limited to read-only file tools confined to the repo root, because the anchoring guards control where a finding lands but not what its text quotes.
 
 **One run per PR at a time, nothing dropped.** The edit-vs-post rule in Publish assumes no two runs on the same PR publish at once. The workflow template enforces that with a job-level `concurrency` group per PR (`codecanary-pr-<n>`, `cancel-in-progress: false`, `queue: max`). It is job-level so runs whose job is skipped by `if:` (the bot's own ack replies, non-reply comments) never join the group, and `queue: max` lets several runs wait instead of GitHub's default of one pending run per group, where each newly queued run cancels the pending one. With the old workflow-level group, a human reply (running) followed by a push (pending) followed by the bot's ack reply cancelled the push review, so HEAD was never reviewed.
 

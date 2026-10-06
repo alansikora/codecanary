@@ -137,23 +137,23 @@ type anthropicTool struct {
 
 // anthropicResponse is the Anthropic /v1/messages response format.
 type anthropicResponse struct {
-	ID      string                  `json:"id"`
-	Type    string                  `json:"type"`
-	Role    string                  `json:"role"`
-	Content []anthropicResponseBlock `json:"content"`
-	Model      string `json:"model"`
-	StopReason string `json:"stop_reason"`
+	ID         string                   `json:"id"`
+	Type       string                   `json:"type"`
+	Role       string                   `json:"role"`
+	Content    []anthropicResponseBlock `json:"content"`
+	Model      string                   `json:"model"`
+	StopReason string                   `json:"stop_reason"`
 	// StopDetails is set only when StopReason is "refusal".
 	StopDetails *struct {
 		Category    string `json:"category"`
 		Explanation string `json:"explanation"`
 	} `json:"stop_details"`
-	Usage      struct {
-		InputTokens              int                   `json:"input_tokens"`
-		OutputTokens             int                   `json:"output_tokens"`
-		CacheCreationInputTokens int                   `json:"cache_creation_input_tokens"`
-		CacheReadInputTokens     int                   `json:"cache_read_input_tokens"`
-		Iterations               []anthropicIteration  `json:"iterations"`
+	Usage struct {
+		InputTokens              int                  `json:"input_tokens"`
+		OutputTokens             int                  `json:"output_tokens"`
+		CacheCreationInputTokens int                  `json:"cache_creation_input_tokens"`
+		CacheReadInputTokens     int                  `json:"cache_read_input_tokens"`
+		Iterations               []anthropicIteration `json:"iterations"`
 	} `json:"usage"`
 	Error *struct {
 		Type    string `json:"type"`

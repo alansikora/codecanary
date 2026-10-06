@@ -16,6 +16,8 @@ cmd/
       install_skill.go # codecanary install-skill — write embedded Claude skill to disk
       setup.go     # codecanary setup [local|github]
       auth.go      # codecanary auth [status|delete]
+  evalsnap/        # Dev tool — freeze a PR's review inputs into a corpus fixture
+    main.go        # NOT part of the codecanary binary
 internal/
   review/
     runner.go            # Core review pipeline — single Run() entry point
@@ -25,7 +27,7 @@ internal/
     provider_anthropic.go
     provider_openai.go
     provider_openrouter.go
-    provider_claude.go   # Claude CLI wrapper
+    provider_claude.go   # Claude CLI wrapper (project-config isolation, opt-in confined reviewer tools)
     provider_compat.go   # Shared types for OpenAI-compatible APIs
     pricing.go           # Token-based cost estimation
     # Platform layer (environment abstraction)
@@ -41,10 +43,15 @@ internal/
     github.go            # GitHub API calls (fetch threads, post reviews)
     comments.go          # PR review comment fetch + finding marker parser + review-check watcher
     local.go             # Local diff & git operations
+    repo.go              # Git repo helpers shared across flows (repo root)
     state.go             # Local state persistence
     docs.go              # Project doc discovery
+    prompt_golden_test.go # Renders corpus fixtures into prompts, diffs vs goldens
+    testdata/corpus/     # Frozen review inputs + prompt goldens + SIZES.txt (public PRs only)
   credentials/     # Credential storage (keychain with file fallback)
     keyring.go     # Store/Retrieve/Delete — keychain first, ~/.codecanary/credentials.json fallback
+  evalcorpus/      # Frozen review inputs — fixture format + load/save (dev tooling)
+    corpus.go      # Fixture type, Dir/Load/Save/List
   skills/          # Claude Code skills embedded in the binary via //go:embed
     skills.go      # Exports CodecanaryFix() returning the skill body
     codecanary-fix/SKILL.md  # Canonical skill source (duplicated at .claude/skills/codecanary-fix/SKILL.md; parity enforced by skills_test.go)
@@ -71,6 +78,19 @@ install.sh         # Downloads and installs codecanary binary permanently
 ## Binary
 
 - **`codecanary`** — single binary for reviews, setup, and credential management. Installed locally via `install.sh`, also used by the GitHub Action.
+- **`evalsnap`** (`cmd/evalsnap`) — developer tool, not shipped. `go build ./cmd/review` does not pull it in.
+
+## Prompt evaluation harness
+
+`internal/review/testdata/corpus/` holds frozen review inputs captured from real PRs. `TestPromptGolden` renders each into a prompt and diffs it against a checked-in golden, and `SIZES.txt` records every prompt's rendered size.
+
+This exists because prompt edits are otherwise invisible in code review: their effect surfaces later as a change in the findings, when the cause is hard to attribute. Instruction overhead is paid on every review forever, so growth should be a number in the diff, not a surprise.
+
+It measures prompt *construction*, not review *quality* — no model runs. Judging whether a prompt change helps needs labelled findings, repeated runs to establish variance, and real model calls; that is a separate layer that does not exist yet.
+
+Regenerate goldens with `go test ./internal/review/ -run Golden -update`, and state the size delta in the PR description.
+
+**Fixtures committed to this repo must come from public repositories only.** A fixture embeds the PR diff and the full contents of every file the reviewer read; committing one from a private repo publishes that source permanently. `evalsnap` refuses to write a private repo's fixture into any git-tracked directory. Keep those outside the repo and point `$CODECANARY_EVAL_CORPUS` at them. See `internal/review/testdata/corpus/README.md`.
 
 ## Build
 
