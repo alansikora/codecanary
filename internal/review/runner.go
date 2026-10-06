@@ -310,6 +310,10 @@ func Run(opts RunOptions) error {
 		return err
 	}
 	cfg := rctx.Config
+	if opts.Post && skipsPush(cfg, opts.ReplyOnly, githubEventAction()) {
+		fmt.Fprintf(os.Stderr, "review_on: ready — a push to a ready pull request is not reviewed; move it to draft and back to ready for a new review\n")
+		return nil
+	}
 	if opts.ClaudePath != "" && cfg.Provider != "claude" {
 		Stderrf(ansiYellow, "Warning: --claude-path is ignored for provider %q\n", cfg.Provider)
 	}
