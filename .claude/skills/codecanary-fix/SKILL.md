@@ -36,6 +36,20 @@ This is intentional for token-efficiency: the loop machinery runs in
 subprocesses whose output is small and structured. Your conversation budget
 is spent on triage judgment and fix application, not on watching CI.
 
+Fetching is already one call with a small payload, so there is nothing to
+gain by delegating it to a subagent. If you delegate it anyway, carry the
+findings **verbatim** — severity, `fix_ref`, `file:line`, title, full
+description, `comment_url`, `commit_id` — truncated where long, never
+paraphrased. Dispositions turn on exact wording: "the rule is silent on
+instances" and "the rule bails before reaching the comparison" collapse
+into the same one-line summary and point triage at opposite answers. The
+loss is invisible, because the summary reads fine.
+
+`codecanary findings` takes an optional `[pr-number]`, so you can drive a
+cycle from any directory without checking the branch out. `--watch` blocks
+up to `--timeout` minutes (default 15); pass a smaller value when you don't
+want to hold a foreground call that long.
+
 ## Mode selection
 
 The CLI decides the mode. Before the first iteration, run
@@ -167,6 +181,28 @@ Track this state across iterations:
      posted by the skill in earlier cycles therefore stop re-surfacing
      once the next bot run has ack'd them, so you should never see the
      same deferred finding twice.
+
+     **Compare each finding's `commit_id` to the top-level `commit`
+     (the reviewed head) before you treat the finding as new.** When
+     they differ, GitHub has marked that thread *outdated*: the code
+     the finding was anchored to has changed since the comment was
+     posted. GitHub re-anchors `commit_id` forward to head for as long
+     as the hunk survives, so a lagging `commit_id` is a reliable
+     signal that the anchor moved.
+
+     Outdated is **not** the same as fixed, and the check is only a
+     prompt to go read the code:
+     - The anchor also moves on an edit that had nothing to do with
+       the finding, so an outdated finding can still be live. Never
+       ack one without reading the file at head.
+     - A fix that landed in a *different* file leaves `commit_id`
+       equal to head. Equality is not evidence the finding is live.
+
+     Either way, judge an outdated finding against the file at head —
+     not against the diff hunk quoted in the bot's comment, which is
+     stale by definition. If the issue is genuinely gone, the
+     disposition is a `codecanary reply` naming the commit that fixed
+     it (step 9), never a second fix.
    - **`local-loop-git` / `local-loop-nogit`**: run
      `codecanary review --output json`. The command runs the review
      inline; stdout is a JSON object with a `findings` array in the
@@ -192,6 +228,26 @@ Track this state across iterations:
 4. If the findings list is empty (for any mode), tell the operator
    the review is clean and proceed to the **exit handling** section
    below. Do not loop further.
+
+   **In local modes, check the JSON's `coverage` field before calling
+   an empty result clean.** It is present only when the reviewer did
+   not see every changed file in full:
+   - `excluded`: files left out entirely (they match an `ignore`
+     pattern, or are binary). When they include files this change
+     actually touches, the reviewer did not look at them — report "no
+     findings, but these files were not reviewed: …", naming them,
+     never a clean review.
+   - `diff_only` / `truncated_diff`: reviewed from their diff only, or
+     from a trimmed diff. Say so alongside "no findings" when they are
+     files this change is about.
+
+   **Open questions are not findings.** Items the reviewer flagged
+   `needs_verification` (it couldn't confirm them from what it saw)
+   arrive in the `questions` array of `codecanary review` in local
+   modes; on GitHub they sit in a collapsed "Open questions" section
+   of the review and `codecanary findings` doesn't list them. They have
+   no thread, don't affect the commit status, and need no reply;
+   mention one to the operator only if it is worth checking.
 5. If `CYCLE > 1`, emit this reminder to the operator before the
    triage table, substituting *N* with the current value of `CYCLE`:
    > This is review cycle *N*. Before applying fixes, check whether the new
@@ -202,6 +258,23 @@ Track this state across iterations:
 6. Render a triage table (Markdown) summarizing the findings:
    - Columns: severity, file:line, fix_ref, title, proposed action
    - One row per finding. Keep proposed actions terse (one line each).
+
+   **Test each finding against the project's own conventions before
+   proposing to apply it.** A finding can be correct in general and
+   wrong for this repo: a style rule the project deliberately splits
+   (indent under `private` in classes but not modules), a pattern the
+   surrounding code establishes on purpose, or a premise about the code
+   that doesn't hold (the rule the bot invokes bails earlier, so it
+   can't fire). Read the rule the finding implies, and read the nearest
+   sibling file, before taking the bot as right. When it's wrong, the
+   disposition is a reply naming *why* — worth more than a fix, because
+   a refutation the bot can read stops the finding recurring.
+
+   Do not use this as licence to wave findings away. "This change
+   contradicts its own stated purpose" and "this duplicates a decision
+   made elsewhere in the codebase" are the highest-value things the bot
+   produces, and both are easy to mistake for nitpicks. The rule is to
+   *read*, not to default either way.
 7. Ask the operator to confirm. Use `AskUserQuestion` with a single
    question whose options are:
    - "Apply all" *(Recommended)*
@@ -242,6 +315,25 @@ Track this state across iterations:
      Post one reply per skipped finding, sequentially. If a reply fails
      (e.g. thread already resolved), surface the error to the operator
      and continue with the remaining skips.
+
+     **A finding you FIXED sometimes needs a reply too** (`pr-loop`
+     only; local modes have no threads). The bot's
+     triage re-reads each unresolved thread against the new code and
+     resolves the ones it can see were fixed — that is the normal path
+     and it needs nothing from you. It fails when the fix isn't visible
+     where the evaluator looks: the fix landed in another file, or the
+     change was a restructure it reads as unrelated. So when a finding
+     you already fixed in an earlier cycle comes back, reply naming the
+     commit and the change that fixed it, and do **not** fix it twice.
+
+     A rationale recorded anywhere else is invisible to the bot — it
+     reads replies on the review thread and nothing else. A PR
+     issue-comment, a commit message, or the PR body acks nothing.
+
+     Note that your reply is an *input* to the next triage pass, not an
+     ack in itself: the bot writes the `codecanary:ack:` marker after
+     its own evaluation agrees with you. A reply the evaluator finds
+     unconvincing leaves the thread open.
 
    - **`local-loop-git` / `local-loop-nogit`** — there is no review
      thread to reply to. Instead, add each skipped finding's
@@ -323,6 +415,24 @@ Exit the loop (and tell the operator *why*) whenever any of these hold:
   whether the fix is correct before continuing. Applies to all three
   modes — a local reviewer can re-flag a bad fix the same way the bot
   does.
+
+  **Rule out the benign explanations first — a recurrence is not by
+  itself a disagreement.** Before escalating, for each repeating
+  `fix_ref`, read the file at head to confirm the issue is actually
+  still there. Escalate only when it is. When the code at head no
+  longer has the issue, the finding came back without being live:
+  - **`pr-loop`**: check whether you ever replied on the thread. A
+    finding you fixed correctly but never replied to recurs whenever
+    triage couldn't see the fix, and it recurs *identically* — same
+    `fix_ref`, title, file and line. It needs a reply naming the
+    commit (step 9), not a stop.
+  - **`local-loop-git` / `local-loop-nogit`**: there is no thread to
+    reply to. Tell the operator the reviewer re-flagged a finding the
+    code no longer has, and add its `fix_ref` to `DEFERRED_FIX_REFS`
+    so it doesn't surface again this session.
+
+  Escalating either case sends the operator hunting for a defect that
+  isn't there.
 
 Always proceed to the **exit handling** section after stopping — it
 is where the push prompt for `local-loop-git` lives.
