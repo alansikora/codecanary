@@ -1,6 +1,7 @@
 package review
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -58,7 +59,17 @@ func readClaudeRulesFrom(root string, prFiles []string) map[string]string {
 
 	totalBytes := 0
 	for _, abs := range matches {
-		data, err := os.ReadFile(abs)
+		rel, err := filepath.Rel(root, abs)
+		if err != nil {
+			continue
+		}
+		// Never read a rule through a symlink that leaves the repository: on
+		// a fork PR the checkout is attacker-controlled (see readRepoFile).
+		data, err := readRepoFile(root, rel)
+		if errors.Is(err, errSymlinkInPath) {
+			Stderrf(ansiYellow, "Skipping Claude rule %s: it links outside the repository\n", rel)
+			continue
+		}
 		if err != nil {
 			continue
 		}

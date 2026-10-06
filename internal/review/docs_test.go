@@ -350,3 +350,46 @@ func tail(s string, n int) string {
 	}
 	return s[len(s)-n:]
 }
+
+// On a fork PR .claude/rules is attacker-controlled: a rule (or the whole
+// rules directory) linking out of the repository must not be read.
+func TestReadClaudeRules_RefusesExternalSymlinks(t *testing.T) {
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "environ")
+	if err := os.WriteFile(secret, []byte("CODECANARY_PROVIDER_SECRET=sk-test"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	root := t.TempDir()
+	writeFile(t, root, filepath.Join(".claude", "rules", "ok.md"), "Use tabs.\n")
+	if err := os.Symlink(secret, filepath.Join(root, ".claude", "rules", "leak.md")); err != nil {
+		t.Fatal(err)
+	}
+	rules := readClaudeRulesFrom(root, []string{"a.go"})
+	if _, ok := rules[filepath.Join(".claude", "rules", "ok.md")]; !ok {
+		t.Errorf("regular rule should load, got %v", keys(rules))
+	}
+	for k, v := range rules {
+		if strings.Contains(v, "sk-test") {
+			t.Fatalf("secret leaked via rule %s", k)
+		}
+	}
+
+	// The whole .claude/rules directory as a link out of the repository.
+	root2 := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(outside, "rules"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "rules", "x.md"), []byte("sk-test"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root2, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "rules"), filepath.Join(root2, ".claude", "rules")); err != nil {
+		t.Fatal(err)
+	}
+	if got := readClaudeRulesFrom(root2, []string{"a.go"}); len(got) != 0 {
+		t.Errorf("rules under a directory linking out of the repo should not load, got %v", keys(got))
+	}
+}
