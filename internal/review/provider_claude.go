@@ -8,22 +8,22 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/alansikora/codecanary/internal/credentials"
 )
 
-// validCLIModels is the set of allowed model values for the Claude CLI provider.
-// Accepts both aliases (sonnet) and full model IDs (claude-sonnet-4-6).
-var validCLIModels = map[string]bool{
-	"haiku": true, "sonnet": true, "opus": true,
-	"claude-haiku-4-5-20251001": true,
-	"claude-sonnet-4-6":         true,
-	"claude-sonnet-4-5":         true,
-	"claude-opus-4-6":           true,
-	"claude-opus-4-5":           true,
-}
+// cliModelAliases are the Claude CLI's model aliases; each follows the
+// latest model of its family.
+var cliModelAliases = map[string]bool{"haiku": true, "sonnet": true, "opus": true, "fable": true}
+
+// cliModelIDRe matches a full Claude model ID (claude-sonnet-5-5,
+// claude-haiku-4-5-20251001). A pattern instead of a list, so a new model
+// doesn't need a codecanary release; the CLI rejects IDs that don't exist.
+// It still keeps out flag-shaped values and other vendors' IDs.
+var cliModelIDRe = regexp.MustCompile(`^claude-[a-z0-9]+(-[a-z0-9]+)*$`)
 
 func init() {
 	providers["claude"] = ProviderFactory{
@@ -47,8 +47,8 @@ func init() {
 }
 
 func validateClaude(mc *ModelConfig) error {
-	if mc.Model != "" && !validCLIModels[mc.Model] {
-		return fmt.Errorf("invalid model %q for claude provider (valid: haiku, sonnet, opus)", mc.Model)
+	if mc.Model != "" && !cliModelAliases[mc.Model] && !cliModelIDRe.MatchString(mc.Model) {
+		return fmt.Errorf("invalid model %q for claude provider (use an alias — haiku, sonnet, opus, fable — or a full model ID such as claude-sonnet-5-5)", mc.Model)
 	}
 	return nil
 }
