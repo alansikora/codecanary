@@ -19,3 +19,9 @@
 
 /apple-touch-icon.png
   Cache-Control: public, max-age=86400
+
+/logo-512.png
+  Cache-Control: public, max-age=86400
+
+/logo.svg
+  Cache-Control: public, max-age=86400
