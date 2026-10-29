@@ -43,7 +43,10 @@ func seedSkill(t *testing.T, home, content string) string {
 func modeJSON(t *testing.T) map[string]any {
 	t.Helper()
 	pr := 42
-	out := buildModeOutput(&review.ModeInfo{Mode: "pr-loop", PR: &pr, Branch: "feat/x", Reasons: []string{}})
+	out, err := buildModeOutput(&review.ModeInfo{Mode: "pr-loop", PR: &pr, Branch: "feat/x", Reasons: []string{}})
+	if err != nil {
+		t.Fatalf("buildModeOutput: %v", err)
+	}
 	data, err := json.Marshal(out)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -170,4 +173,42 @@ func TestModeOutput_RepoConfig(t *testing.T) {
 	check(t, "fix.enabled", "push", true)
 	t.Chdir(t.TempDir())
 	check(t, "no config", "push", false)
+}
+
+// confirm_fixes comes from the operator's review.local.yml, with or without
+// a committed config, and an unparseable file fails mode rather than reading
+// as false.
+func TestModeOutput_ConfirmFixes(t *testing.T) {
+	stubModeEnv(t, "v1.2.3", "", false)
+	writeLocal := func(t *testing.T, body string) string {
+		t.Helper()
+		dir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(dir, ".codecanary"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, ".codecanary", "review.local.yml"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+
+	t.Chdir(t.TempDir())
+	if m := modeJSON(t); m["confirm_fixes"] != false {
+		t.Errorf("no review.local.yml: confirm_fixes = %v, want false", m["confirm_fixes"])
+	}
+
+	dir := writeLocal(t, "confirm_fixes: true\n")
+	sub := filepath.Join(dir, "pkg")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(sub)
+	if m := modeJSON(t); m["confirm_fixes"] != true {
+		t.Errorf("confirm_fixes: true: confirm_fixes = %v, want true", m["confirm_fixes"])
+	}
+
+	t.Chdir(writeLocal(t, "confirm_fixes: [\n"))
+	if _, err := buildModeOutput(&review.ModeInfo{Mode: "pr-loop"}); err == nil {
+		t.Error("unparseable review.local.yml: want an error, got nil")
+	}
 }

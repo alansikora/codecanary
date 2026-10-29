@@ -449,6 +449,23 @@ type ReviewPolicy struct {
 	Rules   []Rule   `yaml:"rules"`
 	Context string   `yaml:"context"`
 	Ignore  []string `yaml:"ignore"`
+	// ConfirmFixes turns on per-finding confirmation in the codecanary-fix
+	// skill: it shows its triage and asks which findings to apply instead of
+	// acting on its own judgment. Valid only in review.local.yml — it is the
+	// preference of whoever runs the skill, not a team policy, and the
+	// review itself never reads it. Reported by `codecanary mode`.
+	ConfirmFixes bool `yaml:"confirm_fixes"`
+}
+
+// ConfirmFixes reports confirm_fixes from the repo's review.local.yml,
+// found by walking up from the current directory. False when there is no
+// such file.
+func ConfirmFixes() (bool, error) {
+	policy, err := findRepoPolicyFile("review.local.yml", "")
+	if err != nil || policy == nil {
+		return false, err
+	}
+	return policy.ConfirmFixes, nil
 }
 
 // claudeReadOnlyTools are the Claude CLI tools the reviewer may be granted.
@@ -615,15 +632,20 @@ func findPolicyFile(configPath, filename string) (*ReviewPolicy, error) {
 	if policy, err := loadReviewPolicyFile(adjacent); policy != nil || err != nil {
 		return policy, err
 	}
+	return findRepoPolicyFile(filename, adjacent)
+}
 
-	// Walk up from cwd to find .codecanary/<filename> in the repo.
+// findRepoPolicyFile walks up from cwd looking for .codecanary/<filename>,
+// skipping the path in skip (already checked by the caller). Returns nil
+// (no error) if the file is not found.
+func findRepoPolicyFile(filename, skip string) (*ReviewPolicy, error) {
 	dir, err := os.Getwd()
 	if err != nil {
 		return nil, nil
 	}
 	for {
 		policyPath := filepath.Join(dir, ".codecanary", filename)
-		if policyPath != adjacent { // avoid re-checking
+		if policyPath != skip { // avoid re-checking
 			if policy, err := loadReviewPolicyFile(policyPath); policy != nil || err != nil {
 				return policy, err
 			}
@@ -706,6 +728,9 @@ func LoadConfig(path string) (*ReviewConfig, error) {
 	localPolicy, err := findPolicyFile(path, "review.local.yml")
 	if err != nil {
 		return nil, err
+	}
+	if policy != nil && policy.ConfirmFixes {
+		return nil, fmt.Errorf("invalid config: confirm_fixes in review.yml: it is a personal setting for the codecanary-fix skill — set it in review.local.yml")
 	}
 
 	merged := mergeLocalPolicy(policy, localPolicy)

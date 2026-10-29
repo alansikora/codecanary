@@ -894,3 +894,45 @@ func TestLoadConfig_FixProvider(t *testing.T) {
 		t.Errorf("provider=%q fix provider=%q fix model=%q", cfg.Provider, cfg.EffectiveFixProvider(), cfg.EffectiveFixModel())
 	}
 }
+
+// confirm_fixes is read from review.local.yml only; in the committed
+// review.yml it is rejected rather than silently ignored.
+func TestConfirmFixes(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, ".codecanary")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("creating config dir: %v", err)
+	}
+	t.Chdir(dir)
+
+	if got, err := ConfirmFixes(); err != nil || got {
+		t.Fatalf("no review.local.yml: ConfirmFixes() = %t, %v; want false, nil", got, err)
+	}
+
+	if err := os.WriteFile(filepath.Join(configDir, "review.local.yml"), []byte("confirm_fixes: true\n"), 0644); err != nil {
+		t.Fatalf("writing review.local.yml: %v", err)
+	}
+	if got, err := ConfirmFixes(); err != nil || !got {
+		t.Fatalf("confirm_fixes: true: ConfirmFixes() = %t, %v; want true, nil", got, err)
+	}
+
+	configYAML := `version: 1
+provider: anthropic
+review_model: claude-sonnet-4-6
+triage_model: claude-haiku-4-5-20251001
+`
+	configPath := filepath.Join(configDir, "config.yml")
+	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
+		t.Fatalf("writing config.yml: %v", err)
+	}
+	if _, err := LoadConfig(configPath); err != nil {
+		t.Fatalf("confirm_fixes in review.local.yml: LoadConfig failed: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(configDir, "review.yml"), []byte("confirm_fixes: true\n"), 0644); err != nil {
+		t.Fatalf("writing review.yml: %v", err)
+	}
+	if _, err := LoadConfig(configPath); err == nil || !strings.Contains(err.Error(), "review.local.yml") {
+		t.Fatalf("confirm_fixes in review.yml: LoadConfig error = %v, want one pointing to review.local.yml", err)
+	}
+}

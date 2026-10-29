@@ -34,7 +34,9 @@ The output also carries update status so callers that parse stdout (the
 codecanary-fix skill) can surface it: the running version, the latest
 known release from the cached version check, and whether the skill
 installed by 'codecanary install-skill' differs from the copy embedded in
-this binary.
+this binary. confirm_fixes reports whether the operator's
+.codecanary/review.local.yml asks the skill to confirm findings before
+applying them.
 
 Use --output json to get the full detection payload for automation.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -44,7 +46,10 @@ Use --output json to get the full detection payload for automation.`,
 		if err != nil {
 			return err
 		}
-		info := buildModeOutput(mode)
+		info, err := buildModeOutput(mode)
+		if err != nil {
+			return err
+		}
 
 		switch output {
 		case "json":
@@ -73,6 +78,10 @@ type modeOutput struct {
 	// FixOnCI reports the repo's fix.enabled: the workflow fixes the bot's
 	// findings in CI, so the skill's pr-loop has nothing to apply itself.
 	FixOnCI bool `json:"fix_on_ci"`
+	// ConfirmFixes reports confirm_fixes from the operator's
+	// .codecanary/review.local.yml: the skill asks which findings to apply
+	// instead of applying its own triage.
+	ConfirmFixes bool `json:"confirm_fixes"`
 }
 
 // skillState describes the skill at the default install-skill location.
@@ -84,9 +93,16 @@ type skillState struct {
 	Stale     bool   `json:"stale"`
 }
 
-func buildModeOutput(mode *review.ModeInfo) *modeOutput {
+func buildModeOutput(mode *review.ModeInfo) (*modeOutput, error) {
+	// Unlike the repo config, an unreadable review.local.yml fails mode:
+	// reading it as false would drop the operator's request to confirm
+	// fixes and let the skill apply them unasked.
+	confirm, err := review.ConfirmFixes()
+	if err != nil {
+		return nil, err
+	}
 	cfg := repoConfig()
-	out := &modeOutput{ModeInfo: mode, Version: DisplayVersion(), ReviewOn: review.ReviewOnPush, FixOnCI: cfg.FixEnabled()}
+	out := &modeOutput{ModeInfo: mode, Version: DisplayVersion(), ReviewOn: review.ReviewOnPush, FixOnCI: cfg.FixEnabled(), ConfirmFixes: confirm}
 	if cfg != nil && cfg.ReviewOn != "" {
 		out.ReviewOn = cfg.ReviewOn
 	}
@@ -104,7 +120,7 @@ func buildModeOutput(mode *review.ModeInfo) *modeOutput {
 		out.Skill.Installed = installed
 		out.Skill.Stale = installed && differs
 	}
-	return out
+	return out, nil
 }
 
 func emitModeHuman(info *modeOutput) error {
@@ -112,6 +128,7 @@ func emitModeHuman(info *modeOutput) error {
 	fmt.Printf("Branch: %s\n", info.Branch)
 	fmt.Printf("Review on: %s\n", info.ReviewOn)
 	fmt.Printf("Fix on CI: %t\n", info.FixOnCI)
+	fmt.Printf("Confirm fixes: %t\n", info.ConfirmFixes)
 	if info.Repo != "" {
 		fmt.Printf("Repo: %s\n", info.Repo)
 	}
