@@ -545,7 +545,8 @@
           <div class="hero-meta">
             <span><svg><use href="#i-check"/></svg>MIT licensed</span>
             <span><svg><use href="#i-check"/></svg>Linux &amp; macOS, amd64 &amp; arm64</span>
-            <span><svg><use href="#i-check"/></svg>Anthropic · OpenAI · OpenRouter · Grok · Claude CLI</span>
+            <span><svg><use href="#i-check"/></svg>Review with Anthropic · OpenAI · OpenRouter · Grok · Claude CLI</span>
+            <span><svg><use href="#i-check"/></svg>Fix with Claude or Codex</span>
           </div>
         </div>
 
@@ -591,7 +592,7 @@
         <div class="stat reveal"><b><em>0</em></b><span>model calls to re-check threads nobody touched</span></div>
         <div class="stat reveal" style="--d:.08s"><b>1</b><span>commit per fix cycle, reviewed like any other push</span></div>
         <div class="stat reveal" style="--d:.16s"><b>2<em> / </em>5</b><span>fix commits per push / per PR before it stops</span></div>
-        <div class="stat reveal" style="--d:.24s"><b>5</b><span>LLM providers, no lock-in</span></div>
+        <div class="stat reveal" style="--d:.24s"><b>5<em> + </em>2</b><span>review providers + fix agents, mixed as you like</span></div>
       </div>
     </section>
 
@@ -616,7 +617,7 @@
                 <li class="step" data-i="1"><div class="step-h"><small>02</small><h3>Your model reviews the diff</h3></div>
                   <p>It reads the diff, the files around it, your <code>CLAUDE.md</code> and the <code>.claude/rules</code> that match the changed paths. Findings land inline on the exact diff lines, each with a severity.</p></li>
                 <li class="step" data-i="2"><div class="step-h"><small>03</small><h3>An agent fixes it in CI</h3></div>
-                  <p>A coding agent (the Claude CLI today) works through each finding on the PR branch. It applies a minimal fix, or refutes the finding with a reply on its thread when it doesn't hold for your repo. It can read and edit files, but it has no shell and no network access.</p></li>
+                  <p>A coding agent, Claude or Codex, works through each finding on the PR branch. It applies a minimal fix, or refutes the finding with a reply on its thread when it doesn't hold for your repo. It runs sandboxed: it can only write inside the repository, with no network access.</p></li>
                 <li class="step" data-i="3"><div class="step-h"><small>04</small><h3>One commit, pushed</h3></div>
                   <p>The fixes land as one commit under the PR author's name, co-authored by the agent. It's pushed with the CodeCanary app's token, so your CI and the next review run on it like on any other push.</p></li>
                 <li class="step" data-i="4"><div class="step-h"><small>05</small><h3>Triage, then re-review</h3></div>
@@ -659,7 +660,7 @@
                 <div data-s="1"><span class="c">review</span>  3 files · +24/−8 · CLAUDE.md + 1 rule loaded</div>
                 <div data-s="1"><span class="c">review</span>  posted 3 inline findings: <span class="bad">1 bug</span> · <span class="w">1 warning</span> · <span class="i">1 suggestion</span></div>
                 <div data-s="1"><span class="bad">✕</span> CodeCanary / review  2 unresolved blocking findings</div>
-                <div data-s="2"><span class="c">fix</span>     agent · Read Grep Glob Edit Write · no Bash</div>
+                <div data-s="2"><span class="c">fix</span>     codex · sandboxed · repo-only writes · no network</div>
                 <div data-s="2"><span class="ok">applied</span>  session.go:10  warning</div>
                 <div data-s="2"><span class="ok">applied</span>  session.go:12  bug</div>
                 <div data-s="2"><span class="i">refuted</span>  session.go:11  suggestion → reply posted</div>
@@ -684,10 +685,10 @@
         <div class="guard">
           <div class="reveal"><h4><svg><use href="#i-gauge"/></svg>Loop limits</h4><p>Limits are counted from commit trailers, so there's no state to lose or reset by hand. Your own push resets the per-push count.</p></div>
           <div class="reveal" style="--d:.08s"><h4><svg><use href="#i-fork"/></svg>Never races you</h4><p>If you push again first, it stands down and your new commit gets its own review. It skips drafts and never runs on fork PRs, where your secrets would meet untrusted code.</p></div>
-          <div class="reveal" style="--d:.16s"><h4><svg><use href="#i-lock"/></svg>Can't touch your pipeline</h4><p>The agent can read and edit files, nothing more. Edits to <code>.github/</code>, <code>.codecanary/</code> or <code>.claude/</code> are reverted before the commit, so it can't rewrite its own workflow or config.</p></div>
+          <div class="reveal" style="--d:.16s"><h4><svg><use href="#i-lock"/></svg>Can't touch your pipeline</h4><p>The agent writes only inside the repository. Edits to <code>.github/</code>, <code>.codecanary/</code> or <code>.claude/</code> are reverted before the commit, so it can't rewrite its own workflow or config.</p></div>
           <div class="reveal" style="--d:.24s"><h4><svg><use href="#i-green"/></svg>Never red</h4><p>If the fix can't run, say on a rate limit, it posts one comment and leaves CI green. Finish locally with <code>/codecanary-fix</code>.</p></div>
         </div>
-        <p class="req reveal">Needs <code>review_on: push</code>, a provider that can edit files (today that's <code>provider: claude</code>) and workflow template v3, which <code>codecanary setup github</code> installs.</p>
+        <p class="req reveal">Pick the fixer with <code>fix.provider</code>: <code>claude</code> or <code>codex</code>, independent of the review provider. Needs <code>review_on: push</code> and workflow template v3, which <code>codecanary setup github</code> installs.</p>
       </div>
     </section>
 
@@ -831,14 +832,14 @@
           <div class="code reveal">
             <div class="code-h"><span>.codecanary/config.yml</span><span>yaml</span></div>
 <pre><code><span class="y-k">version</span>: <span class="y-n">1</span>
-<span class="y-k">provider</span>: <span class="y-s">claude</span>
-<span class="y-k">review_model</span>: <span class="y-s">sonnet</span>
-<span class="y-k">triage_model</span>: <span class="y-s">haiku</span>
+<span class="y-k">provider</span>: <span class="y-s">grok</span>
+<span class="y-k">review_model</span>: <span class="y-s">grok-4.20-0309-non-reasoning</span>
+<span class="y-k">triage_model</span>: <span class="y-s">grok-4-1-fast-non-reasoning</span>
 <span class="y-k">review_on</span>: <span class="y-s">push</span>        <span class="y-c"># or: ready</span>
 
 <span class="y-hl"><span class="y-k">fix</span>:</span>
 <span class="y-hl">  <span class="y-k">enabled</span>: <span class="y-n">true</span>          <span class="y-c"># default false</span></span>
-<span class="y-hl">  <span class="y-k">model</span>: <span class="y-s">opus</span></span>
+<span class="y-hl">  <span class="y-k">provider</span>: <span class="y-s">codex</span>        <span class="y-c"># or claude</span></span>
 <span class="y-hl">  <span class="y-k">max_per_push</span>: <span class="y-n">2</span></span>
 <span class="y-hl">  <span class="y-k">max_per_pr</span>: <span class="y-n">5</span></span>
 
@@ -879,8 +880,8 @@ logic. Missing token → 401.</code></pre>
     <section class="sec" id="providers" aria-labelledby="prov-title" style="border-top:1px solid var(--line)">
       <div class="container">
         <span class="eyebrow reveal">Bring your own LLM</span>
-        <h2 id="prov-title" class="reveal">Five providers. <span class="soft">Your keys, your bill.</span></h2>
-        <p class="sub reveal">Your key stays in the system keychain. Setup suggests the models below, and you can change them any time in <code>config.yml</code>. Every provider can review. The CI fix currently needs the Claude CLI.</p>
+        <h2 id="prov-title" class="reveal">Mix and match. <span class="soft">Your keys, your bill.</span></h2>
+        <p class="sub reveal">Your key stays in the system keychain. Setup suggests the models below, and you can change them any time in <code>config.yml</code>. Any of them can review. The CI fix runs on Claude or Codex, set with <code>fix.provider</code>, so you can review with Grok and fix with Codex.</p>
         <div class="prov reveal">
           <div class="prov-row head"><span>Provider</span><span>Review model</span><span>Triage model</span></div>
           <div class="prov-row"><div class="prov-name"><i></i><div>Anthropic<small>API key</small></div></div><div><span class="lbl">review</span><code>claude-sonnet-5-5</code></div><div><span class="lbl">triage</span><code>claude-haiku-4-5</code></div></div>
@@ -888,6 +889,7 @@ logic. Missing token → 401.</code></pre>
           <div class="prov-row"><div class="prov-name"><i></i><div>OpenRouter<small>any model on OpenRouter</small></div></div><div><span class="lbl">review</span><code>anthropic/claude-sonnet-4-6</code></div><div><span class="lbl">triage</span><code>anthropic/claude-haiku-4-5-20251001</code></div></div>
           <div class="prov-row"><div class="prov-name"><i></i><div>Grok (xAI)<small>API key</small></div></div><div><span class="lbl">review</span><code>grok-4.20-0309-non-reasoning</code></div><div><span class="lbl">triage</span><code>grok-4-1-fast-non-reasoning</code></div></div>
           <div class="prov-row"><div class="prov-name"><i></i><div>Claude CLI<span class="badge-fix">CI FIX</span><small>your logged-in claude, no API key</small></div></div><div><span class="lbl">review</span><code>sonnet</code></div><div><span class="lbl">triage</span><code>haiku</code></div></div>
+          <div class="prov-row"><div class="prov-name"><i></i><div>Codex CLI<span class="badge-fix">CI FIX</span><small>fix only, set as fix.provider</small></div></div><div><span class="lbl">review</span><span style="color:var(--dim)">fix only</span></div><div><span class="lbl">fix model</span><span style="color:var(--dim)">Codex CLI default</span></div></div>
         </div>
         <a class="link-arrow reveal" href="https://github.com/alansikora/codecanary/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener">Add a provider <svg><use href="#i-arrow"/></svg></a>
       </div>
