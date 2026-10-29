@@ -71,6 +71,15 @@ runs:
         echo "$HOME/.local/bin" >> $GITHUB_PATH
         claude --version
 
+    # fix.format_command runs only inside bubblewrap (`codecanary fix`).
+    - name: Install bubblewrap
+      if: inputs.mode == 'fix' && runner.os == 'Linux'
+      shell: bash
+      run: |
+        command -v bwrap >/dev/null && exit 0
+        { sudo apt-get update -qq && sudo apt-get install -y -qq bubblewrap; } >/dev/null 2>&1 \
+          || echo "::warning::bubblewrap could not be installed; fix.format_command will be skipped"
+
     - name: Generate review token
       id: review-token
       shell: bash

@@ -187,7 +187,10 @@ fix:
   model: opus          # Claude CLI model for the fix (default opus)
   max_per_push: 2      # fix commits since your last push (default 2)
   max_per_pr: 5        # fix commits over the PR's life (default 5)
+  format_command: [bin/format, --fix]  # optional: run on the fix's files before it commits
 ```
+
+`format_command` gets the files the fix changed as arguments, so the fix commit passes your formatters. It is your repository's code, run in a job that holds the app token, so it runs only inside a [bubblewrap](https://github.com/containers/bubblewrap) sandbox (Linux runners; the action installs it): no tokens in its environment, the rest of the system read-only, a throwaway `HOME`, network on for toolchain installs. Only its changes to the fix's files are kept. If it fails or the sandbox is unavailable, the fix commits anyway, with a warning in the job log.
 
 At a limit the fix stops and comments with the findings still open; a push of yours resets `max_per_push`. If the fix can't run (rate limit, provider error), it comments once and leaves CI green: fix locally with `/codecanary-fix`. It never runs on fork PRs or drafts, and never edits `.github/`, `.codecanary/` or `.claude/`. Needs workflow template v3 (`codecanary setup github`). See [docs/review-flow.md](docs/review-flow.md#the-ci-fix-cycle).
 

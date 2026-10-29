@@ -53,5 +53,12 @@ jobs:
           go-version: stable
           cache: true
 
+      # The fix's format sandbox; its test fails rather than skips here, so
+      # this runner image proves bubblewrap works on it.
+      - name: Install bubblewrap
+        run: command -v bwrap >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq bubblewrap; }
+
       - name: Test
+        env:
+          CODECANARY_REQUIRE_BWRAP: "1"
         run: go test -race -count=1 ./...

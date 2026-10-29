@@ -219,7 +219,7 @@ func RunFix(opts FixOptions) error {
 		fmt.Fprintf(os.Stderr, "  ✓ %s refuted: %s\n", d.FixRef, d.Reason)
 	}
 
-	if err := commitAndPush(platform, target, applied, opts.ReviewedSHA); err != nil {
+	if err := commitAndPush(platform, cfg, target, applied, opts.ReviewedSHA); err != nil {
 		postFixFailure(platform, target, "the fix could not be pushed", err)
 	}
 	return nil
@@ -231,8 +231,8 @@ func RunFix(opts FixOptions) error {
 // The discard is all-or-nothing: once one finding is applied, every remaining
 // edit is committed, because a fix may touch files its finding doesn't name
 // and edits can't be tied to findings reliably. The prompt keeps edits to
-// applied findings.
-func commitAndPush(platform FixPlatform, target *FixTarget, applied []FixDisposition, reviewedSHA string) error {
+// applied findings. fix.format_command then formats the edited files.
+func commitAndPush(platform FixPlatform, cfg *ReviewConfig, target *FixTarget, applied []FixDisposition, reviewedSHA string) error {
 	reverted, err := revertProtectedChanges()
 	if err != nil {
 		return err
@@ -256,6 +256,7 @@ func commitAndPush(platform FixPlatform, target *FixTarget, applied []FixDisposi
 		discardChanges()
 		return nil
 	}
+	formatFixChanges(cfg)
 	if reviewedSHA == "" {
 		reviewedSHA = target.HeadSHA
 	}

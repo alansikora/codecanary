@@ -807,6 +807,8 @@ func TestValidate_Fix(t *testing.T) {
 		{"enabled with a bad model", base("push", "claude", &FixConfig{Enabled: true, Model: "gpt-5"}), "fix.model"},
 		{"negative max_per_push", base("push", "claude", &FixConfig{MaxPerPush: -1}), "fix.max_per_push"},
 		{"negative max_per_pr", base("push", "claude", &FixConfig{Enabled: true, MaxPerPR: -1}), "fix.max_per_pr"},
+		{"format_command", base("push", "claude", &FixConfig{Enabled: true, FormatCommand: []string{"bin/format", "--fix"}}), ""},
+		{"format_command with an empty argument", base("push", "claude", &FixConfig{Enabled: true, FormatCommand: []string{"bin/format", " "}}), "fix.format_command[1]"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -832,6 +834,9 @@ func TestFixDefaults(t *testing.T) {
 	if !cfg.FixEnabled() || cfg.EffectiveFixModel() != "opus" {
 		t.Errorf("enabled=%t model=%q, want true opus", cfg.FixEnabled(), cfg.EffectiveFixModel())
 	}
+	if cfg.FixFormatCommand() != nil {
+		t.Errorf("format_command = %v, want none", cfg.FixFormatCommand())
+	}
 	if perPush, perPR := cfg.EffectiveFixLimits(); perPush != 2 || perPR != 5 {
 		t.Errorf("default limits = %d, %d; want 2, 5", perPush, perPR)
 	}
@@ -845,7 +850,7 @@ func TestFixDefaults(t *testing.T) {
 func TestLoadConfig_FixBlock(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yml")
-	body := "version: 1\nprovider: claude\nreview_model: sonnet\ntriage_model: haiku\nreview_on: push\nfix:\n  enabled: true\n  model: opus\n  max_per_push: 3\n  max_per_pr: 6\n"
+	body := "version: 1\nprovider: claude\nreview_model: sonnet\ntriage_model: haiku\nreview_on: push\nfix:\n  enabled: true\n  model: opus\n  max_per_push: 3\n  max_per_pr: 6\n  format_command: [bin/format, --fix]\n"
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -854,7 +859,7 @@ func TestLoadConfig_FixBlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
-	if !cfg.FixEnabled() || cfg.Fix.Model != "opus" || cfg.Fix.MaxPerPush != 3 || cfg.Fix.MaxPerPR != 6 {
+	if !cfg.FixEnabled() || cfg.Fix.Model != "opus" || cfg.Fix.MaxPerPush != 3 || cfg.Fix.MaxPerPR != 6 || strings.Join(cfg.FixFormatCommand(), " ") != "bin/format --fix" {
 		t.Errorf("fix block = %+v", cfg.Fix)
 	}
 }
