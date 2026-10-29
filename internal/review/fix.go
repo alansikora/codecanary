@@ -228,6 +228,10 @@ func RunFix(opts FixOptions) error {
 // commitAndPush commits the fix model's edits as one commit and pushes it.
 // Edits to protectedWritePaths are reverted first. Edits made without any
 // finding reported applied are discarded rather than committed unexplained.
+// The discard is all-or-nothing: once one finding is applied, every remaining
+// edit is committed, because a fix may touch files its finding doesn't name
+// and edits can't be tied to findings reliably. The prompt keeps edits to
+// applied findings.
 func commitAndPush(platform FixPlatform, target *FixTarget, applied []FixDisposition, reviewedSHA string) error {
 	reverted, err := revertProtectedChanges()
 	if err != nil {
@@ -339,11 +343,16 @@ func failureSummary(err error) string {
 		return fmt.Sprintf("%s %s", pe.Provider, pe.Kind)
 	}
 	line, _, _ := strings.Cut(err.Error(), "\n")
-	const maxLen = 200
-	if len(line) > maxLen {
-		line = line[:maxLen] + "…"
+	return truncateUTF8(line, 200)
+}
+
+// truncateUTF8 cuts s to at most n bytes plus "…", dropping a rune the cut
+// would split, so the result stays valid UTF-8.
+func truncateUTF8(s string, n int) string {
+	if len(s) <= n {
+		return s
 	}
-	return line
+	return strings.ToValidUTF8(s[:n], "") + "…"
 }
 
 // pluralEs returns "es" unless n is 1 ("1 fix", "2 fixes").

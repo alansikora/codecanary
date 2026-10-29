@@ -80,10 +80,7 @@ type PRFinding struct {
 }
 
 // FetchPRComments returns all line-anchored review comments on the given
-// PR, oldest first. Uses gh API pagination (`--paginate`) which emits one
-// JSON array per page concatenated back-to-back; we decode them as a
-// stream rather than string-splicing, so comment bodies that legitimately
-// contain a "][" sequence survive unscathed.
+// PR, oldest first, via gh API pagination (see decodePaginated).
 func FetchPRComments(repo string, prNumber int) ([]PRReviewComment, error) {
 	owner, name, err := parseRepoSlug(repo)
 	if err != nil {
@@ -94,19 +91,29 @@ func FetchPRComments(repo string, prNumber int) ([]PRReviewComment, error) {
 	if err != nil {
 		return nil, fmt.Errorf("fetching PR comments: %w", err)
 	}
+	all, err := decodePaginated[PRReviewComment](out)
+	if err != nil {
+		return nil, fmt.Errorf("parsing PR comments page: %w", err)
+	}
+	return all, nil
+}
+
+// decodePaginated decodes `gh api --paginate` output for a list endpoint:
+// one JSON array per page, back to back. Decoding them as a stream rather
+// than string-splicing keeps bodies that contain a "][" sequence intact.
+func decodePaginated[T any](out []byte) ([]T, error) {
 	dec := json.NewDecoder(bytes.NewReader(out))
-	var all []PRReviewComment
+	var all []T
 	for {
-		var page []PRReviewComment
+		var page []T
 		if err := dec.Decode(&page); err != nil {
 			if errors.Is(err, io.EOF) {
-				break
+				return all, nil
 			}
-			return nil, fmt.Errorf("parsing PR comments page: %w", err)
+			return nil, err
 		}
 		all = append(all, page...)
 	}
-	return all, nil
 }
 
 // ParseFindingMarkers filters to bot-authored comments and extracts the

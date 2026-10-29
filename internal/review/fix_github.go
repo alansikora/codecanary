@@ -1,12 +1,9 @@
 package review
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"os"
 	"regexp"
 	"strings"
@@ -109,24 +106,17 @@ func (g *GithubPlatform) LoadCommitMessages() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	// --paginate emits one JSON array per page, back to back.
-	dec := json.NewDecoder(bytes.NewReader(out))
-	var messages []string
-	for {
-		var page []struct {
-			Commit struct {
-				Message string `json:"message"`
-			} `json:"commit"`
-		}
-		if err := dec.Decode(&page); err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			return nil, fmt.Errorf("parsing pull request commits: %w", err)
-		}
-		for _, c := range page {
-			messages = append(messages, c.Commit.Message)
-		}
+	commits, err := decodePaginated[struct {
+		Commit struct {
+			Message string `json:"message"`
+		} `json:"commit"`
+	}](out)
+	if err != nil {
+		return nil, fmt.Errorf("parsing pull request commits: %w", err)
+	}
+	messages := make([]string, 0, len(commits))
+	for _, c := range commits {
+		messages = append(messages, c.Commit.Message)
 	}
 	return messages, nil
 }
@@ -193,18 +183,9 @@ func fetchIssueComments(repo string, prNumber int) ([]issueComment, error) {
 	if err != nil {
 		return nil, err
 	}
-	// --paginate emits one JSON array per page, back to back.
-	dec := json.NewDecoder(bytes.NewReader(out))
-	var all []issueComment
-	for {
-		var page []issueComment
-		if err := dec.Decode(&page); err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			return nil, fmt.Errorf("parsing pull request comments: %w", err)
-		}
-		all = append(all, page...)
+	all, err := decodePaginated[issueComment](out)
+	if err != nil {
+		return nil, fmt.Errorf("parsing pull request comments: %w", err)
 	}
 	return all, nil
 }

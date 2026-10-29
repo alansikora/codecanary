@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func fixMsg(subject string) string {
@@ -373,5 +374,16 @@ func TestFixStopFromSignals(t *testing.T) {
 				t.Errorf("fixStopFromSignals = %+v, want %+v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestTruncateUTF8(t *testing.T) {
+	if got := truncateUTF8("short", 10); got != "short" {
+		t.Errorf("short string changed: %q", got)
+	}
+	// "é" is two bytes; a cut through it must drop the partial rune.
+	got := truncateUTF8("aé", 2)
+	if got != "a…" || !utf8.ValidString(got) {
+		t.Errorf("truncateUTF8 = %q, want a…", got)
 	}
 }

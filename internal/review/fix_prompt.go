@@ -74,7 +74,8 @@ func BuildFixPrompt(findings []PRFinding, cfg *ReviewConfig) string {
 	b.WriteString("- Read the file and make the minimal edit that addresses the finding. Keep the surrounding code intact; do not improve unrelated code.\n")
 	b.WriteString("- If the finding's suggestion is an exact code snippet that fits the context, use it verbatim; otherwise adapt it to the codebase's conventions (existing imports, types, error-handling style).\n")
 	b.WriteString("- Never edit anything under `.git/`, `.github/`, `.codecanary/` or `.claude/`, nor `.codecanary.yml` or `.mcp.json`. Edits there are refused and reverted; skip a finding that needs one.\n")
-	b.WriteString("- You cannot run builds or tests, so keep each edit one you can verify by reading.\n\n")
+	b.WriteString("- You cannot run builds or tests, so keep each edit one you can verify by reading.\n")
+	b.WriteString("- Edit only for findings you apply. Leave no edits behind for a finding you refute or skip: every change in the checkout is committed together.\n\n")
 
 	if cfg != nil && strings.TrimSpace(cfg.Context) != "" {
 		b.WriteString("## Project context\n\n")
@@ -213,10 +214,7 @@ func splitDispositions(ds []FixDisposition) (applied, refuted, skipped []FixDisp
 // codecanary:ack marker would otherwise pass for the bot's own — and its
 // length is capped.
 func fixReplyBody(reason string) string {
-	reason = strings.TrimSpace(reason)
-	if len(reason) > maxFixReplyReason {
-		reason = reason[:maxFixReplyReason] + "…"
-	}
+	reason = truncateUTF8(strings.TrimSpace(reason), maxFixReplyReason)
 	return fmt.Sprintf("%s\n**CodeCanary fix — not applied.** %s", fixReplyMarker, escapeAllTags(reason))
 }
 
