@@ -7,7 +7,7 @@
   <meta name="description" content="CodeCanary is an open-source AI code review tool for GitHub pull requests. It reviews every push, can fix its findings in CI, and re-reviews the fix. Runs in GitHub Actions or locally from the terminal. Bring your own LLM." />
   <meta name="theme-color" content="#07080a" media="(prefers-color-scheme: dark)" />
   <meta name="theme-color" content="#fafaf8" media="(prefers-color-scheme: light)" />
-  <script>try{var t=localStorage.getItem('cc-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
+  <script>(function(){var t;try{t=localStorage.getItem('cc-theme')}catch(e){}if(t!=='light'&&t!=='dark')t=window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';document.documentElement.setAttribute('data-theme',t)})()</script>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="canonical" href="https://codecanary.sh/" />
@@ -73,7 +73,6 @@
       --warn: #fb923c;
       --info: #60a5fa;
       color-scheme: dark;
-      --bg-rgb: 7, 8, 10;
       --fg-rgb: 255, 255, 255;
       --y-rgb: 250, 204, 21;
       --ok-rgb: 74, 222, 128;
@@ -98,7 +97,6 @@
       --syn-s: #c3e88d;
       --syn-t: #ffcb6b;
       --syn-n: #f78c6c;
-      --field-a: 1;
       --sans: "Inter", "InterVariable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
       --mono: "JetBrains Mono", "SF Mono", ui-monospace, "Cascadia Code", "Fira Code", Menlo, Consolas, monospace;
       --radius: 14px;
@@ -112,7 +110,6 @@
       --bg-1: #f3f3f0;
       --bg-2: #ffffff;
       --bg-3: #f6f6f3;
-      --bg-rgb: 250, 250, 248;
       --fg-rgb: 15, 23, 42;
       --line: rgba(15, 23, 42, 0.08);
       --line-2: rgba(15, 23, 42, 0.14);
@@ -147,50 +144,6 @@
       --syn-s: #15803d;
       --syn-t: #b45309;
       --syn-n: #c2410c;
-    }
-    @media (prefers-color-scheme: light) {
-      :root:not([data-theme="dark"]) {
-        color-scheme: light;
-        --bg: #fafaf8;
-        --bg-1: #f3f3f0;
-        --bg-2: #ffffff;
-        --bg-3: #f6f6f3;
-        --bg-rgb: 250, 250, 248;
-        --fg-rgb: 15, 23, 42;
-        --line: rgba(15, 23, 42, 0.08);
-        --line-2: rgba(15, 23, 42, 0.14);
-        --text: #0f172a;
-        --muted: #475569;
-        --dim: #6b7280;
-        --accent: #a16207;
-        --accent-2: #854d0e;
-        --accent-glow: rgba(234, 179, 8, 0.18);
-        --y-rgb: 234, 179, 8;
-        --ok: #15803d;
-        --bug: #dc2626;
-        --warn: #c2410c;
-        --info: #1d4ed8;
-        --ok-rgb: 22, 163, 74;
-        --bug-rgb: 220, 38, 38;
-        --warn-rgb: 234, 88, 12;
-        --info-rgb: 37, 99, 235;
-        --nav-bg: rgba(250, 250, 248, 0.78);
-        --install-bg: rgba(255, 255, 255, 0.9);
-        --term-bg: #ffffff;
-        --light-dot: #d9d9d4;
-        --node-on: #fef9c3;
-        --comet: #ca8a04;
-        --grad-mid: #eab308;
-        --shadow: rgba(15, 23, 42, 0.16);
-        --shadow-edge: rgba(15, 23, 42, 0.05);
-        --code-fg: #334155;
-        --del-fg: #b91c1c;
-        --syn-k: #7c3aed;
-        --syn-f: #1d4ed8;
-        --syn-s: #15803d;
-        --syn-t: #b45309;
-        --syn-n: #c2410c;
-      }
     }
 
     html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
@@ -1105,13 +1058,11 @@ logic. Missing token → 401.</code></pre>
     }
     readColors();
     var scheme = window.matchMedia('(prefers-color-scheme: light)');
-    var onScheme = function () { readColors(); if (reduce) drawField(1800); };
-    if (scheme.addEventListener) scheme.addEventListener('change', onScheme);
+
     var themeBtn = document.getElementById('themeBtn');
-    function currentMode() {
-      var t = doc.getAttribute('data-theme');
-      return t || (scheme.matches ? 'light' : 'dark');
-    }
+    function currentMode() { return doc.getAttribute('data-theme') === 'light' ? 'light' : 'dark'; }
+    function storedMode() { try { return localStorage.getItem('cc-theme'); } catch (e) { return null; } }
+    function applyMode(m) { doc.setAttribute('data-theme', m); readColors(); syncThemeBtn(); if (reduce) drawField(1800); }
     function syncThemeBtn() {
       var m = currentMode();
       themeBtn.dataset.mode = m;
@@ -1122,12 +1073,14 @@ logic. Missing token → 401.</code></pre>
     }
     themeBtn.addEventListener('click', function () {
       var next = currentMode() === 'light' ? 'dark' : 'light';
-      doc.setAttribute('data-theme', next);
       try { localStorage.setItem('cc-theme', next); } catch (e) {}
-      readColors(); syncThemeBtn();
-      if (reduce) drawField(1800);
+      applyMode(next);
     });
-    if (scheme.addEventListener) scheme.addEventListener('change', syncThemeBtn);
+    // With no stored choice, keep following the OS when it switches.
+    if (scheme.addEventListener) scheme.addEventListener('change', function (e) {
+      var st = storedMode();
+      if (st !== 'light' && st !== 'dark') applyMode(e.matches ? 'light' : 'dark');
+    });
     syncThemeBtn();
     function sizeField() {
       dpr = Math.min(window.devicePixelRatio || 1, 2);
