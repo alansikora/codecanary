@@ -4,15 +4,15 @@ description: |
   Drive a codecanary review → triage → fix feedback loop to convergence.
   Use this whenever the operator says "handle codecanary", "handle codecanary
   reviews", or invokes /codecanary-fix. The CLI auto-detects one of three
-  modes: pr-loop (bot-driven; commit + push each cycle — or, in repos with
-  review_on: ready, draft → push → green CI → ready to request the next
-  review), local-loop-git
-  (PR exists but no workflow; local reviews, commit each cycle without
-  pushing, offer to push at exit), or local-loop-nogit (no PR; local
-  reviews, apply in place, no git). Always confirms every finding with
-  the operator before applying — never auto-applies. In pr-loop, every
-  skipped finding gets a reply posted on its review thread explaining
-  the rationale.
+  modes: pr-loop (bot-driven; when the repo fixes on CI — fix_on_ci — wait
+  for the bot's fix commits and pull them, taking over locally only when
+  the bot stopped or asked for a local fix; otherwise fix, commit and push
+  each cycle), local-loop-git (PR exists but no workflow; local reviews,
+  commit each cycle without pushing, offer to push at exit), or
+  local-loop-nogit (no PR; local reviews, apply in place, no git). Every
+  finding is triaged against the project's conventions: legitimate ones
+  are applied, wrong ones are refuted. In pr-loop, every skipped finding
+  gets a reply posted on its review thread explaining the rationale.
 ---
 
 # codecanary-fix
@@ -20,7 +20,9 @@ description: |
 You are driving the CodeCanary review-fix loop. The operator runs this skill
 when they want you to iterate against CodeCanary's findings until the review
 is clean. Stay disciplined: you are the glue between the CLI and the
-operator's decisions, not the reviewer.
+project's conventions, not the reviewer. You triage each finding on its
+merits and act on your own judgment; the operator is not asked to approve
+individual findings.
 
 Trigger phrases: pick this skill up automatically when the operator says
 "handle codecanary", "handle codecanary reviews", "run codecanary", or
@@ -30,10 +32,8 @@ invokes it explicitly as /codecanary-fix.
 
 All polling, fetching, parsing, and PR/repo autodetection happens in
 `codecanary findings`, `codecanary checks` and `codecanary review`.
-Posting replies on review threads happens via `codecanary reply`. The only
-`gh` calls this skill makes are `gh pr ready --undo <PR>` and
-`gh pr ready <PR>`, in `pr-loop` with `review_on: ready`. You never parse
-HTML comment markers. You never poll for CI status yourself —
+Posting replies on review threads happens via `codecanary reply`. You never
+parse HTML comment markers. You never poll for CI status yourself —
 `codecanary checks --watch` does. The CLI emits structured JSON; you
 consume it.
 
@@ -64,15 +64,20 @@ unless the CLI itself errors.
 
 - **`pr-loop`** — an open PR exists for the branch *and* a CodeCanary
   workflow is wired up on the branch (`.github/workflows/*.yml`
-  referencing `alansikora/codecanary`). Findings come from the bot. How
-  the next review is requested depends on the repo's `review_on`
+  referencing `alansikora/codecanary`). Findings come from the bot, and
+  every push is reviewed. Who applies the fixes depends on `fix_on_ci`
   (reported by `codecanary mode`):
-  - `push` — every push is reviewed: fixes commit and push each cycle,
-    and the push triggers the next review.
-  - `ready` — the PR is reviewed when it turns ready for review, and
-    pushes to a ready PR are not. Each cycle moves the PR to draft,
-    pushes the fixes, waits for the required checks to pass, and marks
-    it ready again, which requests the next review.
+  - `fix_on_ci` true — the repo fixes on CI: after a review with
+    findings, a CI job applies the fixes, commits them as the PR author
+    and pushes, and the push triggers the next review. This skill does
+    **not** fix. It waits for the head to settle, pulls the bot's fix
+    commits, and takes over locally only when the bot has stopped (see
+    "Waiting for the bot").
+  - `fix_on_ci` false — this skill fixes: apply, commit, push, and the
+    push triggers the next review.
+  - `review_on: ready` is a legacy value: under it, pushes to a ready PR
+    are not reviewed, so a fix cannot be re-reviewed, and the repo should
+    move to `review_on: push`.
 - **`local-loop-git`** — an open PR exists but no CodeCanary workflow
   is detected on the branch. Findings come from `codecanary review`
   run locally. Fixes commit on the PR branch each cycle **without
@@ -96,6 +101,8 @@ Before the first iteration:
    - `PR` — the PR number, or null.
    - `WORKFLOW_DETECTED` — boolean.
    - `REASONS` — array of human-readable detection reasons.
+   - `FIX_ON_CI` — boolean, from `fix_on_ci`. Treat a missing field as
+     false (older CLI).
    - `REVIEW_ON` — `push` or `ready`, from `review_on`. Treat a missing
      field as `push` (older CLI).
    - `UPDATE_AVAILABLE` / `LATEST_VERSION` — from `update_available` and
@@ -148,8 +155,8 @@ Mode: <mode>  —  <one-line reason>
 
 Where the reason is synthesised from the `REASONS` array. Examples:
 
-- `Mode: pr-loop  —  PR #167, CodeCanary workflow detected`
-- `Mode: pr-loop (review_on: ready)  —  PR #167, CodeCanary workflow detected (each cycle: draft → push → green checks → ready)`
+- `Mode: pr-loop (fix on CI)  —  PR #167, CodeCanary workflow detected (the bot fixes; waiting for it)`
+- `Mode: pr-loop  —  PR #167, CodeCanary workflow detected (fixes commit and push each cycle)`
 - `Mode: local-loop-git  —  PR #167, no CodeCanary workflow on this branch (fixes will commit, not push)`
 - `Mode: local-loop-nogit  —  no open PR (fixes applied in place)`
 
@@ -167,6 +174,11 @@ This is informational. Never run `codecanary upgrade` or
 `codecanary install-skill` yourself, never ask the operator about it,
 and never let it delay or block the loop — print the line and continue.
 
+If `REVIEW_ON` is `ready`, print one more notice line:
+`Notice: review_on: ready is legacy — pushes to a ready PR are not reviewed under it; move the repo to review_on: push.`
+Under it a push is never re-reviewed, so in `pr-loop` the loop ends after
+one cycle of fixes (see step 9).
+
 If `MODE` came back as something unexpected (CLI error, empty JSON),
 surface the error and stop. Do not proceed without a valid mode.
 
@@ -176,18 +188,59 @@ Track this state across iterations:
 
 - `CYCLE` — integer, starts at 0, increments at the top of every iteration.
 - `DEFERRED_FIX_REFS` — set of strings, initially empty. Used in
-  `local-loop-git` and `local-loop-nogit` to suppress findings the
-  operator already skipped in a previous cycle (the bot's ack layer
-  isn't there to do this for us, so we do it client-side).
+  `local-loop-git` and `local-loop-nogit` to suppress findings you
+  already refuted in a previous cycle (the bot's ack layer isn't there
+  to do this for us, so we do it client-side).
 - `CYCLE_COMMITS` — list of `{sha, subject}`, initially empty. Used
   in `local-loop-git` to list commits at session end for the push
   prompt.
+
+### Waiting for the bot (`pr-loop` with `FIX_ON_CI`)
+
+When `FIX_ON_CI` is true, the fix happens on CI, not here. Use this
+procedure for step 2 in place of a plain fetch:
+
+1. Run `codecanary findings --watch --output json` to wait for the
+   review of the current head, then `codecanary checks <PR> --watch
+   --output json` to wait for the PR's required checks (it leaves out
+   CodeCanary's own). Check `conclusion` as in step 3.
+2. `git fetch` and compare the PR branch with your local branch. When
+   the bot pushed fix commits, `git pull --ff-only`, then go back to
+   step 1 of this procedure: the push triggers a new review, and
+   `codecanary findings --watch` waits for it. A fast-forward pull that
+   fails means you have local commits the bot did not see; report it and
+   stop — never force-push, never merge over the bot's commit unasked.
+3. Decide whether the head has settled:
+   - Findings empty, conclusion healthy, nothing new on the branch:
+     the review is clean — go to **exit handling**.
+   - The bot **stopped**: the `CodeCanary / review` commit status
+     description contains `stopped after N fixes`, or the PR carries the
+     bot's comment asking for a local fix (it says to fix locally with
+     `/codecanary-fix`; a rate limit produces this one). Take over: the
+     current findings are yours. Go on to step 5, triage and apply them
+     as the local modes do, commit and push once. Read the status
+     description and PR comments from the CLI's JSON when it carries
+     them; otherwise `gh pr view <PR> --json comments,statusCheckRollup`
+     is the only `gh` call this skill makes.
+   - Findings remain, but there is no stop signal and no new commit: the
+     fix job is probably still running. Wait once more as in step 1 and
+     fetch again. If two consecutive rounds bring no new commit and no
+     stop signal, report what you saw and stop; do not apply fixes the
+     bot may be about to push, and do not spin.
+
+After you take over, triage and apply as in steps 5–8, commit, and
+push **once**. The push triggers the next review (and resets the bot's
+fix count); go back to the start of this procedure.
 
 ### Iteration
 
 1. `CYCLE = CYCLE + 1`.
 2. Fetch findings, branched on `MODE`:
-   - **`pr-loop`**: run `codecanary findings --watch --output json`.
+   - **`pr-loop`** with `FIX_ON_CI` true: follow **Waiting for the bot**
+     above. The findings it hands you are the ones from the latest
+     `codecanary findings` run.
+   - **`pr-loop`** with `FIX_ON_CI` false: run
+     `codecanary findings --watch --output json`.
      The command blocks until the review check completes; stdout is a
      single JSON object. Parse it. Findings the bot considers handled
      are excluded by default — that includes GitHub-resolved threads
@@ -217,31 +270,24 @@ Track this state across iterations:
      not against the diff hunk quoted in the bot's comment, which is
      stale by definition. If the issue is genuinely gone, the
      disposition is a `codecanary reply` naming the commit that fixed
-     it (step 9), never a second fix.
+     it (step 8), never a second fix. The same goes for a finding the
+     bot's own fix commit already addressed.
    - **`local-loop-git` / `local-loop-nogit`**: run
      `codecanary review --output json`. The command runs the review
      inline; stdout is a JSON object with a `findings` array in the
      same shape. After parsing, **filter out any finding whose
      `fix_ref` is in `DEFERRED_FIX_REFS`** — those are prior-cycle
-     skips and must not be re-surfaced.
-   With `REVIEW_ON = ready`, `--watch` waits for the review requested
-   by marking the PR ready; while the PR is a draft no review is
-   coming, and the command returns at once with `conclusion: skipped`.
+     refutations and must not be re-surfaced.
 3. **`pr-loop` only** — check the `conclusion` field in the JSON output.
-   With `REVIEW_ON = ready`, `skipped` is not a failure: the PR is a
-   draft and has not been reviewed yet (the session started on a
-   draft). Tell the operator, wait for the required checks
-   (`codecanary checks <PR> --watch --output json`, as in step 10),
-   mark it ready with `gh pr ready <PR>` if they pass, and go back to
-   step 1 without counting a cycle (`CYCLE = CYCLE - 1`). If the
-   checks fail, report which and stop.
    (Skip this step entirely for local modes — there is no check run.)
    If `conclusion` is `failure`, the review run itself broke. If
    `conclusion` is `cancelled` or `timed_out`, the run was interrupted
-   (e.g. a newer push superseded it). In any of these cases — or any
+   (e.g. a newer push superseded it). If it is `skipped`, no review ran
+   for this head (under legacy `review_on: ready` that is the normal
+   state of a ready PR after a push). In any of these cases — or any
    value other than `success` / `neutral` / empty — tell the operator
-   the check failed, name the conclusion, and stop. Do not say the
-   review is clean, even if `findings` is empty — an empty list on a
+   the check did not complete, name the conclusion, and stop. Do not say
+   the review is clean, even if `findings` is empty — an empty list on a
    failed run means findings were never published, not that the code
    is fine. Roll `CYCLE` back by one (`CYCLE = CYCLE - 1`) so the
    next retry starts at the correct count. Wait for the operator to
@@ -280,12 +326,14 @@ Track this state across iterations:
    > issues. If the reviewer keeps re-flagging the same `fix_ref` across
    > cycles, stop and verify your fix actually addresses what was meant —
    > don't keep patching symptoms.
-6. Render a triage table (Markdown) summarizing the findings:
-   - Columns: severity, file:line, fix_ref, title, proposed action
-   - One row per finding. Keep proposed actions terse (one line each).
+6. Triage the findings and render the result as a table (Markdown). The
+   table is a report of what you decided, not a question:
+   - Columns: severity, file:line, fix_ref, title, disposition
+     (`apply`, `refute`, or `already fixed`) with a terse reason.
+   - One row per finding. Keep dispositions terse (one line each).
 
    **Test each finding against the project's own conventions before
-   proposing to apply it.** A finding can be correct in general and
+   deciding to apply it.** A finding can be correct in general and
    wrong for this repo: a style rule the project deliberately splits
    (indent under `private` in classes but not modules), a pattern the
    surrounding code establishes on purpose, or a premise about the code
@@ -299,27 +347,18 @@ Track this state across iterations:
    contradicts its own stated purpose" and "this duplicates a decision
    made elsewhere in the codebase" are the highest-value things the bot
    produces, and both are easy to mistake for nitpicks. The rule is to
-   *read*, not to default either way.
-7. Ask the operator to confirm. Use `AskUserQuestion` with a single
-   question whose options are:
-   - "Apply all" *(Recommended)*
-   - "Apply some (I'll specify which)"
-   - "Skip this cycle" — treats all findings as deferred; exits the loop
-   - "Abort" — exits the loop immediately
-   Wait for the response before touching any files.
-8. If the operator approved (all or some), apply the fixes. In
-   `pr-loop` with `REVIEW_ON = ready`, first move the PR to draft with
-   `gh pr ready --undo <PR>`, so CI runs on the fix without CodeCanary
-   reviewing a half-done state; then apply every approved finding before
-   the single commit in step 10. For each approved finding:
+   *read*, not to default either way. A legitimate finding is applied
+   even when it is a nitpick.
+7. Apply every finding whose disposition is `apply`, then continue to
+   step 8; the single commit comes in step 9. For each one:
    - Read the file, make the minimal edit that addresses the finding,
      keeping the surrounding code intact (do not "improve" unrelated code).
    - If the suggestion in the finding is an exact code snippet and fits
      the context, prefer it verbatim; otherwise adapt it to the codebase
      conventions (existing imports, types, error-handling style).
-9. Handle skipped findings. A skipped finding is any finding not
-   applied this cycle — that covers both "Skip this cycle" (all
-   skipped) and "Apply some" (the unselected ones). Branch on `MODE`:
+8. Handle skipped findings. A skipped finding is any finding not
+   applied this cycle: one you refuted in triage, or one that was
+   already fixed. Branch on `MODE`:
 
    - **`pr-loop`** — post replies on the review threads. For each
      skipped finding, run:
@@ -330,13 +369,13 @@ Track this state across iterations:
 
      where `<comment_url>` is the finding's `comment_url` field from the
      findings JSON, and `<rationale>` is a concise 1–2 sentence summary
-     of *why* you're deferring this finding (your own analysis, not
-     just "operator skipped"). Examples:
-     - "Deferring: the bot's suggested rename conflicts with the public
+     of *why* you're not applying this finding (your own analysis).
+     Examples:
+     - "Not applying: the bot's suggested rename conflicts with the public
        API exported in `pkg/foo`. Revisit after the v2 cutover."
-     - "Skipping: the flagged line is dead code slated for removal in
+     - "Not applying: the flagged line is dead code slated for removal in
        the next PR (#154)."
-     - "Skipping: dot notation in the README is deliberate — matches
+     - "Not applying: dot notation in the README is deliberate — matches
        upstream xAI naming. Fix is to update the bot's context, not
        the README."
 
@@ -367,53 +406,41 @@ Track this state across iterations:
      thread to reply to. Instead, add each skipped finding's
      `fix_ref` to `DEFERRED_FIX_REFS` so it is filtered out in
      future iterations. No `codecanary reply` calls in local modes.
-10. Finalize the cycle, branched on `MODE`:
-    - **`pr-loop`**, `REVIEW_ON = push`:
-      - Run `go build ./...` and `go test ./...` if any Go files changed.
-      - Commit with a message like:
-        `fix: address codecanary review on #<PR> (cycle <N>)`
-        plus a brief bullet list of which findings were addressed.
-      - Push the branch.
-      - Go back to step 1.
-    - **`pr-loop`**, `REVIEW_ON = ready`:
-      - If no finding was applied this cycle (all skipped), there is
-        nothing to push and no new review to request: leave the PR
-        ready, and go to **exit handling**.
-      - Run `go build ./...` and `go test ./...` if any Go files changed.
-      - Commit every applied fix in **one** commit (message as
-        above) and push once. The PR is a draft (step 8).
-      - Run `codecanary checks <PR> --watch --output json`. It waits for
-        the PR's required checks, leaving out CodeCanary's own, and
-        reports `state`: `pass` or `fail` (with `failing` names).
-      - On `pass`: mark the PR ready with `gh pr ready <PR>`, which
-        requests the next review, and go back to step 1.
-      - On `fail`, or if the command errors or times out: **do not mark
-        the PR ready.** Tell the operator which checks failed and that
-        the PR is left as a draft, and stop. Fixing CI is a separate
-        job (the repo's own CI-fix workflow, if it has one); the PR is
-        marked ready once CI is green.
-    - **`local-loop-git`**:
-      - Run `go build ./...` and `go test ./...` if any Go files changed.
-      - Commit with a message like:
-        `fix: address codecanary review (cycle <N>) [local]`
-        plus a brief bullet list of which findings were addressed.
-      - **Do not push.** Capture the commit SHA and subject into
-        `CYCLE_COMMITS`.
-      - Go back to step 1.
-    - **`local-loop-nogit`**:
-      - Do not commit, do not push.
-      - Go back to step 1.
+9. Finalize the cycle, branched on `MODE`:
+   - **`pr-loop`**:
+     - If no finding was applied this cycle (all skipped), there is
+       nothing to push and no new review to request: go to
+       **exit handling**.
+     - Run `go build ./...` and `go test ./...` if any Go files changed.
+     - Commit every applied fix in **one** commit with a message like:
+       `fix: address codecanary review on #<PR> (cycle <N>)`
+       plus a brief bullet list of which findings were addressed.
+     - Push the branch. The push triggers the next review.
+     - With `REVIEW_ON = ready` (legacy), that push is not reviewed:
+       report the commit and go to **exit handling** instead of looping.
+     - Otherwise go back to step 1 (with `FIX_ON_CI` true, that means
+       waiting for the bot again).
+   - **`local-loop-git`**:
+     - Run `go build ./...` and `go test ./...` if any Go files changed.
+     - Commit with a message like:
+       `fix: address codecanary review (cycle <N>) [local]`
+       plus a brief bullet list of which findings were addressed.
+     - **Do not push.** Capture the commit SHA and subject into
+       `CYCLE_COMMITS`.
+     - Go back to step 1.
+   - **`local-loop-nogit`**:
+     - Do not commit, do not push.
+     - Go back to step 1.
 
 ### Exit handling
 
-When the loop terminates — findings empty, operator aborts, operator
-chose "Skip this cycle", CLI errors out — do the mode-specific exit:
+When the loop terminates — findings empty, nothing left to apply, CLI
+errors out — do the mode-specific exit:
 
-- **`pr-loop`**: report the outcome (clean / aborted / stopped due to
-  check failure) and stop. No push prompt (pushes already happened
-  each cycle). With `REVIEW_ON = ready`, also say whether the PR is
-  ready or was left as a draft (stopped on failing checks, or aborted
-  after step 8); a draft gets no review until it is marked ready.
+- **`pr-loop`**: report the outcome (clean / stopped on a failed or
+  skipped check / waiting on the bot gave up / pushed under legacy
+  `review_on: ready`) and stop. No push prompt (pushes already happened
+  each cycle).
 - **`local-loop-git`**: if `CYCLE_COMMITS` is non-empty, print the
   list exactly like this:
 
@@ -448,34 +475,34 @@ Exit the loop (and tell the operator *why*) whenever any of these hold:
 - **`local-loop-git` / `local-loop-nogit`**: the findings list comes
   back empty — normal success. (There is no `conclusion` field in
   local modes; its absence is expected.)
-- The operator chose "Skip this cycle" or "Abort". For "Skip this
-  cycle" in `pr-loop`, still post the skip replies from step 9 before
-  exiting. For "Skip this cycle" in local modes, still update
-  `DEFERRED_FIX_REFS`.
+- A cycle ends with every finding skipped: nothing was applied, so
+  nothing will change on the next review. In `pr-loop`, still post the
+  replies from step 8 before exiting; in local modes, `DEFERRED_FIX_REFS`
+  is already updated.
 - The CLI errors out (network failure, no PR detected, timeout on
   `--watch`, `codecanary mode` failed to resolve). Surface the error
   verbatim and stop.
-- `pr-loop` with `REVIEW_ON = ready`: the required checks failed after
-  the push (step 10). The PR stays a draft; report the failing checks
-  and stop.
+- `pr-loop` with `FIX_ON_CI`: the bot has neither pushed nor stopped
+  after two rounds of waiting (see **Waiting for the bot**), or your
+  local branch cannot fast-forward to the bot's commits.
 - You detect you're in a stable disagreement loop: the same `fix_ref`
-  values appear in two consecutive cycles after you applied fixes for
-  them. This is the signal from step 5 turning into a hard stop — tell
-  the operator which fix_refs keep re-emerging and ask them to review
-  whether the fix is correct before continuing. Applies to all three
-  modes — a local reviewer can re-flag a bad fix the same way the bot
-  does.
+  values appear in two consecutive cycles after fixes were applied for
+  them (by you or, with `FIX_ON_CI`, by the bot). This is the signal
+  from step 5 turning into a hard stop — tell the operator which
+  fix_refs keep re-emerging and ask them to review whether the fix is
+  correct before continuing. Applies to all three modes — a local
+  reviewer can re-flag a bad fix the same way the bot does.
 
   **Rule out the benign explanations first — a recurrence is not by
   itself a disagreement.** Before escalating, for each repeating
   `fix_ref`, read the file at head to confirm the issue is actually
   still there. Escalate only when it is. When the code at head no
   longer has the issue, the finding came back without being live:
-  - **`pr-loop`**: check whether you ever replied on the thread. A
-    finding you fixed correctly but never replied to recurs whenever
-    triage couldn't see the fix, and it recurs *identically* — same
-    `fix_ref`, title, file and line. It needs a reply naming the
-    commit (step 9), not a stop.
+  - **`pr-loop`**: check whether anyone replied on the thread. A
+    finding that was fixed correctly but never replied to recurs
+    whenever triage couldn't see the fix, and it recurs *identically*
+    — same `fix_ref`, title, file and line. It needs a reply naming
+    the commit (step 8), not a stop.
   - **`local-loop-git` / `local-loop-nogit`**: there is no thread to
     reply to. Tell the operator the reviewer re-flagged a finding the
     code no longer has, and add its `fix_ref` to `DEFERRED_FIX_REFS`
@@ -489,12 +516,17 @@ is where the push prompt for `local-loop-git` lives.
 
 ## What not to do
 
-- Don't iterate without operator confirmation.
-- Don't auto-apply nitpicks or "obvious" fixes.
+- Don't ask the operator to approve findings. Triage is your judgment;
+  report it, act on it.
+- Don't skip a legitimate finding because it looks like a nitpick, and
+  don't apply one the project's conventions refute.
 - Don't skip a finding silently — in `pr-loop`, every skip gets a
-  `codecanary reply` with the rationale (step 9). In local modes,
+  `codecanary reply` with the rationale (step 8). In local modes,
   every skip adds its `fix_ref` to `DEFERRED_FIX_REFS` so the next
   cycle doesn't surface it again.
+- Don't fix in `pr-loop` with `FIX_ON_CI` while the bot is still
+  working: wait, pull its commits, and take over only when it stopped
+  or asked for a local fix.
 - Don't guess the mode. Always read it from `codecanary mode --output json`.
 - Don't silently fall back from `pr-loop` to a local mode when the
   GHA fails — surface the error, stop, let the operator decide.
@@ -503,10 +535,8 @@ is where the push prompt for `local-loop-git` lives.
 - Don't `gh api` or `gh pr view` yourself — the CLI handles that
   (`codecanary findings` for reads, `codecanary reply` for thread
   replies, `codecanary mode` for mode detection, `codecanary checks`
-  for required checks). `gh pr ready` / `gh pr ready --undo` are the
-  only `gh` commands, and only in `pr-loop` with `REVIEW_ON = ready`.
-- Don't mark a PR ready while its required checks are failing or still
-  running — wait for `codecanary checks --watch` to report `pass`.
+  for required checks). The one exception is reading the bot's
+  stop signal in **Waiting for the bot** when the CLI's JSON lacks it.
 - Don't attempt concurrent PR work. One branch at a time.
 - Don't commit to `main` or an unrelated branch; always stay on the PR's
   feature branch. Applies to both `pr-loop` and `local-loop-git`.
@@ -514,30 +544,38 @@ is where the push prompt for `local-loop-git` lives.
 - Don't push in `local-loop-git` without asking — the push prompt at
   session end is the only authorised push.
 
+## Mode summary
+
+| Mode | Findings from | Who fixes | After the fix |
+| --- | --- | --- | --- |
+| `pr-loop`, `fix_on_ci` true | bot (`codecanary findings --watch`) | the bot on CI; you only after "stopped after N fixes" or the "fix locally" comment | pull the bot's commits and wait; if you took over, one commit + one push |
+| `pr-loop`, `fix_on_ci` false | bot (`codecanary findings --watch`) | you | commit, push; the push triggers the next review; replies on skipped threads |
+| `local-loop-git` | `codecanary review` | you | commit without pushing; push prompt at exit; skipped refs deferred |
+| `local-loop-nogit` | `codecanary review` | you | apply in place; no git; skipped refs deferred |
+
 ## Example operator turns
 
 ```
 user: handle codecanary on this PR
 
-A: (runs `codecanary mode --output json` → pr-loop, review_on push,
+A: (runs `codecanary mode --output json` → pr-loop, fix_on_ci false,
     prints banner + mode line, invokes
     `codecanary findings --watch --output json`, parses JSON,
-    renders triage table, asks for confirmation, applies approved
-    fixes, runs `codecanary reply` on each skipped finding with a
-    rationale, commits, pushes, loops)
+    renders the triage table, applies the legitimate findings, runs
+    `codecanary reply` on each refuted finding with a rationale,
+    commits, pushes, loops)
 ```
 
 ```
-user: handle codecanary (repo with review_on: ready)
+user: handle codecanary (repo with fix.enabled: true)
 
-A: (runs `codecanary mode --output json` → pr-loop, review_on ready,
-    prints banner + mode line, reads the open findings with
-    `codecanary findings --watch --output json`, renders triage table,
-    asks for confirmation, replies on each skipped finding, runs
-    `gh pr ready --undo <PR>`, applies the approved fixes in one commit,
-    pushes once, waits with `codecanary checks <PR> --watch --output json`;
-    on pass runs `gh pr ready <PR>` and loops on the new review, on fail
-    reports the failing checks and stops with the PR left as a draft)
+A: (runs `codecanary mode --output json` → pr-loop, fix_on_ci true,
+    prints banner + mode line, waits with `codecanary findings --watch`
+    and `codecanary checks <PR> --watch`, pulls the bot's fix commits,
+    and loops on the new review. Reports clean when the head settles
+    with no findings; if the status says "stopped after 2 fixes" it
+    triages and applies the open findings itself, commits and pushes
+    once)
 ```
 
 ```
@@ -545,10 +583,10 @@ user: handle codecanary
 
 A: (runs `codecanary mode --output json` → local-loop-nogit,
     prints banner + mode line, invokes
-    `codecanary review --output json`, parses JSON, renders triage
-    table, asks for confirmation, applies approved fixes, tracks
-    skipped fix_refs in DEFERRED_FIX_REFS, loops. On empty findings
-    or "Abort", reports the summary and stops — no commit, no push)
+    `codecanary review --output json`, parses JSON, renders the triage
+    table, applies the legitimate findings, tracks refuted fix_refs in
+    DEFERRED_FIX_REFS, loops. On empty findings, reports the summary
+    and stops — no commit, no push)
 ```
 
 ```
@@ -556,9 +594,8 @@ user: handle codecanary (on a branch with a PR but no GHA)
 
 A: (runs `codecanary mode --output json` → local-loop-git,
     prints banner + mode line, invokes
-    `codecanary review --output json`, parses JSON, renders triage
-    table, asks for confirmation, applies approved fixes, commits
-    locally without pushing, tracks skipped fix_refs, loops. On
-    empty findings, prints the list of accumulated commits and asks
-    whether to push)
+    `codecanary review --output json`, parses JSON, renders the triage
+    table, applies the legitimate findings, commits locally without
+    pushing, tracks refuted fix_refs, loops. On empty findings, prints
+    the list of accumulated commits and asks whether to push)
 ```
