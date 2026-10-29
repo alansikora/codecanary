@@ -141,11 +141,7 @@ func revertProtectedChanges() ([]string, error) {
 		if !isProtectedPath(e.Path) {
 			continue
 		}
-		if e.Code == "??" {
-			if _, err := fixGit("", nil, "clean", "-fq", "--", e.Path); err != nil {
-				return reverted, err
-			}
-		} else if _, err := fixGit("", nil, "checkout", "-q", "HEAD", "--", e.Path); err != nil {
+		if err := revertEntry(e); err != nil {
 			return reverted, err
 		}
 		reverted = append(reverted, e.Path)

@@ -50,6 +50,7 @@ internal/
     fix.go               # RunFix() + FixPlatform interface, loop limits
     fix_prompt.go        # Fix prompt + disposition parsing (applied/refuted/skipped)
     fix_git.go           # Fix-commit counting, commit, protected-path revert
+    fix_format.go        # fix.format_command on the fix's files, inside a bubblewrap sandbox
     fix_github.go        # GithubPlatform's FixPlatform implementation (push with app token)
     reply.go             # Review-thread replies (shared by `codecanary reply` and the fix)
     docs.go              # Project doc discovery

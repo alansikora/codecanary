@@ -75,6 +75,10 @@ type FixConfig struct {
 	MaxPerPush int `yaml:"max_per_push"`
 	// MaxPerPR caps the fix commits over the pull request's life (default 5).
 	MaxPerPR int `yaml:"max_per_pr"`
+	// FormatCommand runs on the files the fix changed, appended as
+	// arguments, before the fix commits (e.g. [bin/format, --fix]). It runs
+	// in a sandbox; see formatFixChanges.
+	FormatCommand []string `yaml:"format_command"`
 }
 
 // Fix defaults.
@@ -95,6 +99,14 @@ func (c *ReviewConfig) EffectiveFixModel() string {
 		return c.Fix.Model
 	}
 	return defaultFixModel
+}
+
+// FixFormatCommand returns fix.format_command, nil when unset.
+func (c *ReviewConfig) FixFormatCommand() []string {
+	if c == nil || c.Fix == nil {
+		return nil
+	}
+	return c.Fix.FormatCommand
 }
 
 // EffectiveFixLimits returns fix.max_per_push and fix.max_per_pr, with
@@ -373,6 +385,11 @@ func (c *ReviewConfig) validateFix() error {
 	}
 	if c.Fix.MaxPerPR < 0 {
 		return fmt.Errorf("fix.max_per_pr must be non-negative, got %d", c.Fix.MaxPerPR)
+	}
+	for i, arg := range c.Fix.FormatCommand {
+		if strings.TrimSpace(arg) == "" {
+			return fmt.Errorf("fix.format_command[%d] is empty", i)
+		}
 	}
 	if !c.Fix.Enabled {
 		return nil
