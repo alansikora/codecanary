@@ -321,6 +321,10 @@ You can create a `.codecanary/review.local.yml` for personal review preferences 
 
 `review.local.yml` works even without a `review.yml` — the local file is loaded independently.
 
+It also holds one setting that isn't about the review:
+
+- **`confirm_fixes`** — `true` makes the `codecanary-fix` Claude Code skill ask which findings to apply instead of applying its own triage (default `false`). It is reported by `codecanary mode` and covers only fixes the skill makes, not the CI fix job. It is a personal preference, so it is accepted only in `review.local.yml`; in `review.yml` it is a config error. Override it for one run with `/codecanary-fix auto` (or turn confirmation on for one run with `/codecanary-fix confirm`).
+
 ```yaml
 # .codecanary/review.local.yml (add to .gitignore)
 context: |
@@ -335,6 +339,8 @@ rules:
 
 ignore:
   - "docs/**"
+
+confirm_fixes: true
 ```
 
 Add `review.local.yml` to your `.gitignore` so it is not committed:

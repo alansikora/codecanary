@@ -11,8 +11,12 @@ description: |
   commit each cycle without pushing, offer to push at exit), or
   local-loop-nogit (no PR; local reviews, apply in place, no git). Every
   finding is triaged against the project's conventions: legitimate ones
-  are applied, wrong ones are refuted. In pr-loop, every skipped finding
-  gets a reply posted on its review thread explaining the rationale.
+  are applied, wrong ones are refuted. With confirmation on
+  (confirm_fixes: true in .codecanary/review.local.yml, or
+  "/codecanary-fix confirm" / "ask me first"), the triage is shown and the
+  operator picks which findings to apply. In pr-loop, every skipped
+  finding gets a reply posted on its review thread explaining the
+  rationale.
 ---
 
 # codecanary-fix
@@ -21,8 +25,10 @@ You are driving the CodeCanary review-fix loop. The operator runs this skill
 when they want you to iterate against CodeCanary's findings until the review
 is clean. Stay disciplined: you are the glue between the CLI and the
 project's conventions, not the reviewer. You triage each finding on its
-merits and act on your own judgment; the operator is not asked to approve
-individual findings.
+merits and, by default, act on your own judgment; the operator is not
+asked to approve individual findings. When confirmation is on (see
+"Confirmation"), you still triage, but the operator decides which
+findings to apply.
 
 Trigger phrases: pick this skill up automatically when the operator says
 "handle codecanary", "handle codecanary reviews", "run codecanary", or
@@ -90,6 +96,28 @@ unless the CLI itself errors.
 Only fall back to asking the operator if `codecanary mode` errors out
 (e.g., detached HEAD, not in a git repo).
 
+## Confirmation
+
+By default the skill applies its own triage without asking. The operator
+can opt in to confirming each cycle's fixes. `CONFIRM` is resolved once,
+at startup, in this order:
+
+1. **The invocation.** `/codecanary-fix confirm`, or a request that asks
+   for approval ("handle codecanary, ask me first", "let me approve the
+   fixes") → `CONFIRM` true. `/codecanary-fix auto`, or "don't ask me" →
+   `CONFIRM` false. Either overrides the setting for this run.
+2. **The setting.** Otherwise `CONFIRM` is `confirm_fixes` from
+   `codecanary mode` — `confirm_fixes: true` in the operator's
+   `.codecanary/review.local.yml`. Treat a missing field as false (older
+   CLI).
+
+`CONFIRM` only changes what happens between the triage table and the
+edits (step 7): the operator chooses which findings you apply. It
+applies wherever **you** fix — `pr-loop` without `FIX_ON_CI`, both local
+modes, and `pr-loop` with `FIX_ON_CI` after you take over from a stopped
+bot. While the bot is fixing on CI it has nothing to gate: the CI fix
+job never asks, and the skill only waits and pulls its commits.
+
 ## Startup header
 
 Before the first iteration:
@@ -103,6 +131,8 @@ Before the first iteration:
    - `REASONS` — array of human-readable detection reasons.
    - `FIX_ON_CI` — boolean, from `fix_on_ci`. Treat a missing field as
      false (older CLI).
+   - `CONFIRM` — boolean, resolved from the invocation and
+     `confirm_fixes` as in "Confirmation".
    - `REVIEW_ON` — `push` or `ready`, from `review_on`. Treat a missing
      field as `push` (older CLI).
    - `UPDATE_AVAILABLE` / `LATEST_VERSION` — from `update_available` and
@@ -160,8 +190,17 @@ Where the reason is synthesised from the `REASONS` array. Examples:
 - `Mode: local-loop-git  —  PR #167, no CodeCanary workflow on this branch (fixes will commit, not push)`
 - `Mode: local-loop-nogit  —  no open PR (fixes applied in place)`
 
-Then, only if something is out of date, print exactly one notice line
-under the mode line:
+If `CONFIRM` is true, print a line under the mode line saying so and
+where it came from:
+
+- `Confirm: on (review.local.yml)  —  you choose which findings to apply each cycle`
+- `Confirm: on (requested)  —  you choose which findings to apply each cycle`
+
+With `FIX_ON_CI` in `pr-loop`, say instead
+`Confirm: on  —  the bot fixes on CI without asking; you'll choose only if I take over`.
+
+Then, only if something is out of date, print exactly one update notice
+line after the mode line (and the `Confirm` line, when there is one):
 
 - `UPDATE_AVAILABLE` and `SKILL_STALE`:
   `Update: codecanary <LATEST_VERSION> is available (running <VERSION>) — run 'codecanary upgrade', then 'codecanary install-skill --force'.`
@@ -331,9 +370,11 @@ fix count); go back to the start of this procedure.
    > cycles, stop and verify your fix actually addresses what was meant —
    > don't keep patching symptoms.
 6. Triage the findings and render the result as a table (Markdown). The
-   table is a report of what you decided, not a question:
+   table is a report of what you decided, not a question (with
+   `CONFIRM`, it is your recommendation, and step 7 asks):
    - Columns: severity, file:line, fix_ref, title, disposition
-     (`apply`, `refute`, or `already fixed`) with a terse reason.
+     (`apply`, `refute`, or `already fixed`) with a terse reason. With
+     `CONFIRM`, add a leading `#` column numbering the rows from 1.
    - One row per finding. Keep dispositions terse (one line each).
 
    **Test each finding against the project's own conventions before
@@ -353,16 +394,34 @@ fix count); go back to the start of this procedure.
    produces, and both are easy to mistake for nitpicks. The rule is to
    *read*, not to default either way. A legitimate finding is applied
    even when it is a nitpick.
-7. Apply every finding whose disposition is `apply`, then continue to
-   step 8; the single commit comes in step 9. For each one:
+7. Decide what to apply. Without `CONFIRM`, that is every finding whose
+   disposition is `apply`. With `CONFIRM`, ask first and touch no file
+   until the operator answers. Use `AskUserQuestion` with one question
+   whose options are:
+   - "Apply the recommended fixes" *(Recommended)* — every `apply` row
+   - "Choose individually"
+   - "Skip all this cycle" — nothing is applied; every finding is
+     skipped (step 8) and the loop ends
+   - "Stop" — exit now: no edits, no replies
+
+   On "Choose individually", ask which rows to apply: a multi-select
+   `AskUserQuestion` listing the findings (`#<n> <file:line> — <title>`)
+   when there are four or fewer, otherwise have the operator type the row
+   numbers. The operator may pick a row you marked `refute`; apply it.
+   A finding the operator declines is skipped (step 8); keep any reason
+   they gave for it.
+
+   Apply every chosen finding, then continue to step 8; the single
+   commit comes in step 9. For each one:
    - Read the file, make the minimal edit that addresses the finding,
      keeping the surrounding code intact (do not "improve" unrelated code).
    - If the suggestion in the finding is an exact code snippet and fits
      the context, prefer it verbatim; otherwise adapt it to the codebase
      conventions (existing imports, types, error-handling style).
 8. Handle skipped findings. A skipped finding is any finding not
-   applied this cycle: one you refuted in triage, or one that was
-   already fixed. Branch on `MODE`:
+   applied this cycle: one you refuted in triage, one that was already
+   fixed, or, with `CONFIRM`, one the operator declined. Branch on
+   `MODE`:
 
    - **`pr-loop`** — post replies on the review threads. For each
      skipped finding, run:
@@ -373,7 +432,10 @@ fix count); go back to the start of this procedure.
 
      where `<comment_url>` is the finding's `comment_url` field from the
      findings JSON, and `<rationale>` is a concise 1–2 sentence summary
-     of *why* you're not applying this finding (your own analysis).
+     of *why* you're not applying this finding (your own analysis). For
+     a finding the operator declined, use the reason they gave; with
+     none, say the author chose not to apply it in this PR, plus your
+     own read of the finding when you had refuted it too.
      Examples:
      - "Not applying: the bot's suggested rename conflicts with the public
        API exported in `pkg/foo`. Revisit after the v2 cutover."
@@ -479,8 +541,11 @@ Exit the loop (and tell the operator *why*) whenever any of these hold:
 - **`local-loop-git` / `local-loop-nogit`**: the findings list comes
   back empty — normal success. (There is no `conclusion` field in
   local modes; its absence is expected.)
-- A cycle ends with every finding skipped: nothing was applied, so
-  nothing will change on the next review. In `pr-loop`, still post the
+- With `CONFIRM`, the operator chose "Stop": exit at once — no edits,
+  no replies.
+- A cycle ends with every finding skipped (including "Skip all this
+  cycle"): nothing was applied, so nothing will change on the next
+  review. In `pr-loop`, still post the
   replies from step 8 before exiting; in local modes, `DEFERRED_FIX_REFS`
   is already updated.
 - The CLI errors out (network failure, no PR detected, timeout on
@@ -520,8 +585,10 @@ is where the push prompt for `local-loop-git` lives.
 
 ## What not to do
 
-- Don't ask the operator to approve findings. Triage is your judgment;
-  report it, act on it.
+- Don't ask the operator to approve findings unless `CONFIRM` is on.
+  By default triage is your judgment; report it, act on it. With
+  `CONFIRM`, never edit a file before the operator has answered step 7,
+  and apply only what they chose.
 - Don't skip a legitimate finding because it looks like a nitpick, and
   don't apply one the project's conventions refute.
 - Don't skip a finding silently — in `pr-loop`, every skip gets a
@@ -591,6 +658,17 @@ A: (runs `codecanary mode --output json` → local-loop-nogit,
     table, applies the legitimate findings, tracks refuted fix_refs in
     DEFERRED_FIX_REFS, loops. On empty findings, reports the summary
     and stops — no commit, no push)
+```
+
+```
+user: /codecanary-fix confirm
+
+A: (runs `codecanary mode --output json` → pr-loop, fix_on_ci false,
+    prints banner, mode line and "Confirm: on (requested)", fetches the
+    findings, renders the numbered triage table, asks which to apply.
+    Operator picks "Choose individually" and rows 1 and 3: applies
+    those, replies on the other threads — with the operator's reason
+    for the ones they declined — commits, pushes, loops)
 ```
 
 ```

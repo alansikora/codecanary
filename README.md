@@ -293,7 +293,7 @@ Keys are stored in your system keychain (macOS Keychain, GNOME Keyring, KDE Wall
 
 ## Agentic review loop
 
-CodeCanary ships with a [Claude Code](https://docs.claude.com/en/docs/claude-code) skill, `codecanary-fix`, that drives a review → triage → fix cycle until the PR is clean. It triages each finding against your project's conventions and applies the legitimate ones without asking you to confirm them; the polling, fetching, and CI watching is handled by the CLI.
+CodeCanary ships with a [Claude Code](https://docs.claude.com/en/docs/claude-code) skill, `codecanary-fix`, that drives a review → triage → fix cycle until the PR is clean. It triages each finding against your project's conventions and, by default, applies the legitimate ones without asking you to confirm them; the polling, fetching, and CI watching is handled by the CLI.
 
 Install the skill once:
 
@@ -307,6 +307,14 @@ Then in Claude Code, ask it to `handle codecanary` on your PR (or invoke `/codec
 
 - **PR mode** (default) — watches the GitHub Actions review check via `codecanary findings --watch` and triages without asking you to confirm individual findings. Who applies the fixes depends on `fix_on_ci` (reported by `codecanary mode --output json`, from `fix.enabled` in `.codecanary/config.yml`). With `fix_on_ci`, the workflow's fix job applies the fixes and pushes them, so the skill only waits for the bot's commits (`codecanary findings --watch`, `codecanary checks --watch`), pulls them, and reports clean once the head settles. It takes over locally — triages and applies the open findings itself, in one commit and one push — only when `codecanary findings --output json` reports `fix_stop`, or the `CodeCanary / review` status or a bot comment says the bot stopped. Without `fix_on_ci`, the skill applies the fixes itself, commits, pushes and loops on the next review. Every finding it skips gets a reply posted on its review thread explaining why, via `codecanary reply`. `review_on: ready` is a legacy value: pushes to a ready PR aren't reviewed under it, so the loop ends after one cycle of fixes.
 - **Local mode** — triggered automatically when no PR is detected for the current branch. Single pass against your dirty working tree. Applies the fixes it judges legitimate without committing or pushing.
+
+To approve fixes yourself, turn on confirmation. For one run, invoke `/codecanary-fix confirm` (or say "handle codecanary, ask me first"). To make it stick for a repo, add this to your personal, gitignored `.codecanary/review.local.yml`:
+
+```yaml
+confirm_fixes: true
+```
+
+With confirmation on, the skill still triages, then shows its table and asks whether to apply the recommended fixes, choose them individually, skip them all, or stop. It applies only the ones you pick; in PR mode, each declined finding still gets a reply on its thread. `/codecanary-fix auto` skips confirmation for one run when the setting is on. Confirmation only covers fixes the skill makes: with `fix_on_ci`, the CI fix job doesn't ask, and you're asked only if the skill takes over after the bot stops.
 
 The full skill contract lives at [internal/skills/codecanary-fix/SKILL.md](internal/skills/codecanary-fix/SKILL.md).
 
