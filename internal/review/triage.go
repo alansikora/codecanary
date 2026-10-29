@@ -446,10 +446,17 @@ func fileDeletedInDiff(diff, path string) bool {
 	return nextLine == "+++ /dev/null"
 }
 
-// hasHumanReply checks if a thread has at least one reply from a non-bot author.
+// isAuthorReply reports whether a reply answers the finding on the author's
+// behalf: one from anyone but the bot, or a refutation the CI fix posted as
+// the bot (isFixReply). The bot's own acknowledgments are not.
+func isAuthorReply(r ThreadReply, botLogin string) bool {
+	return r.Author != botLogin || isFixReply(r.Body)
+}
+
+// hasHumanReply checks if a thread has at least one author reply.
 func hasHumanReply(t ReviewThread, botLogin string) bool {
 	for _, r := range t.Replies {
-		if r.Author != botLogin {
+		if isAuthorReply(r, botLogin) {
 			return true
 		}
 	}
@@ -477,7 +484,7 @@ func hasNewHumanReply(t ReviewThread, botLogin string) bool {
 	}
 	// Check for human replies after the last ack.
 	for _, r := range t.Replies[lastAckIdx+1:] {
-		if r.Author != botLogin {
+		if isAuthorReply(r, botLogin) {
 			return true
 		}
 	}
@@ -682,7 +689,7 @@ func writeReplies(b *strings.Builder, t ReviewThread, botLogin string) {
 	// hasHumanReply and hasNewHumanReply.
 	var humanReplies []ThreadReply
 	for _, r := range t.Replies {
-		if r.Author != botLogin {
+		if isAuthorReply(r, botLogin) {
 			humanReplies = append(humanReplies, r)
 		}
 	}

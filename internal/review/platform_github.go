@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -126,6 +127,9 @@ type GithubPlatform struct {
 	// Updates drives the outdated-install note on posted reviews; the
 	// zero value disables it.
 	Updates UpdateCheck
+	// FixOnCI is the repo's fix.enabled. Publish reports it as the action's
+	// `fix` output, which, with `findings`, gates the workflow's fix job.
+	FixOnCI bool
 }
 
 func (g *GithubPlatform) LoadPreviousFindings() ([]ReviewThread, string, int) {
@@ -190,6 +194,9 @@ func (g *GithubPlatform) HandleResolutions(threads []ReviewThread, fixed []fixed
 
 func (g *GithubPlatform) Publish(result *ReviewResult, pr *PRData, threads []ReviewThread, fixed []fixedThread) error {
 	summary := computeReviewSummary(threads, fixed, result.Findings)
+	// The workflow's fix job runs only when the repo enabled it and this
+	// review left findings open.
+	g.writeFixOutputs(openFindingCount(threads, fixed, result.Findings))
 
 	// Decide edit-vs-post: if the latest CodeCanary review on the PR carries
 	// the current HEAD SHA in its marker, this is either a reply-only run or
@@ -324,6 +331,51 @@ func (g *GithubPlatform) postReviewCommitStatus(sha string, summary ReviewSummar
 		ReviewCommitStatusContext, state, shortSHA(sha), desc)
 }
 
+// openFindingCount is how many findings a review leaves for the author: the
+// new ones, plus the earlier threads this cycle neither resolved nor
+// classified and that carry no acknowledgment from an earlier cycle.
+func openFindingCount(threads []ReviewThread, fixed []fixedThread, newFindings []Finding) int {
+	handled := make(map[int]bool, len(fixed))
+	for _, f := range fixed {
+		handled[f.Index] = true
+	}
+	n := len(newFindings)
+	for i, t := range threads {
+		if !handled[i] && !hasAcknowledgmentReply(t) {
+			n++
+		}
+	}
+	return n
+}
+
+// writeFixOutputs sets the step outputs the workflow's fix job is gated on.
+func (g *GithubPlatform) writeFixOutputs(openFindings int) {
+	for key, value := range map[string]string{
+		"findings": strconv.Itoa(openFindings),
+		"fix":      strconv.FormatBool(g.FixOnCI),
+	} {
+		if err := writeGithubOutput(key, value); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not write the %s output: %v\n", key, err)
+		}
+	}
+}
+
+// writeGithubOutput sets a step output for the action (the action maps it to
+// its own output). A no-op outside GitHub Actions.
+func writeGithubOutput(key, value string) error {
+	path := os.Getenv("GITHUB_OUTPUT")
+	if path == "" {
+		return nil
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	_, err = fmt.Fprintf(f, "%s=%s\n", key, value)
+	return err
+}
+
 // githubEventAction is the `action` of the pull request event the workflow
 // runs for (e.g. "synchronize", "ready_for_review"), or "" outside Actions.
 func githubEventAction() string {
@@ -367,16 +419,22 @@ func (g *GithubPlatform) SkipReview(cfg *ReviewConfig, replyOnly bool) (bool, er
 }
 
 // skippedPushStatus is the commit status for a push review_on: ready didn't
-// review: the same rule as a reviewed push, applied to the threads still
-// open. Threads the author already answered and the bot acknowledged count as
-// handled, as they do in a review.
+// review: the open threads' status, marked as not reviewed.
 func skippedPushStatus(threads []ReviewThread) (state, desc string) {
+	state, desc = openThreadsStatus(threads)
+	return state, desc + "; push not reviewed (review_on: ready)"
+}
+
+// openThreadsStatus is the commit status the unresolved threads warrant
+// without a review: the same rule as a reviewed push, applied to the threads
+// still open. Threads the author already answered and the bot acknowledged
+// count as handled, as they do in a review.
+func openThreadsStatus(threads []ReviewThread) (state, desc string) {
 	var open []ReviewThread
 	for _, t := range threads {
 		if !hasAcknowledgmentReply(t) {
 			open = append(open, t)
 		}
 	}
-	state, desc = commitStatusFromSummary(computeReviewSummary(open, nil, nil))
-	return state, desc + "; push not reviewed (review_on: ready)"
+	return commitStatusFromSummary(computeReviewSummary(open, nil, nil))
 }

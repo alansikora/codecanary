@@ -19,9 +19,10 @@ current branch.
 Three modes, resolved in order:
 
   pr-loop            — PR open and CodeCanary workflow detected on the
-                       branch. The bot reviews; review_on (reported
-                       below) says whether a push or marking the PR
-                       ready requests the next review.
+                       branch. The bot reviews the PR; review_on
+                       (reported below) says which events it reviews.
+                       With fix_on_ci, the workflow also fixes the
+                       bot's findings in CI and pushes the result.
   local-loop-git     — PR open but no CodeCanary workflow detected. The
                        loop reviews locally and commits each cycle on
                        the PR branch without pushing; the operator is
@@ -66,9 +67,12 @@ type modeOutput struct {
 	LatestVersion   string     `json:"latest_version,omitempty"`
 	UpdateAvailable bool       `json:"update_available"`
 	Skill           skillState `json:"skill"`
-	// ReviewOn is the repo's review_on setting ("push" or "ready"), which
-	// decides how the skill's pr-loop requests the next review.
+	// ReviewOn is the repo's review_on setting ("push" or "ready"): which
+	// pull request events the bot reviews.
 	ReviewOn string `json:"review_on"`
+	// FixOnCI reports the repo's fix.enabled: the workflow fixes the bot's
+	// findings in CI, so the skill's pr-loop has nothing to apply itself.
+	FixOnCI bool `json:"fix_on_ci"`
 }
 
 // skillState describes the skill at the default install-skill location.
@@ -81,7 +85,11 @@ type skillState struct {
 }
 
 func buildModeOutput(mode *review.ModeInfo) *modeOutput {
-	out := &modeOutput{ModeInfo: mode, Version: DisplayVersion(), ReviewOn: repoReviewOn()}
+	cfg := repoConfig()
+	out := &modeOutput{ModeInfo: mode, Version: DisplayVersion(), ReviewOn: review.ReviewOnPush, FixOnCI: cfg.FixEnabled()}
+	if cfg != nil && cfg.ReviewOn != "" {
+		out.ReviewOn = cfg.ReviewOn
+	}
 
 	latest, hasUpdate := checkForUpdate()
 	out.UpdateAvailable = hasUpdate
@@ -103,6 +111,7 @@ func emitModeHuman(info *modeOutput) error {
 	fmt.Printf("Mode: %s\n", info.Mode)
 	fmt.Printf("Branch: %s\n", info.Branch)
 	fmt.Printf("Review on: %s\n", info.ReviewOn)
+	fmt.Printf("Fix on CI: %t\n", info.FixOnCI)
 	if info.Repo != "" {
 		fmt.Printf("Repo: %s\n", info.Repo)
 	}
@@ -144,18 +153,18 @@ func init() {
 	rootCmd.AddCommand(modeCmd)
 }
 
-// repoReviewOn returns the review_on setting of the repo's committed config
-// (.codecanary/config.yml), which is what the bot runs with — not the
-// operator's local config. "push" when it is unset or can't be read (mode
-// detection must not fail on config).
-func repoReviewOn() string {
+// repoConfig returns the repo's committed config (.codecanary/config.yml),
+// which is what the bot runs with — not the operator's local config. Nil
+// when there is none or it can't be read: mode detection must not fail on
+// config, and the defaults (review_on: push, no CI fix) apply.
+func repoConfig() *review.ReviewConfig {
 	path, err := review.FindRepoConfig()
 	if err != nil {
-		return review.ReviewOnPush
+		return nil
 	}
 	cfg, err := review.LoadConfig(path)
-	if err != nil || cfg.ReviewOn == "" {
-		return review.ReviewOnPush
+	if err != nil {
+		return nil
 	}
-	return cfg.ReviewOn
+	return cfg
 }

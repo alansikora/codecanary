@@ -58,6 +58,58 @@ type ReviewConfig struct {
 	// is already ready (move it to draft and back to ready for a new review).
 	// Thread replies are evaluated either way.
 	ReviewOn string `yaml:"review_on"`
+	// Fix configures the CI fix job (`codecanary fix`), which applies or
+	// refutes a review's findings and pushes the result. Nil or
+	// enabled: false (the default) leaves the fix to the developer.
+	Fix *FixConfig `yaml:"fix"`
+}
+
+// FixConfig is the `fix:` block of config.yml. See docs/review-flow.md
+// ("The CI fix cycle") for how the limits are counted.
+type FixConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// Model is the Claude CLI model the fix runs with (default opus).
+	Model string `yaml:"model"`
+	// MaxPerPush caps the fix commits since the last commit that is not a
+	// CodeCanary fix, so a human push resets it (default 2).
+	MaxPerPush int `yaml:"max_per_push"`
+	// MaxPerPR caps the fix commits over the pull request's life (default 5).
+	MaxPerPR int `yaml:"max_per_pr"`
+}
+
+// Fix defaults.
+const (
+	defaultFixModel      = "opus"
+	defaultFixMaxPerPush = 2
+	defaultFixMaxPerPR   = 5
+)
+
+// FixEnabled reports whether the CI fix job should run for this repo.
+func (c *ReviewConfig) FixEnabled() bool {
+	return c != nil && c.Fix != nil && c.Fix.Enabled
+}
+
+// EffectiveFixModel returns fix.model, defaulting to opus.
+func (c *ReviewConfig) EffectiveFixModel() string {
+	if c != nil && c.Fix != nil && c.Fix.Model != "" {
+		return c.Fix.Model
+	}
+	return defaultFixModel
+}
+
+// EffectiveFixLimits returns fix.max_per_push and fix.max_per_pr, with
+// their defaults for unset (zero) values.
+func (c *ReviewConfig) EffectiveFixLimits() (perPush, perPR int) {
+	perPush, perPR = defaultFixMaxPerPush, defaultFixMaxPerPR
+	if c != nil && c.Fix != nil {
+		if c.Fix.MaxPerPush > 0 {
+			perPush = c.Fix.MaxPerPush
+		}
+		if c.Fix.MaxPerPR > 0 {
+			perPR = c.Fix.MaxPerPR
+		}
+	}
+	return perPush, perPR
 }
 
 // Valid ReviewOn values.
@@ -81,6 +133,13 @@ type ModelConfig struct {
 	// argument the claude provider uses to disable built-in tools. Set only on
 	// the review provider (not triage). See ReviewConfig.ClaudeReviewTools.
 	ClaudeReviewTools string
+	// ClaudeFixTools gives the model Read, Grep, Glob, Edit and Write, confined
+	// to the repository root (claude provider only). Set only on the fix
+	// provider; see enableFixTools.
+	ClaudeFixTools bool
+	// Effort is the Claude CLI's --effort level (claude provider only); empty
+	// leaves the CLI default.
+	Effort string
 }
 
 // EvaluationConfig holds per-evaluation-type settings for re-evaluation prompts.
@@ -292,10 +351,43 @@ func (c *ReviewConfig) Validate() error {
 	if c.ClaudeReviewTools != "" && c.Provider != "claude" {
 		Stderrf(ansiYellow, "Warning: claude_review_tools is ignored for provider %q (claude provider only)\n", c.Provider)
 	}
+	if err := c.validateFix(); err != nil {
+		return err
+	}
 	for i, r := range c.Rules {
 		if r.Severity != "" && !validSeverities[r.Severity] {
 			return fmt.Errorf("rule %d (%q): invalid severity %q", i, r.ID, r.Severity)
 		}
+	}
+	return nil
+}
+
+// validateFix checks the fix: block. The limits are checked even while the
+// fix is disabled, so a typo surfaces before someone turns it on.
+func (c *ReviewConfig) validateFix() error {
+	if c.Fix == nil {
+		return nil
+	}
+	if c.Fix.MaxPerPush < 0 {
+		return fmt.Errorf("fix.max_per_push must be non-negative, got %d", c.Fix.MaxPerPush)
+	}
+	if c.Fix.MaxPerPR < 0 {
+		return fmt.Errorf("fix.max_per_pr must be non-negative, got %d", c.Fix.MaxPerPR)
+	}
+	if !c.Fix.Enabled {
+		return nil
+	}
+	// Under review_on: ready a push to a ready PR is not reviewed, so a fix
+	// commit would never get the review that checks it.
+	if c.ReviewOn != "" && c.ReviewOn != ReviewOnPush {
+		return fmt.Errorf("fix.enabled requires review_on: %s — under review_on: %s a fix push would never be reviewed", ReviewOnPush, c.ReviewOn)
+	}
+	// The fix edits files, which only the Claude CLI provider can do.
+	if c.Provider != "claude" {
+		return fmt.Errorf("fix.enabled requires provider: claude (the fix runs the Claude CLI with file-editing tools), not %q", c.Provider)
+	}
+	if err := validateClaude(&ModelConfig{Provider: c.Provider, Model: c.Fix.Model}); err != nil {
+		return fmt.Errorf("fix.model: %w", err)
 	}
 	return nil
 }

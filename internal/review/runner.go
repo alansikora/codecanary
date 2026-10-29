@@ -131,7 +131,7 @@ type reviewContext struct {
 // Claude environment. It also scopes pr.Diff for the prompt and records in
 // Coverage which files the prompt does not show in full. Both the PR and local paths use this.
 func prepareReview(pr *PRData, configPath string) (*reviewContext, error) {
-	cfg, err := loadReviewConfig(configPath)
+	cfg, err := LoadReviewConfig(configPath)
 	if err != nil {
 		return nil, err
 	}
@@ -289,7 +289,7 @@ func Run(opts RunOptions) error {
 	// 1b. Let the platform skip the run before any PR data is fetched (e.g.
 	// review_on: ready on a push). A config that fails to load is reported
 	// by prepareReview below.
-	if cfg, err := loadReviewConfig(opts.ConfigPath); err == nil {
+	if cfg, err := LoadReviewConfig(opts.ConfigPath); err == nil {
 		skip, err := platform.SkipReview(cfg, opts.ReplyOnly)
 		if err != nil {
 			return err
@@ -769,9 +769,9 @@ func threadFinding(platform ReviewPlatform, threads []ReviewThread, i int) Findi
 	return FindingFromThread(threads[i])
 }
 
-// loadReviewConfig loads the review config from the given path, or
+// LoadReviewConfig loads the review config from the given path, or
 // auto-detects via FindConfig() when configPath is empty.
-func loadReviewConfig(configPath string) (*ReviewConfig, error) {
+func LoadReviewConfig(configPath string) (*ReviewConfig, error) {
 	if configPath == "" {
 		found, err := FindConfig()
 		if err != nil {

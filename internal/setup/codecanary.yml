@@ -4,7 +4,7 @@
 # Template version. CodeCanary compares it with the template it ships and
 # adds a note to its reviews when this file is older. Keep this line when
 # customizing; update it only when you take the changes from a newer template.
-# codecanary-workflow: v2
+# codecanary-workflow: v3
 name: CodeCanary
 on:
   pull_request_target:
@@ -19,13 +19,18 @@ permissions:
 
 jobs:
   review:
+    # Reviews non-draft PRs, and evaluates replies on its threads: a person's,
+    # or a refutation the fix job posted as the bot (the bot's other replies
+    # are its own acknowledgments, which must not trigger another run).
     if: >-
       (
         github.event_name == 'pull_request_target' &&
         github.event.pull_request.draft == false
       ) || (
-        github.event.comment.user.login != 'codecanary-bot[bot]' &&
-        github.event.comment.in_reply_to_id
+        github.event.comment.in_reply_to_id && (
+          github.event.comment.user.login != 'codecanary-bot[bot]' ||
+          contains(github.event.comment.body, '<!-- codecanary:fix-reply -->')
+        )
       )
     # Serialize CodeCanary runs per PR so two runs never post duplicate inline
     # comments or race each other when editing the latest top-level review
@@ -42,6 +47,9 @@ jobs:
       # ignored it here, behaviour would fall back to one pending run per group.
       queue: max
     runs-on: ubuntu-latest
+    outputs:
+      findings: ${{ steps.codecanary.outputs.findings }}
+      fix: ${{ steps.codecanary.outputs.fix }}
     steps:
       - name: Check if codecanary thread
         id: check
@@ -134,6 +142,7 @@ jobs:
           rm -f .claude/settings.json .claude/settings.local.json .mcp.json
 
       - uses: alansikora/codecanary@canary
+        id: codecanary
         if: env.skip != 'true'
         with:
           provider_secret: ${{ secrets.CODECANARY_PROVIDER_SECRET }}
@@ -145,3 +154,42 @@ jobs:
         env:
           USAGE_DATA: ${{ env.CODECANARY_USAGE }}
         run: codecanary review costs --data "$USAGE_DATA"
+
+  # Fixes what the review left open, when .codecanary/config.yml sets
+  # fix.enabled (the review reports it as `fix`): applies or refutes each
+  # finding, commits once and pushes to the PR branch with the CodeCanary
+  # app's token, which triggers the next review. Never on fork PRs, where it
+  # would push code to someone else's branch, and never for thread replies.
+  # Loop limits (fix.max_per_push, fix.max_per_pr) are counted from the PR's
+  # commits.
+  fix:
+    needs: review
+    if: >-
+      github.event_name == 'pull_request_target' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      needs.review.outputs.fix == 'true' &&
+      needs.review.outputs.findings > 0
+    # One fix at a time per repository: the fix model's account is shared,
+    # so a burst of reviews queues (`queue: max`, see the review job) rather
+    # than running in parallel or dropping pending fixes.
+    concurrency:
+      group: codecanary-fix-${{ github.repository }}
+      cancel-in-progress: false
+      queue: max
+    runs-on: ubuntu-latest
+    steps:
+      # No persisted credentials: the fix pushes with the app token in an
+      # HTTP header, so the job's GITHUB_TOKEN never reaches git.
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      # The fix must never turn CI red: `codecanary fix` reports its own
+      # failures on the PR, and anything else is a warning here.
+      - uses: alansikora/codecanary@canary
+        continue-on-error: true
+        with:
+          mode: fix
+          provider_secret: ${{ secrets.CODECANARY_PROVIDER_SECRET }}
+          config_path: .codecanary/config.yml

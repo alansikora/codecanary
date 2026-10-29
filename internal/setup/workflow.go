@@ -50,11 +50,11 @@ func GenerateWorkflow(secretName, actionRef string) (string, error) {
 		}
 	}
 
-	// 1. Replace action ref.
-	result = strings.Replace(result, sentinelActionRef, "alansikora/codecanary@"+actionRef, 1)
+	// 1. Replace action refs (the review and fix jobs each use the action).
+	result = strings.ReplaceAll(result, sentinelActionRef, "alansikora/codecanary@"+actionRef)
 
-	// 2. Replace secret name.
-	result = strings.Replace(result, sentinelSecretRef, "secrets."+secretName, 1)
+	// 2. Replace secret names.
+	result = strings.ReplaceAll(result, sentinelSecretRef, "secrets."+secretName)
 
 	return result, nil
 }

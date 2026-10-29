@@ -113,7 +113,8 @@ Same required-check config works for both paths: the bot satisfies the check on 
 | `codecanary review [pr-number]` | Review a PR or local diff |
 | `codecanary findings [pr-number]` | Fetch bot findings for a PR (markdown or JSON) |
 | `codecanary reply --url <URL> --body <text>` | Post a reply on a review-comment thread (used by the skill when skipping) |
-| `codecanary checks [pr-number]` | Report a PR's required checks other than CodeCanary's own; `--watch` waits until they pass or one fails (used by the skill with `review_on: ready`) |
+| `codecanary checks [pr-number]` | Report a PR's required checks other than CodeCanary's own; `--watch` waits until they pass or one fails |
+| `codecanary fix <pr-number>` | Apply or refute a PR's open findings and push the fix — run by the workflow's `fix` job when `fix.enabled` is set (see [fixing findings in CI](#fixing-findings-in-ci)) |
 | `codecanary signoff` | Post a `CodeCanary / review` commit status from the last local review (see [gating merges](#gating-merges-on-clean-reviews)) |
 | `codecanary install-skill` | Install the `codecanary-fix` Claude Code skill |
 | `codecanary setup [local\|github]` | Interactive setup wizard |
@@ -174,6 +175,21 @@ ignore:
 ```
 
 Rules support `paths` and `exclude_paths` globs, and five severity levels: `critical`, `bug`, `warning`, `suggestion`, `nitpick`.
+
+### Fixing findings in CI
+
+With the `claude` provider, the workflow can fix what a review finds, with no one at a laptop. After a review leaves findings open, the workflow's `fix` job runs Claude on the PR branch: per finding it applies the minimal edit, or refutes the finding with a reply on its thread when it doesn't hold for this repo. It commits once (authored by the PR author, co-authored by Claude), pushes, and the push gets the next review.
+
+```yaml
+review_on: push        # required: a fix push must be reviewed
+fix:
+  enabled: true        # default false
+  model: opus          # Claude CLI model for the fix (default opus)
+  max_per_push: 2      # fix commits since your last push (default 2)
+  max_per_pr: 5        # fix commits over the PR's life (default 5)
+```
+
+At a limit the fix stops and comments with the findings still open; a push of yours resets `max_per_push`. If the fix can't run (rate limit, provider error), it comments once and leaves CI green: fix locally with `/codecanary-fix`. It never runs on fork PRs or drafts, and never edits `.github/`, `.codecanary/` or `.claude/`. Needs workflow template v3 (`codecanary setup github`). See [docs/review-flow.md](docs/review-flow.md#the-ci-fix-cycle).
 
 ### Provider examples
 

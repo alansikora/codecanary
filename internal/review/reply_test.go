@@ -1,4 +1,4 @@
-package cli
+package review
 
 import "testing"
 
@@ -6,7 +6,7 @@ func TestParseReviewCommentURL(t *testing.T) {
 	t.Parallel()
 
 	// Happy path — the URL shape the CLI emits from `codecanary findings`.
-	owner, name, pr, commentID, err := parseReviewCommentURL(
+	owner, name, pr, commentID, err := ParseReviewCommentURL(
 		"https://github.com/alansikora/codecanary/pull/123#discussion_r987654321")
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
@@ -33,7 +33,7 @@ func TestParseReviewCommentURL(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if _, _, _, _, err := parseReviewCommentURL(tc.url); err == nil {
+			if _, _, _, _, err := ParseReviewCommentURL(tc.url); err == nil {
 				t.Fatalf("expected error for %q, got nil", tc.url)
 			}
 		})

@@ -114,8 +114,8 @@ func TestGenerateWorkflow_InvalidInputs(t *testing.T) {
 // the next version, then update both constants below. The bump is what
 // makes the review bot tell consumer repos their copy is outdated.
 const (
-	templateFingerprintVersion = 2
-	templateFingerprint        = "f4fd95ae95b0dc3f004d6756ee8f9684ae6f2f2ea08f48313b4d16455a6eac93"
+	templateFingerprintVersion = 3
+	templateFingerprint        = "d99c171bb6a65f483dcece051593d79c0dc94b1346171cfaad2ea62ca50d499d"
 )
 
 var markerLine = regexp.MustCompile(`(?m)^[ \t]*#[ \t]*codecanary-workflow:[ \t]*v\d+[ \t]*\n`)
