@@ -199,8 +199,8 @@ where it came from:
 With `FIX_ON_CI` in `pr-loop`, say instead
 `Confirm: on  —  the bot fixes on CI without asking; you'll choose only if I take over`.
 
-Then, only if something is out of date, print exactly one notice line
-under the mode line:
+Then, only if something is out of date, print exactly one update notice
+line after the mode line (and the `Confirm` line, when there is one):
 
 - `UPDATE_AVAILABLE` and `SKILL_STALE`:
   `Update: codecanary <LATEST_VERSION> is available (running <VERSION>) — run 'codecanary upgrade', then 'codecanary install-skill --force'.`

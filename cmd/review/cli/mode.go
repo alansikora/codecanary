@@ -173,7 +173,9 @@ func init() {
 // repoConfig returns the repo's committed config (.codecanary/config.yml),
 // which is what the bot runs with — not the operator's local config. Nil
 // when there is none or it can't be read: mode detection must not fail on
-// config, and the defaults (review_on: push, no CI fix) apply.
+// config, and the defaults (review_on: push, no CI fix) apply. A config
+// that exists but fails to load is reported on stderr, since the defaults
+// then stand in for what it says.
 func repoConfig() *review.ReviewConfig {
 	path, err := review.FindRepoConfig()
 	if err != nil {
@@ -181,6 +183,7 @@ func repoConfig() *review.ReviewConfig {
 	}
 	cfg, err := review.LoadConfig(path)
 	if err != nil {
+		review.Stderrf(review.ColorYellow, "Warning: %s: %v — reporting review_on: push and fix_on_ci: false\n", path, err)
 		return nil
 	}
 	return cfg
