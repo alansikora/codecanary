@@ -1,6 +1,7 @@
 package review
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -331,5 +332,46 @@ func TestClaudeFixProviderArgs(t *testing.T) {
 	q.enableFixTools("")
 	if q.writable || q.reviewTools != "" {
 		t.Error("fix tools enabled without a repo root")
+	}
+}
+
+// The stop signal `codecanary findings` reports is read back from the notices
+// the fix posts, for the current head only.
+func TestFixStopFromSignals(t *testing.T) {
+	const head, older = "aaaabbbbcccc", "111122223333"
+	bot := func(key, body, url string) issueComment {
+		c := issueComment{Body: key + "\n" + body, HTMLURL: url}
+		c.User.Login = BotLogin
+		return c
+	}
+	limit := bot(fixNoticeKey("limit", head), buildStopNotice(testFindings()[:1], &fixLimit{Count: 2, SincePush: true}), "u/limit")
+	perPR := bot(fixNoticeKey("limit", head), buildStopNotice(testFindings()[:1], &fixLimit{Count: 5}), "u/pr")
+	failed := bot(fixNoticeKey("failed", head), buildFailureNotice(head, "the fix model failed", &ProviderError{Provider: "claude", Kind: ErrorKindRateLimit}), "u/failed")
+	oldFailed := bot(fixNoticeKey("failed", older), buildFailureNotice(older, "the fix model failed", errors.New("x")), "u/old")
+	forged := issueComment{Body: fixNoticeKey("limit", head)}
+	forged.User.Login = "mallory"
+
+	tests := []struct {
+		name     string
+		comments []issueComment
+		status   string
+		want     *FixStop
+	}{
+		{"nothing", nil, "1 unresolved blocking finding", nil},
+		{"per-push limit", []issueComment{limit}, "", &FixStop{Kind: "limit", Reason: "stopped after 2 fixes since your last push", CommentURL: "u/limit"}},
+		{"per-PR limit", []issueComment{perPR}, "", &FixStop{Kind: "limit", Reason: "stopped after 5 fixes on this PR", CommentURL: "u/pr"}},
+		{"rate limit", []issueComment{failed}, "", &FixStop{Kind: "failed", Reason: "the fix model failed (claude rate limit)", CommentURL: "u/failed"}},
+		{"newest notice wins", []issueComment{limit, failed}, "", &FixStop{Kind: "failed", Reason: "the fix model failed (claude rate limit)", CommentURL: "u/failed"}},
+		{"an earlier head's notice doesn't count", []issueComment{oldFailed}, "no findings", nil},
+		{"not from the bot", []issueComment{forged}, "", nil},
+		{"status suffix only", nil, "1 unresolved blocking finding; stopped after 2 fixes", &FixStop{Kind: "limit", Reason: "stopped after 2 fixes"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := fixStopFromSignals(tt.comments, tt.status, head)
+			if (got == nil) != (tt.want == nil) || (got != nil && *got != *tt.want) {
+				t.Errorf("fixStopFromSignals = %+v, want %+v", got, tt.want)
+			}
+		})
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 )
 
@@ -157,20 +158,153 @@ func (g *GithubPlatform) ReplyToFinding(f PRFinding, body string) error {
 }
 
 func (g *GithubPlatform) PostNotice(key, body string) error {
-	owner, name, err := parseRepoSlug(g.Repo)
+	comments, err := fetchIssueComments(g.Repo, g.PRNumber)
 	if err != nil {
 		return err
 	}
-	out, err := runGH("gh api issue comments", "api", "--paginate", "--jq", ".[].body",
-		fmt.Sprintf("repos/%s/%s/issues/%d/comments", owner, name, g.PRNumber))
-	if err != nil {
-		return err
-	}
-	if strings.Contains(string(out), key) {
-		fmt.Fprintf(os.Stderr, "Notice already posted on pull request #%d — not posting it again\n", g.PRNumber)
-		return nil
+	for _, c := range comments {
+		if isBotAuthor(c.User.Login) && strings.Contains(c.Body, key) {
+			fmt.Fprintf(os.Stderr, "Notice already posted on pull request #%d — not posting it again\n", g.PRNumber)
+			return nil
+		}
 	}
 	return PostComment(g.Repo, g.PRNumber, key+"\n"+body)
+}
+
+// issueComment is the subset of a pull request's conversation comment the
+// fix reads back.
+type issueComment struct {
+	Body    string `json:"body"`
+	HTMLURL string `json:"html_url"`
+	User    struct {
+		Login string `json:"login"`
+	} `json:"user"`
+}
+
+// fetchIssueComments returns a pull request's conversation comments, oldest
+// first.
+func fetchIssueComments(repo string, prNumber int) ([]issueComment, error) {
+	owner, name, err := parseRepoSlug(repo)
+	if err != nil {
+		return nil, err
+	}
+	out, err := runGH("gh api issue comments", "api", "--paginate",
+		fmt.Sprintf("repos/%s/%s/issues/%d/comments", owner, name, prNumber))
+	if err != nil {
+		return nil, err
+	}
+	// --paginate emits one JSON array per page, back to back.
+	dec := json.NewDecoder(bytes.NewReader(out))
+	var all []issueComment
+	for {
+		var page []issueComment
+		if err := dec.Decode(&page); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return nil, fmt.Errorf("parsing pull request comments: %w", err)
+		}
+		all = append(all, page...)
+	}
+	return all, nil
+}
+
+// FixStop reports that the CI fix gave up on a pull request's head and left
+// the open findings to the author: `codecanary findings` surfaces it as
+// `fix_stop`, the signal for the codecanary-fix skill to take over.
+type FixStop struct {
+	// Kind is "limit" (a loop limit was reached) or "failed" (the fix
+	// could not finish: provider error, rate limit, rejected push).
+	Kind string `json:"kind"`
+	// Reason is the human-visible reason, e.g. "stopped after 2 fixes
+	// since your last push".
+	Reason string `json:"reason"`
+	// CommentURL is the bot's notice comment, when one was found.
+	CommentURL string `json:"comment_url,omitempty"`
+}
+
+var (
+	limitNoticeReasonRe  = regexp.MustCompile(`CodeCanary (stopped after \d+ fix(?:es)? (?:since your last push|on this PR))`)
+	failedNoticeReasonRe = regexp.MustCompile("did not finish on `[0-9a-f]+`: ([^\n]+?)\\.\n")
+	stoppedStatusRe      = regexp.MustCompile(`; (stopped after \d+ fix(?:es)?)$`)
+)
+
+// FetchFixStop reports whether the CI fix stopped on headSHA, from the
+// bot's notice comments for that head and, failing those, the
+// `CodeCanary / review` status description. Nil when it did not stop, or
+// stopped only on an earlier head (a push starts over).
+func FetchFixStop(repo string, prNumber int, headSHA string) (*FixStop, error) {
+	if headSHA == "" {
+		return nil, nil
+	}
+	comments, err := fetchIssueComments(repo, prNumber)
+	if err != nil {
+		return nil, err
+	}
+	desc, err := fetchReviewStatusDescription(repo, headSHA)
+	if err != nil {
+		return nil, err
+	}
+	return fixStopFromSignals(comments, desc, headSHA), nil
+}
+
+// fixStopFromSignals is FetchFixStop's decision on fetched data. The newest
+// notice for headSHA wins; the status suffix covers a limit whose notice
+// could not be posted.
+func fixStopFromSignals(comments []issueComment, statusDesc, headSHA string) *FixStop {
+	for i := len(comments) - 1; i >= 0; i-- {
+		c := comments[i]
+		if !isBotAuthor(c.User.Login) {
+			continue
+		}
+		switch {
+		case strings.Contains(c.Body, fixNoticeKey("limit", headSHA)):
+			stop := &FixStop{Kind: "limit", Reason: "stopped by a fix limit", CommentURL: c.HTMLURL}
+			if m := limitNoticeReasonRe.FindStringSubmatch(c.Body); m != nil {
+				stop.Reason = m[1]
+			}
+			return stop
+		case strings.Contains(c.Body, fixNoticeKey("failed", headSHA)):
+			stop := &FixStop{Kind: "failed", Reason: "the fix did not finish", CommentURL: c.HTMLURL}
+			if m := failedNoticeReasonRe.FindStringSubmatch(c.Body); m != nil {
+				stop.Reason = m[1]
+			}
+			return stop
+		}
+	}
+	if m := stoppedStatusRe.FindStringSubmatch(statusDesc); m != nil {
+		return &FixStop{Kind: "limit", Reason: m[1]}
+	}
+	return nil
+}
+
+// fetchReviewStatusDescription returns the description of the latest
+// `CodeCanary / review` commit status on sha, or "" when there is none.
+func fetchReviewStatusDescription(repo, sha string) (string, error) {
+	owner, name, err := parseRepoSlug(repo)
+	if err != nil {
+		return "", err
+	}
+	out, err := runGH("gh api commit status", "api", fmt.Sprintf("repos/%s/%s/commits/%s/status", owner, name, sha))
+	if err != nil {
+		return "", err
+	}
+	var combined struct {
+		Statuses []struct {
+			Context     string `json:"context"`
+			Description string `json:"description"`
+		} `json:"statuses"`
+	}
+	if err := json.Unmarshal(out, &combined); err != nil {
+		return "", fmt.Errorf("parsing commit status: %w", err)
+	}
+	// The combined status holds the latest status per context.
+	for _, st := range combined.Statuses {
+		if st.Context == ReviewCommitStatusContext {
+			return st.Description, nil
+		}
+	}
+	return "", nil
 }
 
 // Push pushes HEAD to the head branch with the installation token in

@@ -22,6 +22,10 @@ type findingsOutput struct {
 	ReviewStatus string             `json:"review_status"`
 	Conclusion   string             `json:"conclusion,omitempty"`
 	Findings     []review.PRFinding `json:"findings"`
+	// FixStop is set when the CI fix stopped on this commit (a loop limit,
+	// or a failure such as a rate limit) and left the findings to the
+	// author. Absent when the fix didn't stop or the repo doesn't fix on CI.
+	FixStop *review.FixStop `json:"fix_stop,omitempty"`
 }
 
 var findingsCmd = &cobra.Command{
@@ -75,6 +79,11 @@ machine consumption (e.g. the codecanary-fix Claude skill).`,
 		if err != nil {
 			return err
 		}
+		// Best-effort: a failed lookup must not hide the findings.
+		fixStop, err := review.FetchFixStop(repo, prNumber, status.HeadSHA)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not check whether the CI fix stopped: %v\n", err)
+		}
 		payload := findingsOutput{
 			PR:           prNumber,
 			Repo:         repo,
@@ -82,6 +91,7 @@ machine consumption (e.g. the codecanary-fix Claude skill).`,
 			ReviewStatus: status.Status,
 			Conclusion:   status.Conclusion,
 			Findings:     findings,
+			FixStop:      fixStop,
 		}
 
 		switch output {
@@ -142,6 +152,9 @@ func emitFindingsMarkdown(p findingsOutput) error {
 		fmt.Printf(" (%s)", p.Conclusion)
 	}
 	fmt.Println()
+	if p.FixStop != nil {
+		fmt.Printf("CI fix: %s\n", p.FixStop.Reason)
+	}
 	fmt.Println()
 
 	if len(p.Findings) == 0 {

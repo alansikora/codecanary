@@ -317,11 +317,17 @@ func stopAtLimit(platform FixPlatform, target *FixTarget, findings []PRFinding, 
 // with a one-line summary in the comment.
 func postFixFailure(platform FixPlatform, target *FixTarget, what string, err error) {
 	fmt.Fprintf(os.Stderr, "::warning::CodeCanary fix: %s: %v\n", what, err)
-	body := fmt.Sprintf("%s\n\nThe CodeCanary fix did not finish on `%s`: %s (%s).\n\nFix the open findings locally with `/codecanary-fix`.\n",
-		fixNoticeTitle, shortSHA(target.HeadSHA), what, failureSummary(err))
+	body := buildFailureNotice(target.HeadSHA, what, err)
 	if perr := platform.PostNotice(fixNoticeKey("failed", target.HeadSHA), body); perr != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not post the failure notice: %v\n", perr)
 	}
+}
+
+// buildFailureNotice is the comment posted when the fix could not finish.
+// FetchFixStop reads its reason back (failedNoticeReasonRe).
+func buildFailureNotice(headSHA, what string, err error) string {
+	return fmt.Sprintf("%s\n\nThe CodeCanary fix did not finish on `%s`: %s (%s).\n\nFix the open findings locally with `/codecanary-fix`.\n",
+		fixNoticeTitle, shortSHA(headSHA), what, failureSummary(err))
 }
 
 // failureSummary is a one-line description of err for a PR comment: the

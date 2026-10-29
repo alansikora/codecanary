@@ -281,7 +281,7 @@ With `fix.enabled: true` in `.codecanary/config.yml`, a review that leaves findi
 
 **Workflow.** The `fix` job `needs: review` and runs only for `pull_request_target` events from the same repository when the review reported `fix == 'true'` and `findings > 0`. It checks out the head without persisted credentials and runs the action with `mode: fix`, whose fix step gets only the provider secret and the app token. A repository-wide concurrency group (`codecanary-fix-<repo>`, `cancel-in-progress: false`, `queue: max`) runs one fix at a time, so bursts queue on the shared Claude account instead of running in parallel.
 
-`codecanary mode --output json` reports the setting as `fix_on_ci`.
+`codecanary mode --output json` reports the setting as `fix_on_ci`. `codecanary findings --output json` reports a stop on the current head as `fix_stop` (`kind` `limit` or `failed`, the human-visible `reason`, the notice's `comment_url`), read back from the bot's notice for that head or, failing that, the status suffix (`FetchFixStop`). The codecanary-fix skill takes over locally on it. A notice for an earlier head doesn't count: a push starts over.
 
 ## The codecanary-fix loop
 
