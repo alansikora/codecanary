@@ -1,4 +1,4 @@
-# <img width="75" alt="codecanary" src="https://github.com/user-attachments/assets/bb494aa1-9bb2-486c-a253-ba8a9a2939e4" /> CodeCanary
+# <img width="75" alt="codecanary" src="https://codecanary.sh/logo-512.png" /> CodeCanary
 
 AI-powered code review for GitHub pull requests. Catch bugs, security issues, and quality problems before they land in main.
 
