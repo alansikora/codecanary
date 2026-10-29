@@ -14,7 +14,7 @@ The `--config` flag always takes precedence when provided. Otherwise, config res
 
 ```yaml
 version: 1
-provider: anthropic             # required: anthropic, openai, openrouter, or claude
+provider: anthropic             # required: anthropic, openai, openrouter, grok, or claude
 
 review_model: claude-sonnet-4-6 # model for main review (provider-specific default)
 triage_model: claude-haiku-4-5-20251001  # required: model for thread re-evaluation
@@ -42,6 +42,14 @@ max_file_size: 102400           # per-file content limit in bytes (default 100KB
 max_total_size: 512000          # total file content limit in bytes (default 500KB)
                                 # files over either limit are reviewed from their diff only
 max_diff_size: 307200           # diff limit in bytes; the largest file diffs are trimmed past it (default 300KB)
+
+fix:                            # CI fix job (see "Fixing findings in CI")
+  enabled: false                # default false; needs review_on: push
+  provider: claude              # claude or codex (default: provider)
+  model: opus                   # default: opus (claude), the Codex CLI's default (codex)
+  max_per_push: 2
+  max_per_pr: 5
+  format_command: []            # e.g. [bin/format, --fix]
 
 context: |
   Describe your project stack and conventions here.
@@ -184,6 +192,55 @@ What this does **not** cover:
 - **Prompt injection can still bias the review** (e.g. talk the reviewer out of a real finding). Tool use doesn't create that risk, but it gives an injected prompt more to work with.
 
 If you review fork PRs from untrusted contributors and these residual risks matter to you, leave `claude_review_tools` unset.
+
+## Fixing findings in CI
+
+`fix.enabled: true` adds a fix to the CI loop: after a review leaves findings open, the workflow's `fix` job applies or refutes each one and pushes a single commit (see [docs/review-flow.md](review-flow.md#the-ci-fix-cycle)). The fixer must edit files, which only the agent CLIs do, so `fix.provider` is one of:
+
+| `fix.provider` | Runs | Credential | Default `fix.model` |
+| --- | --- | --- | --- |
+| `claude` | Claude Code (`claude -p`) with `Read,Grep,Glob,Edit,Write` | Claude OAuth token (`codecanary setup`) | `opus` |
+| `codex` | Codex CLI (`codex exec`) | OpenAI API key | the CLI's default |
+
+`fix.provider` defaults to `provider`, so an existing `provider: claude` config keeps fixing with Claude. To review with an API provider and fix with an agent CLI, set it explicitly:
+
+```yaml
+provider: grok
+review_model: grok-4.20-0309-non-reasoning
+triage_model: grok-4-1-fast-non-reasoning
+review_on: push
+fix:
+  enabled: true
+  provider: codex
+```
+
+The fix job reads the fixer's credential from the `CODECANARY_FIX_PROVIDER_SECRET` repository secret when it is set, else from `CODECANARY_PROVIDER_SECRET` (workflow template v4). `codex` can only fix: it is rejected as `provider`. The anthropic, openai, openrouter and grok providers can't be fix providers; validation names the ones that can. `max_budget_usd` is not enforced for the codex fix (the CLI has no budget limit); `timeout_minutes` still bounds it.
+
+Why not the API providers? Fixing with them would need codecanary to run its own tool loop: read, search and edit functions it executes on the model's behalf, confined to the repository with the same deny rules, for every API's tool-call format. That is a new file-access surface in codecanary, written and maintained here, doing what the agent CLIs already do with their vendors' confinement. Codex can be pointed at other OpenAI-compatible model providers, which is the likely route to fixing with Grok without that loop.
+
+### Fix security model
+
+The fix job runs on the PR head with the fixer's credential, and the findings and code it reads are untrusted. Whatever it writes lands in a commit pushed to the PR or, for a refutation, a public reply. Both fixers get the same outer guards: never on fork PRs; edits to the protected paths (`.git`, `.github`, `.codecanary`, `.codecanary.yml`, `.claude`, `.mcp.json`, `.codex`, `.agents`) are denied by the fixer and also reverted in Go before the commit; GitHub tokens and the raw provider secret never reach the fixer's environment.
+
+**Claude** (`claude`): file tools only, with no shell or network tool. The same confinement as [reviewer tool use](#security-model) (`--restricted`, `--permission-mode dontAsk`, read deny rules, project settings, hooks and MCP ignored), with `Edit` and `Write` allowed in the working directory and denied on the protected paths. These are Claude Code's own permission checks, not an OS sandbox.
+
+**Codex** (`codex`): Codex reads files by running commands, so it has a shell, and it edits through its `apply_patch` tool. Both run in Codex's OS sandbox (Seatbelt on macOS, [bubblewrap](https://github.com/containers/bubblewrap) on Linux) under a [permission profile](https://developers.openai.com/codex/permissions) codecanary generates for each run:
+
+| Layer | What it does |
+| --- | --- |
+| Filesystem reads | `:minimal` (the platform paths tools need) and the repository. Nothing else in `$HOME` is readable. `/tmp` and `$TMPDIR` are denied, and commands get a private, empty temp directory (under `$RUNNER_TEMP` in Actions). `~/.claude`, `~/.codecanary`, `~/.config`, `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.docker`, `~/.kube`, `~/.netrc`, `~/.npmrc`, `~/.git-credentials` and `~/.gitconfig` are denied explicitly as well. |
+| Filesystem writes | The repository only. `.git`, `.env` and `.env.*` are denied (reads too), and the protected paths are read-only. |
+| Network | Off for every command (`network.enabled = false`), with web search disabled. |
+| Credentials | Each run gets a fresh `CODEX_HOME` holding only the API key, written by `codex login --with-api-key` and denied to commands. The machine's own `~/.codex` isn't readable (home isn't granted) but isn't denied either, because the CLI itself may be installed there and on Linux nothing can be reopened inside a deny. The key is never in an environment variable. Commands inherit only core variables, without secrets. |
+| Configuration | `--ignore-user-config`, `--ignore-rules`, `--ephemeral`. The checkout is marked untrusted, so its `.codex/` config, hooks and rules don't load, and `AGENTS.md` is not read (`project_doc_max_bytes = 0`). Approvals are `never`: anything outside the profile is refused, not escalated. `--strict-config` makes the CLI fail if it stops recognising any of this. |
+| Features | Apps/connectors, browser and computer use, sub-agents, plugins, hooks, image generation, memories and dependency installs are disabled, since these act outside the command sandbox. |
+| Sandbox present | On Linux the fix refuses to start unless `bwrap` can create its namespaces (the action installs it; `scripts/setup-bwrap.sh`). Platforms other than Linux and macOS are refused. |
+
+What this does **not** cover:
+
+- **Codex runs commands.** Inside the sandbox it can run anything in the repository, including the PR's own scripts and tests, and could write to a file another tool executes later (a build script, a hook). The writes are committed only as part of the fix, in a commit the next review reads, and nothing it writes outside the repository survives the run. The Claude fixer has no shell, so this is the difference between the two.
+- **Files inside the repository** are readable, as for the reviewer, and can end up quoted in a refutation.
+- **The sandbox is Codex's.** Codecanary generates the profile and checks the sandbox can start, but enforcement is the CLI's. Permission profiles are a beta Codex feature. The profile was checked against Codex 0.159 on macOS and 0.165 under bubblewrap on Ubuntu 24.04: each read, write and network probe above was refused, including creating a protected directory the checkout doesn't have. The revert in Go stays as the second line.
 
 ## Models
 

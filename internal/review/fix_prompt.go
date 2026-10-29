@@ -73,7 +73,7 @@ func BuildFixPrompt(findings []PRFinding, cfg *ReviewConfig) string {
 	b.WriteString("## Apply a finding\n\n")
 	b.WriteString("- Read the file and make the minimal edit that addresses the finding. Keep the surrounding code intact; do not improve unrelated code.\n")
 	b.WriteString("- If the finding's suggestion is an exact code snippet that fits the context, use it verbatim; otherwise adapt it to the codebase's conventions (existing imports, types, error-handling style).\n")
-	b.WriteString("- Never edit anything under `.git/`, `.github/`, `.codecanary/` or `.claude/`, nor `.codecanary.yml` or `.mcp.json`. Edits there are refused and reverted; skip a finding that needs one.\n")
+	b.WriteString("- Never edit anything under `.git/`, `.github/`, `.codecanary/`, `.claude/`, `.codex/` or `.agents/`, nor `.codecanary.yml` or `.mcp.json`. Edits there are refused and reverted; skip a finding that needs one.\n")
 	b.WriteString("- You cannot run builds or tests, so keep each edit one you can verify by reading.\n")
 	b.WriteString("- Edit only for findings you apply. Leave no edits behind for a finding you refute or skip: every change in the checkout is committed together.\n\n")
 

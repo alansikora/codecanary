@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Installs bubblewrap for fix.format_command's sandbox, and lets it create
+# Installs bubblewrap for fix.format_command's sandbox and the codex fix's
+# command sandbox, and lets it create
 # user namespaces where AppArmor restricts them (Ubuntu 24.04 runners): a
 # profile for /usr/bin/bwrap only, not the system-wide switch.
 set -euo pipefail

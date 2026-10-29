@@ -68,7 +68,12 @@ type ReviewConfig struct {
 // ("The CI fix cycle") for how the limits are counted.
 type FixConfig struct {
 	Enabled bool `yaml:"enabled"`
-	// Model is the Claude CLI model the fix runs with (default opus).
+	// Provider runs the fix; it must be one that can edit files (claude,
+	// codex). Defaults to the review provider, so a repo can review with one
+	// provider and fix with another.
+	Provider string `yaml:"provider"`
+	// Model is the fix provider's model (default: the provider's fix
+	// default — opus for claude, the CLI's own default for codex).
 	Model string `yaml:"model"`
 	// MaxPerPush caps the fix commits since the last commit that is not a
 	// CodeCanary fix, so a human push resets it (default 2).
@@ -83,7 +88,6 @@ type FixConfig struct {
 
 // Fix defaults.
 const (
-	defaultFixModel      = "opus"
 	defaultFixMaxPerPush = 2
 	defaultFixMaxPerPR   = 5
 )
@@ -93,12 +97,28 @@ func (c *ReviewConfig) FixEnabled() bool {
 	return c != nil && c.Fix != nil && c.Fix.Enabled
 }
 
-// EffectiveFixModel returns fix.model, defaulting to opus.
+// EffectiveFixProvider returns fix.provider, defaulting to the review
+// provider.
+func (c *ReviewConfig) EffectiveFixProvider() string {
+	if c == nil {
+		return ""
+	}
+	if c.Fix != nil && c.Fix.Provider != "" {
+		return c.Fix.Provider
+	}
+	return c.Provider
+}
+
+// EffectiveFixModel returns fix.model, defaulting to the fix provider's
+// DefaultModel (empty: the provider picks).
 func (c *ReviewConfig) EffectiveFixModel() string {
 	if c != nil && c.Fix != nil && c.Fix.Model != "" {
 		return c.Fix.Model
 	}
-	return defaultFixModel
+	if fc := fixCapability(c.EffectiveFixProvider()); fc != nil {
+		return fc.DefaultModel
+	}
+	return ""
 }
 
 // FixFormatCommand returns fix.format_command, nil when unset.
@@ -145,12 +165,12 @@ type ModelConfig struct {
 	// argument the claude provider uses to disable built-in tools. Set only on
 	// the review provider (not triage). See ReviewConfig.ClaudeReviewTools.
 	ClaudeReviewTools string
-	// ClaudeFixTools gives the model Read, Grep, Glob, Edit and Write, confined
-	// to the repository root (claude provider only). Set only on the fix
-	// provider; see enableFixTools.
-	ClaudeFixTools bool
-	// Effort is the Claude CLI's --effort level (claude provider only); empty
-	// leaves the CLI default.
+	// EditFiles builds the fix provider: the model may read and edit files in
+	// the repository root, under the provider's confinement (see
+	// FixCapability). Set only by RunFix, on a provider with a Fix capability.
+	EditFiles bool
+	// Effort is the model's reasoning effort (the Claude CLI's --effort,
+	// Codex's model_reasoning_effort); empty leaves the provider default.
 	Effort string
 }
 
@@ -307,7 +327,7 @@ func (c *ReviewConfig) Validate() error {
 		return fmt.Errorf("invalid review_on %q (valid: %s, %s)", c.ReviewOn, ReviewOnPush, ReviewOnReady)
 	}
 	if c.Provider == "" {
-		return fmt.Errorf("provider is required (valid: %s)", strings.Join(providerNames(), ", "))
+		return fmt.Errorf("provider is required (valid: %s)", strings.Join(reviewProviderNames(), ", "))
 	}
 	if c.ReviewModel == "" {
 		return fmt.Errorf("review_model is required — set the model used for code review")
@@ -317,7 +337,10 @@ func (c *ReviewConfig) Validate() error {
 	}
 	pf, ok := providers[c.Provider]
 	if !ok {
-		return fmt.Errorf("invalid provider %q (valid: %s)", c.Provider, strings.Join(providerNames(), ", "))
+		return fmt.Errorf("invalid provider %q (valid: %s)", c.Provider, strings.Join(reviewProviderNames(), ", "))
+	}
+	if pf.FixOnly {
+		return fmt.Errorf("provider %q can only run the fix — set it as fix.provider and review with one of: %s", c.Provider, strings.Join(reviewProviderNames(), ", "))
 	}
 	if pf.Validate != nil {
 		mc := &ModelConfig{Provider: c.Provider, Model: c.ReviewModel, APIBase: c.APIBase, APIKeyEnv: c.APIKeyEnv}
@@ -357,7 +380,8 @@ func (c *ReviewConfig) Validate() error {
 		if err := validateClaudeReviewTools(c.ClaudeReviewTools); err != nil {
 			return err
 		}
-	} else if len(c.ClaudeArgs) > 0 || c.ClaudePath != "" {
+	} else if fixesWithClaude := c.FixEnabled() && c.EffectiveFixProvider() == "claude"; len(c.ClaudeArgs) > 0 || (c.ClaudePath != "" && !fixesWithClaude) {
+		// claude_path still locates the Claude CLI when it runs the fix.
 		Stderrf(ansiYellow, "Warning: claude_args and claude_path are ignored for provider %q\n", c.Provider)
 	}
 	if c.ClaudeReviewTools != "" && c.Provider != "claude" {
@@ -399,12 +423,21 @@ func (c *ReviewConfig) validateFix() error {
 	if c.ReviewOn != "" && c.ReviewOn != ReviewOnPush {
 		return fmt.Errorf("fix.enabled requires review_on: %s — under review_on: %s a fix push would never be reviewed", ReviewOnPush, c.ReviewOn)
 	}
-	// The fix edits files, which only the Claude CLI provider can do.
-	if c.Provider != "claude" {
-		return fmt.Errorf("fix.enabled requires provider: claude (the fix runs the Claude CLI with file-editing tools), not %q", c.Provider)
+	// The fix edits files, which only a provider with a Fix capability can do.
+	name := c.EffectiveFixProvider()
+	pf, ok := providers[name]
+	switch {
+	case !ok:
+		return fmt.Errorf("invalid fix.provider %q (valid: %s)", name, strings.Join(fixProviderNames(), ", "))
+	case pf.Fix == nil && c.Fix.Provider == "":
+		return fmt.Errorf("fix.enabled: provider %q can't edit files — set fix.provider to one that can (%s)", name, strings.Join(fixProviderNames(), ", "))
+	case pf.Fix == nil:
+		return fmt.Errorf("fix.provider %q can't edit files (valid: %s)", name, strings.Join(fixProviderNames(), ", "))
 	}
-	if err := validateClaude(&ModelConfig{Provider: c.Provider, Model: c.Fix.Model}); err != nil {
-		return fmt.Errorf("fix.model: %w", err)
+	if pf.Validate != nil {
+		if err := pf.Validate(&ModelConfig{Provider: name, Model: c.Fix.Model}); err != nil {
+			return fmt.Errorf("fix.model: %w", err)
+		}
 	}
 	return nil
 }

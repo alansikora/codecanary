@@ -39,15 +39,18 @@ func countFixCommits(messages []string) (sincePush, total int) {
 
 // buildFixCommitMessage is the fix commit's message: a subject counting the
 // applied findings, one line per finding, the fixTrailer naming the reviewed
-// commit, and the Claude co-author trailer.
-func buildFixCommitMessage(applied []FixDisposition, reviewedSHA string) string {
+// commit, and the fix provider's co-author trailer when it has one.
+func buildFixCommitMessage(applied []FixDisposition, reviewedSHA, coAuthorTrailer string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "CodeCanary: fix %d finding%s\n\n", len(applied), pluralS(len(applied)))
 	for _, d := range applied {
 		title := strings.Join(strings.Fields(d.Finding.Title), " ")
 		fmt.Fprintf(&b, "- %s: %s\n", d.FixRef, title)
 	}
-	fmt.Fprintf(&b, "\n%s: %s\n%s\n", fixTrailer, reviewedSHA, claudeCoAuthorTrailer)
+	fmt.Fprintf(&b, "\n%s: %s\n", fixTrailer, reviewedSHA)
+	if coAuthorTrailer != "" {
+		b.WriteString(coAuthorTrailer + "\n")
+	}
 	return b.String()
 }
 

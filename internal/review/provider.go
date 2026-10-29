@@ -69,6 +69,56 @@ type ProviderFactory struct {
 	SuggestedTriageModel string
 	AppRequirement       *AppRequirement
 	OAuthConfig          *OAuthConfig
+	// Fix, when set, makes the provider usable as the CI fix model
+	// (fix.provider): constructed with ModelConfig.EditFiles, it edits files
+	// in the repository under confinement. Nil for providers that only
+	// return text, which can review but not fix.
+	Fix *FixCapability
+	// FixOnly marks a provider that can only fix: it is valid as
+	// fix.provider, never as the review provider.
+	FixOnly bool
+}
+
+// FixCapability describes how a provider runs the CI fix (codecanary fix).
+type FixCapability struct {
+	// DefaultModel is fix.model when unset; empty leaves the provider's own
+	// default.
+	DefaultModel string
+	// CoAuthorTrailer is the fix commit's Co-authored-by trailer crediting
+	// the model; empty adds none.
+	CoAuthorTrailer string
+	// Preflight checks, before any model runs, that the fix can run here
+	// with its confinement in place (the CLI is on PATH, the sandbox works).
+	// An error stops the fix as a setup problem.
+	Preflight func(mc *ModelConfig) error
+}
+
+// fixCapability returns the fix capability of a provider, nil when the
+// provider can't fix or is unknown.
+func fixCapability(provider string) *FixCapability {
+	return providers[provider].Fix
+}
+
+// fixProviderNames returns the providers that can run the fix, sorted.
+func fixProviderNames() []string {
+	var names []string
+	for _, name := range providerNames() {
+		if providers[name].Fix != nil {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// reviewProviderNames returns the providers that can review, sorted.
+func reviewProviderNames() []string {
+	var names []string
+	for _, name := range providerNames() {
+		if !providers[name].FixOnly {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // defaultMaxOutputTokens is used when a model is not in any provider's
