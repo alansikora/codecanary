@@ -4,7 +4,7 @@
 # Template version. CodeCanary compares it with the template it ships and
 # adds a note to its reviews when this file is older. Keep this line when
 # customizing; update it only when you take the changes from a newer template.
-# codecanary-workflow: v3
+# codecanary-workflow: v4
 name: CodeCanary
 on:
   pull_request_target:
@@ -186,10 +186,12 @@ jobs:
           persist-credentials: false
 
       # The fix must never turn CI red: `codecanary fix` reports its own
-      # failures on the PR, and anything else is a warning here.
+      # failures on the PR, and anything else is a warning here. When
+      # fix.provider differs from the review provider, its credential goes in
+      # CODECANARY_FIX_PROVIDER_SECRET; otherwise the review's secret is used.
       - uses: alansikora/codecanary@canary
         continue-on-error: true
         with:
           mode: fix
-          provider_secret: ${{ secrets.CODECANARY_PROVIDER_SECRET }}
+          provider_secret: ${{ secrets.CODECANARY_FIX_PROVIDER_SECRET || secrets.CODECANARY_PROVIDER_SECRET }}
           config_path: .codecanary/config.yml

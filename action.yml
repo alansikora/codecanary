@@ -53,12 +53,18 @@ runs:
         curl -fsSL https://raw.githubusercontent.com/alansikora/codecanary/main/install.sh | sh -s -- "${ARGS[@]}"
         echo "$HOME/.local/bin" >> $GITHUB_PATH
 
+    # The fix runs fix.provider (default: provider), which may be another
+    # CLI than the review's; codecanary resolves it.
     - name: Detect provider
       id: detect-provider
       shell: bash
+      env:
+        CONFIG: ${{ inputs.config_path }}
+        MODE: ${{ inputs.mode }}
       run: |
-        CONFIG="${{ inputs.config_path }}"
-        if [ -f "$CONFIG" ]; then
+        if [ "$MODE" = "fix" ]; then
+          PROVIDER=$(codecanary fix --print-provider --config "$CONFIG" 2>/dev/null || true)
+        elif [ -f "$CONFIG" ]; then
           PROVIDER=$(grep -E '^provider:' "$CONFIG" | awk '{print $2}')
         fi
         echo "provider=${PROVIDER:-anthropic}" >> $GITHUB_OUTPUT
@@ -71,13 +77,23 @@ runs:
         echo "$HOME/.local/bin" >> $GITHUB_PATH
         claude --version
 
-    # fix.format_command runs only inside bubblewrap (`codecanary fix`).
+    - name: Install Codex
+      if: steps.detect-provider.outputs.provider == 'codex'
+      shell: bash
+      run: |
+        curl -fsSL https://chatgpt.com/codex/install.sh | sh > /dev/null 2>&1
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+        "$HOME/.local/bin/codex" --version
+
+    # fix.format_command runs only inside bubblewrap (`codecanary fix`), and
+    # the codex fix runs its commands in it: without it the codex fix
+    # refuses to start.
     - name: Install bubblewrap
       if: inputs.mode == 'fix' && runner.os == 'Linux'
       shell: bash
       run: |
         "${{ github.action_path }}/scripts/setup-bwrap.sh" \
-          || echo "::warning::the bubblewrap sandbox is unavailable; fix.format_command will be skipped"
+          || echo "::warning::the bubblewrap sandbox is unavailable; fix.format_command will be skipped and a codex fix will not run"
 
     - name: Generate review token
       id: review-token

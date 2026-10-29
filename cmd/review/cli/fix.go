@@ -16,12 +16,14 @@ var fixCmd = &cobra.Command{
 after a review leaves findings open, when fix.enabled is set in
 .codecanary/config.yml.
 
-The fix model (Claude CLI, fix.model, default opus) gets the open findings
-and file tools confined to the checkout — no shell. Per finding it applies
-the minimal edit, refutes the finding with a reason (posted as a reply on
-its thread), or leaves it open. The edits are committed once, authored by
-the PR author with Claude as co-author, and pushed to the PR branch with
-the CodeCanary app's token (GH_TOKEN), which triggers the next review.
+The fix model (fix.provider, default the review provider; claude or codex)
+gets the open findings and file access confined to the checkout: the Claude
+CLI with file tools and no shell, or the Codex CLI with every command and
+edit in its OS sandbox, without network. Per finding it applies the minimal
+edit, refutes the finding with a reason (posted as a reply on its thread),
+or leaves it open. The edits are committed once, authored by the PR author,
+and pushed to the PR branch with the CodeCanary app's token (GH_TOKEN),
+which triggers the next review.
 
 Loop limits come from the PR's commits: at most fix.max_per_push fix
 commits since the last commit that is not a fix, and fix.max_per_pr over
@@ -31,10 +33,24 @@ findings.
 The command never fails CI: provider, rate-limit and push failures post
 one comment per head pointing at /codecanary-fix, and every error exits 0
 with a workflow warning.`,
-	Args: cobra.ExactArgs(1),
+	Args: func(cmd *cobra.Command, args []string) error {
+		if printProvider, _ := cmd.Flags().GetBool("print-provider"); printProvider {
+			return cobra.NoArgs(cmd, args)
+		}
+		return cobra.ExactArgs(1)(cmd, args)
+	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		repo, _ := cmd.Flags().GetString("repo")
 		configPath, _ := cmd.Flags().GetString("config")
+		if printProvider, _ := cmd.Flags().GetBool("print-provider"); printProvider {
+			// The action reads this to install the fix provider's CLI.
+			cfg, err := review.LoadReviewConfig(configPath)
+			if err != nil {
+				return err
+			}
+			fmt.Println(cfg.EffectiveFixProvider())
+			return nil
+		}
 		claudePath, _ := cmd.Flags().GetString("claude-path")
 		reviewedSHA, _ := cmd.Flags().GetString("reviewed-sha")
 
@@ -67,6 +83,7 @@ func init() {
 	fixCmd.Flags().StringP("repo", "r", "", "GitHub repo (owner/name); defaults to current repo")
 	fixCmd.Flags().StringP("config", "c", "", "Path to review config (auto-detected if empty)")
 	fixCmd.Flags().String("claude-path", "", "Path to the Claude CLI binary (overrides config claude_path)")
+	fixCmd.Flags().Bool("print-provider", false, "Print the provider that runs the fix (fix.provider, else provider) and exit")
 	fixCmd.Flags().String("reviewed-sha", "", "Commit the triggering review ran on; the fix does nothing once the PR head has moved past it")
 	rootCmd.AddCommand(fixCmd)
 }

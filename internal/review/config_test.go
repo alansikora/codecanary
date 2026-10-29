@@ -803,7 +803,15 @@ func TestValidate_Fix(t *testing.T) {
 		{"enabled, full model ID", base("push", "claude", &FixConfig{Enabled: true, Model: "claude-opus-5-5"}), ""},
 		{"enabled under review_on ready", base("ready", "claude", &FixConfig{Enabled: true}), "requires review_on: push"},
 		{"disabled under review_on ready", base("ready", "claude", &FixConfig{}), ""},
-		{"enabled with an API provider", base("push", "anthropic", &FixConfig{Enabled: true}), "requires provider: claude"},
+		{"enabled with an API provider", base("push", "anthropic", &FixConfig{Enabled: true}), "can't edit files"},
+		{"API review, claude fix", base("push", "anthropic", &FixConfig{Enabled: true, Provider: "claude", Model: "opus"}), ""},
+		{"grok review, codex fix", base("push", "grok", &FixConfig{Enabled: true, Provider: "codex"}), ""},
+		{"codex fix with a model", base("push", "openai", &FixConfig{Enabled: true, Provider: "codex", Model: "gpt-5.5"}), ""},
+		{"codex fix with a flag-shaped model", base("push", "openai", &FixConfig{Enabled: true, Provider: "codex", Model: "--yolo"}), "fix.model"},
+		{"claude fix with another vendor's model", base("push", "grok", &FixConfig{Enabled: true, Provider: "claude", Model: "gpt-5"}), "fix.model"},
+		{"fix.provider that can't edit", base("push", "claude", &FixConfig{Enabled: true, Provider: "grok"}), `fix.provider "grok" can't edit files`},
+		{"unknown fix.provider", base("push", "claude", &FixConfig{Enabled: true, Provider: "aider"}), "invalid fix.provider"},
+		{"codex as the review provider", base("push", "codex", nil), "can only run the fix"},
 		{"enabled with a bad model", base("push", "claude", &FixConfig{Enabled: true, Model: "gpt-5"}), "fix.model"},
 		{"negative max_per_push", base("push", "claude", &FixConfig{MaxPerPush: -1}), "fix.max_per_push"},
 		{"negative max_per_pr", base("push", "claude", &FixConfig{Enabled: true, MaxPerPR: -1}), "fix.max_per_pr"},
@@ -830,9 +838,14 @@ func TestFixDefaults(t *testing.T) {
 	if unset.FixEnabled() {
 		t.Error("nil config: fix enabled")
 	}
-	cfg := &ReviewConfig{Fix: &FixConfig{Enabled: true}}
-	if !cfg.FixEnabled() || cfg.EffectiveFixModel() != "opus" {
-		t.Errorf("enabled=%t model=%q, want true opus", cfg.FixEnabled(), cfg.EffectiveFixModel())
+	cfg := &ReviewConfig{Provider: "claude", Fix: &FixConfig{Enabled: true}}
+	if !cfg.FixEnabled() || cfg.EffectiveFixProvider() != "claude" || cfg.EffectiveFixModel() != "opus" {
+		t.Errorf("enabled=%t provider=%q model=%q, want true claude opus", cfg.FixEnabled(), cfg.EffectiveFixProvider(), cfg.EffectiveFixModel())
+	}
+	// fix.provider overrides the review provider; codex keeps its CLI's default model.
+	split := &ReviewConfig{Provider: "grok", Fix: &FixConfig{Enabled: true, Provider: "codex"}}
+	if split.EffectiveFixProvider() != "codex" || split.EffectiveFixModel() != "" {
+		t.Errorf("split: provider=%q model=%q, want codex and the CLI default", split.EffectiveFixProvider(), split.EffectiveFixModel())
 	}
 	if cfg.FixFormatCommand() != nil {
 		t.Errorf("format_command = %v, want none", cfg.FixFormatCommand())
@@ -859,7 +872,25 @@ func TestLoadConfig_FixBlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
-	if !cfg.FixEnabled() || cfg.Fix.Model != "opus" || cfg.Fix.MaxPerPush != 3 || cfg.Fix.MaxPerPR != 6 || strings.Join(cfg.FixFormatCommand(), " ") != "bin/format --fix" {
+	if !cfg.FixEnabled() || cfg.EffectiveFixProvider() != "claude" || cfg.Fix.Model != "opus" || cfg.Fix.MaxPerPush != 3 || cfg.Fix.MaxPerPR != 6 || strings.Join(cfg.FixFormatCommand(), " ") != "bin/format --fix" {
 		t.Errorf("fix block = %+v", cfg.Fix)
+	}
+}
+
+// fix.provider splits the fix from the review provider.
+func TestLoadConfig_FixProvider(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yml")
+	body := "version: 1\nprovider: grok\nreview_model: grok-4.20-0309-non-reasoning\ntriage_model: grok-4-1-fast-non-reasoning\nfix:\n  enabled: true\n  provider: codex\n  model: gpt-5.5\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.Provider != "grok" || cfg.EffectiveFixProvider() != "codex" || cfg.EffectiveFixModel() != "gpt-5.5" {
+		t.Errorf("provider=%q fix provider=%q fix model=%q", cfg.Provider, cfg.EffectiveFixProvider(), cfg.EffectiveFixModel())
 	}
 }

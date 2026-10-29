@@ -178,21 +178,26 @@ Rules support `paths` and `exclude_paths` globs, and five severity levels: `crit
 
 ### Fixing findings in CI
 
-With the `claude` provider, the workflow can fix what a review finds, with no one at a laptop. After a review leaves findings open, the workflow's `fix` job runs Claude on the PR branch: per finding it applies the minimal edit, or refutes the finding with a reply on its thread when it doesn't hold for this repo. It commits once (authored by the PR author, co-authored by Claude), pushes, and the push gets the next review.
+The workflow can fix what a review finds, with no one at a laptop. After a review leaves findings open, the workflow's `fix` job runs a coding agent on the PR branch: per finding it applies the minimal edit, or refutes the finding with a reply on its thread when it doesn't hold for this repo. It commits once (authored by the PR author), pushes, and the push gets the next review.
+
+The fixer has to edit files, so it is one of the agent CLIs: `claude` (Claude Code) or `codex` (Codex CLI). It defaults to your review provider, and `fix.provider` picks another, so you can review with Grok, OpenAI or OpenRouter and fix with Claude or Codex. API-only providers can review but not fix.
 
 ```yaml
 review_on: push        # required: a fix push must be reviewed
 fix:
   enabled: true        # default false
-  model: opus          # Claude CLI model for the fix (default opus)
+  provider: codex      # claude or codex (default: the review provider)
+  model: gpt-5.5       # default: opus for claude, the Codex CLI's default for codex
   max_per_push: 2      # fix commits since your last push (default 2)
   max_per_pr: 5        # fix commits over the PR's life (default 5)
   format_command: [bin/format, --fix]  # optional: run on the fix's files before it commits
 ```
 
+When the fix provider differs from the review provider, add its credential as the `CODECANARY_FIX_PROVIDER_SECRET` repository secret (a Claude OAuth token, or an OpenAI API key for Codex); otherwise the fix uses `CODECANARY_PROVIDER_SECRET`. The Claude fixer gets file tools and no shell. The Codex fixer reads through shell commands, all of them in Codex's OS sandbox with no network, nothing readable outside the repository and the system's runtime paths, and the protected paths read-only. See [the fix's security model](docs/configuration.md#fix-security-model).
+
 `format_command` gets the files the fix changed as arguments, so the fix commit passes your formatters. It is your repository's code, run in a job that holds the app token, so it runs only inside a [bubblewrap](https://github.com/containers/bubblewrap) sandbox (Linux runners; the action installs it and, on Ubuntu 24.04, allows it user namespaces through an AppArmor profile): no tokens in its environment, the rest of the system read-only, a throwaway `HOME`, network on for toolchain installs. Only its changes to the fix's files are kept. If it fails or the sandbox is unavailable, the fix commits anyway, with a warning in the job log.
 
-At a limit the fix stops and comments with the findings still open; a push of yours resets `max_per_push`. If the fix can't run (rate limit, provider error), it comments once and leaves CI green: fix locally with `/codecanary-fix`. It never runs on fork PRs or drafts, and never edits `.github/`, `.codecanary/` or `.claude/`. Needs workflow template v3 (`codecanary setup github`). See [docs/review-flow.md](docs/review-flow.md#the-ci-fix-cycle).
+At a limit the fix stops and comments with the findings still open; a push of yours resets `max_per_push`. If the fix can't run (rate limit, provider error), it comments once and leaves CI green: fix locally with `/codecanary-fix`. It never runs on fork PRs or drafts, and never edits `.github/`, `.codecanary/`, `.claude/` or `.codex/`. Needs workflow template v3, or v4 for `CODECANARY_FIX_PROVIDER_SECRET` (`codecanary setup github`). See [docs/review-flow.md](docs/review-flow.md#the-ci-fix-cycle).
 
 ### Provider examples
 
