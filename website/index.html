@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>CodeCanary — AI Code Review for GitHub Pull Requests</title>
-  <meta name="description" content="CodeCanary is an open-source AI code review tool for GitHub pull requests. It reviews every push, can fix its findings in CI with Claude, and re-reviews the fix. Runs in GitHub Actions or locally from the terminal. Bring your own LLM." />
+  <meta name="description" content="CodeCanary is an open-source AI code review tool for GitHub pull requests. It reviews every push, can fix its findings in CI, and re-reviews the fix. Runs in GitHub Actions or locally from the terminal. Bring your own LLM." />
   <meta name="theme-color" content="#07080a" />
   <link rel="canonical" href="https://codecanary.sh/" />
 
@@ -589,7 +589,7 @@
     <section class="stats" aria-label="At a glance">
       <div class="container stats-grid">
         <div class="stat reveal"><b><em>0</em></b><span>LLM calls for threads with no code change or reply</span></div>
-        <div class="stat reveal" style="--d:.08s"><b>1</b><span>commit per fix cycle, co-authored by Claude</span></div>
+        <div class="stat reveal" style="--d:.08s"><b>1</b><span>commit per fix cycle, then a fresh review</span></div>
         <div class="stat reveal" style="--d:.16s"><b>2<em> / </em>5</b><span>default fix commits per push / per PR</span></div>
         <div class="stat reveal" style="--d:.24s"><b>5</b><span>LLM providers, no lock-in</span></div>
       </div>
@@ -615,16 +615,16 @@
                   <p>The CodeCanary workflow runs on every push to a pull request, from GitHub Actions. Drafts are skipped. Prefer one review per PR? Set <code>review_on: ready</code>.</p></li>
                 <li class="step" data-i="1"><div class="step-h"><small>02</small><h3>Your model reviews the diff</h3></div>
                   <p>It reads the diff, the files around it, your <code>CLAUDE.md</code> and the <code>.claude/rules</code> that match the changed paths. Findings land inline on the exact diff lines, each with a severity.</p></li>
-                <li class="step" data-i="2"><div class="step-h"><small>03</small><h3>Claude fixes it in CI</h3></div>
-                  <p>The fix job runs Claude on the PR branch. Each finding is applied with a minimal edit, or refuted with a reply on its thread when it doesn't hold for your repo. Tools: Read, Grep, Glob, Edit, Write. No Bash, no network.</p></li>
+                <li class="step" data-i="2"><div class="step-h"><small>03</small><h3>An agent fixes it in CI</h3></div>
+                  <p>The fix job runs a coding agent on the PR branch (the Claude CLI today). Each finding is applied with a minimal edit, or refuted with a reply on its thread when it doesn't hold for your repo. Tools: Read, Grep, Glob, Edit, Write. No Bash, no network.</p></li>
                 <li class="step" data-i="3"><div class="step-h"><small>04</small><h3>One commit, pushed</h3></div>
-                  <p>One commit, authored as the PR author and co-authored by Claude, with a <code>CodeCanary-Fix</code> trailer. It's pushed with the app token, so CI and the next review run on it.</p></li>
+                  <p>One commit, authored as the PR author, co-authored by the agent, with a <code>CodeCanary-Fix</code> trailer. It's pushed with the app token, so CI and the next review run on it.</p></li>
                 <li class="step" data-i="4"><div class="step-h"><small>05</small><h3>Triage, then re-review</h3></div>
                   <p>A Go classifier sorts the open threads before any model runs. Threads with no code change and no reply are skipped at zero LLM cost; the rest are re-checked in parallel by the triage model. Only the new diff gets a full review.</p></li>
                 <li class="step" data-i="5"><div class="step-h"><small>06</small><h3>Threads resolve. Merge.</h3></div>
                   <p>Threads whose code was fixed resolve themselves. With nothing at warning or above left open, the <code>CodeCanary / review</code> status turns green. Make it a required check and it gates the merge.</p></li>
               </ol></div>
-              <p class="wf-note"><b>Bounded by design.</b> At most 2 fix commits since your last push and 5 per PR, by default. At a limit it stops and comments with the findings still open.</p>
+              <p class="wf-note"><b>Bounded by design.</b> By default, at most 2 fix commits since your last push and 5 per PR. Tune both with <code>fix.max_per_push</code> and <code>fix.max_per_pr</code>. At a limit it stops and comments with the findings still open.</p>
             </div>
 
             <div class="stage" id="stage" aria-label="Animated pull request showing the review and fix loop">
@@ -659,12 +659,12 @@
                 <div data-s="1"><span class="c">review</span>  3 files · +24/−8 · CLAUDE.md + 1 rule loaded</div>
                 <div data-s="1"><span class="c">review</span>  posted 3 inline findings: <span class="bad">1 bug</span> · <span class="w">1 warning</span> · <span class="i">1 suggestion</span></div>
                 <div data-s="1"><span class="bad">✕</span> CodeCanary / review  2 unresolved blocking findings</div>
-                <div data-s="2"><span class="c">fix</span>     claude · Read Grep Glob Edit Write · no Bash</div>
+                <div data-s="2"><span class="c">fix</span>     agent · Read Grep Glob Edit Write · no Bash</div>
                 <div data-s="2"><span class="ok">applied</span>  session.go:10  warning</div>
                 <div data-s="2"><span class="ok">applied</span>  session.go:12  bug</div>
                 <div data-s="2"><span class="i">refuted</span>  session.go:11  suggestion → reply posted</div>
                 <div data-s="3"><span class="c">commit</span>  <span class="hi">CodeCanary: fix 2 findings</span></div>
-                <div data-s="3">        CodeCanary-Fix: 9f3c1e2 · Co-authored-by: Claude</div>
+                <div data-s="3">        CodeCanary-Fix: 9f3c1e2 · Co-authored-by: agent</div>
                 <div data-s="3"><span class="c">push</span>    fast-forward with app token → next review</div>
                 <div data-s="4"><span class="c">triage</span>  3 open threads · Go classifier</div>
                 <div data-s="4">  [evaluate] :10 warning     code changed</div>
@@ -683,11 +683,11 @@
       <div class="container" style="padding-bottom: clamp(60px, 8vw, 100px)">
         <div class="guard">
           <div class="reveal"><h4><svg><use href="#i-gauge"/></svg>Loop limits</h4><p><code>fix.max_per_push</code> (default 2) and <code>fix.max_per_pr</code> (default 5), counted from commit trailers. Your own push resets the per-push count.</p></div>
-          <div class="reveal" style="--d:.08s"><h4><svg><use href="#i-fork"/></svg>Same-repo PRs only</h4><p>The fix never runs on fork PRs or drafts, and does nothing if the head moved past the reviewed commit.</p></div>
+          <div class="reveal" style="--d:.08s"><h4><svg><use href="#i-fork"/></svg>Never races you</h4><p>If you push again first, it stands down and your new commit gets its own review. Fork PRs and drafts are left alone, so your secrets never meet untrusted code.</p></div>
           <div class="reveal" style="--d:.16s"><h4><svg><use href="#i-lock"/></svg>Confined edits</h4><p>Read, Grep, Glob, Edit and Write only. <code>.github/</code>, <code>.codecanary/</code> and <code>.claude/</code> are never changed; Go reverts any edit there.</p></div>
           <div class="reveal" style="--d:.24s"><h4><svg><use href="#i-green"/></svg>Never red</h4><p>If the fix can't run (rate limit, provider error), it comments once and leaves CI green. Pick it up locally with <code>/codecanary-fix</code>.</p></div>
         </div>
-        <p class="req reveal">Requires <code>provider: claude</code>, <code>review_on: push</code> and workflow template v3 (<code>codecanary setup github</code>).</p>
+        <p class="req reveal">Requires <code>review_on: push</code>, a provider that can edit files (today the Claude CLI, <code>provider: claude</code>) and workflow template v3 (<code>codecanary setup github</code>).</p>
       </div>
     </section>
 
@@ -880,7 +880,7 @@ logic. Missing token → 401.</code></pre>
       <div class="container">
         <span class="eyebrow reveal">Bring your own LLM</span>
         <h2 id="prov-title" class="reveal">Five providers. <span class="soft">Your keys, your bill.</span></h2>
-        <p class="sub reveal">Keys live in your system keychain. <code>codecanary setup</code> suggests these models; change them any time in <code>config.yml</code>.</p>
+        <p class="sub reveal">Keys live in your system keychain. <code>codecanary setup</code> suggests these models; change them any time in <code>config.yml</code>. Every provider reviews; the CI fix needs one that can edit files.</p>
         <div class="prov reveal">
           <div class="prov-row head"><span>Provider</span><span>Review model</span><span>Triage model</span></div>
           <div class="prov-row"><div class="prov-name"><i></i><div>Anthropic<small>API key</small></div></div><div><span class="lbl">review</span><code>claude-sonnet-5-5</code></div><div><span class="lbl">triage</span><code>claude-haiku-4-5</code></div></div>
