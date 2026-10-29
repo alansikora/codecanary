@@ -122,25 +122,36 @@ func codexWorkBase() (string, error) {
 	if err := os.MkdirAll(base, 0o700); err != nil {
 		return "", err
 	}
-	for _, tmp := range []string{os.TempDir(), "/tmp"} {
-		if isWithin(base, tmp) {
-			return "", fmt.Errorf("codex: working directory %s is inside %s, which the fix's sandbox denies", base, tmp)
-		}
+	if err := checkCodexWorkBase(base, os.TempDir(), "/tmp"); err != nil {
+		return "", err
 	}
 	return base, nil
 }
 
-// isWithin reports whether path is dir or lies under it, symlinks resolved
-// (macOS's /tmp is /private/tmp).
+// checkCodexWorkBase rejects a working directory inside one of the denied
+// temp directories.
+func checkCodexWorkBase(base string, denied ...string) error {
+	for _, tmp := range denied {
+		if isWithin(base, tmp) {
+			return fmt.Errorf("codex: working directory %s is inside %s, which the fix's sandbox denies", base, tmp)
+		}
+	}
+	return nil
+}
+
+// isWithin reports whether path is dir or lies under it, compared as given
+// and with symlinks resolved (macOS's /tmp is /private/tmp).
 func isWithin(path, dir string) bool {
-	if p, err := filepath.EvalSymlinks(path); err == nil {
-		path = p
+	under := func(p, d string) bool {
+		rel, err := filepath.Rel(d, p)
+		return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 	}
-	if d, err := filepath.EvalSymlinks(dir); err == nil {
-		dir = d
+	if under(path, dir) {
+		return true
 	}
-	rel, err := filepath.Rel(dir, path)
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	rp, perr := filepath.EvalSymlinks(path)
+	rd, derr := filepath.EvalSymlinks(dir)
+	return perr == nil && derr == nil && under(rp, rd)
 }
 
 // codexProfile names the permission profile the fix generates.

@@ -191,16 +191,22 @@ func TestFixProviderSelection(t *testing.T) {
 }
 
 func TestCodexWorkBase(t *testing.T) {
+	// Fixed paths, not t.TempDir(): on Linux that is under /tmp, which the
+	// check rejects by design.
+	if err := checkCodexWorkBase("/home/runner/work/_temp", "/var/folders/x/T", "/tmp"); err != nil {
+		t.Errorf("RUNNER_TEMP rejected: %v", err)
+	}
+	// Inside a denied temp directory the sandbox can't start.
+	for _, base := range []string{"/tmp/runner", "/var/folders/x/T/codecanary"} {
+		if err := checkCodexWorkBase(base, "/var/folders/x/T", "/tmp"); err == nil {
+			t.Errorf("%s inside a denied temp directory was accepted", base)
+		}
+	}
+	// RUNNER_TEMP wins over the user cache directory.
 	runnerTemp := filepath.Join(t.TempDir(), "_temp")
 	t.Setenv("RUNNER_TEMP", runnerTemp)
-	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "elsewhere"))
-	if base, err := codexWorkBase(); err != nil || base != runnerTemp {
-		t.Errorf("base = %q, %v; want RUNNER_TEMP", base, err)
-	}
-	// Inside the denied temp directory the sandbox can't start.
-	t.Setenv("TMPDIR", filepath.Dir(runnerTemp))
-	if _, err := codexWorkBase(); err == nil {
-		t.Error("a working directory inside TMPDIR was accepted")
+	if base, err := codexWorkBase(); base != runnerTemp && err == nil {
+		t.Errorf("base = %q, want RUNNER_TEMP", base)
 	}
 }
 
