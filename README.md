@@ -178,18 +178,26 @@ Rules support `paths` and `exclude_paths` globs, and five severity levels: `crit
 
 ### Fixing findings in CI
 
-With the `claude` provider, the workflow can fix what a review finds, with no one at a laptop. After a review leaves findings open, the workflow's `fix` job runs Claude on the PR branch: per finding it applies the minimal edit, or refutes the finding with a reply on its thread when it doesn't hold for this repo. It commits once (authored by the PR author, co-authored by Claude), pushes, and the push gets the next review.
+The workflow can fix what a review finds, with no one at a laptop. After a review leaves findings open, the workflow's `fix` job runs a coding agent on the PR branch: per finding it applies the minimal edit, or refutes the finding with a reply on its thread when it doesn't hold for this repo. It commits once (authored by the PR author), pushes, and the push gets the next review.
+
+The fixer has to edit files, so it is one of the agent CLIs: `claude` (Claude Code) or `codex` (Codex CLI). It defaults to your review provider, and `fix.provider` picks another, so you can review with Grok, OpenAI or OpenRouter and fix with Claude or Codex. API-only providers can review but not fix.
 
 ```yaml
 review_on: push        # required: a fix push must be reviewed
 fix:
   enabled: true        # default false
-  model: opus          # Claude CLI model for the fix (default opus)
+  provider: codex      # claude or codex (default: the review provider)
+  model: gpt-5.5       # default: opus for claude, the Codex CLI's default for codex
   max_per_push: 2      # fix commits since your last push (default 2)
   max_per_pr: 5        # fix commits over the PR's life (default 5)
+  format_command: [bin/format, --fix]  # optional: run on the fix's files before it commits
 ```
 
-At a limit the fix stops and comments with the findings still open; a push of yours resets `max_per_push`. If the fix can't run (rate limit, provider error), it comments once and leaves CI green: fix locally with `/codecanary-fix`. It never runs on fork PRs or drafts, and never edits `.github/`, `.codecanary/` or `.claude/`. Needs workflow template v3 (`codecanary setup github`). See [docs/review-flow.md](docs/review-flow.md#the-ci-fix-cycle).
+When the fix provider differs from the review provider, add its credential as the `CODECANARY_FIX_PROVIDER_SECRET` repository secret (a Claude OAuth token, or an OpenAI API key for Codex); otherwise the fix uses `CODECANARY_PROVIDER_SECRET`. The Claude fixer gets file tools and no shell. The Codex fixer reads through shell commands, all of them in Codex's OS sandbox with no network, nothing readable outside the repository and the system's runtime paths, and the protected paths read-only. See [the fix's security model](docs/configuration.md#fix-security-model).
+
+`format_command` gets the files the fix changed as arguments, so the fix commit passes your formatters. It is your repository's code, run in a job that holds the app token, so it runs only inside a [bubblewrap](https://github.com/containers/bubblewrap) sandbox (Linux runners; the action installs it and, on Ubuntu 24.04, allows it user namespaces through an AppArmor profile): no tokens in its environment, the rest of the system read-only, a throwaway `HOME`, network on for toolchain installs. Only its changes to the fix's files are kept. If it fails or the sandbox is unavailable, the fix commits anyway, with a warning in the job log.
+
+At a limit the fix stops and comments with the findings still open; a push of yours resets `max_per_push`. If the fix can't run (rate limit, provider error), it comments once and leaves CI green: fix locally with `/codecanary-fix`. It never runs on fork PRs or drafts, and never edits `.github/`, `.codecanary/`, `.claude/` or `.codex/`. Needs workflow template v3, or v4 for `CODECANARY_FIX_PROVIDER_SECRET` (`codecanary setup github`). See [docs/review-flow.md](docs/review-flow.md#the-ci-fix-cycle).
 
 ### Provider examples
 
@@ -285,7 +293,7 @@ Keys are stored in your system keychain (macOS Keychain, GNOME Keyring, KDE Wall
 
 ## Agentic review loop
 
-CodeCanary ships with a [Claude Code](https://docs.claude.com/en/docs/claude-code) skill, `codecanary-fix`, that drives a review → triage → fix → push cycle until the PR is clean. You stay in the loop — every fix is confirmed before it's applied — but the polling, fetching, and CI watching is handled by the CLI.
+CodeCanary ships with a [Claude Code](https://docs.claude.com/en/docs/claude-code) skill, `codecanary-fix`, that drives a review → triage → fix cycle until the PR is clean. It triages each finding against your project's conventions and applies the legitimate ones without asking you to confirm them; the polling, fetching, and CI watching is handled by the CLI.
 
 Install the skill once:
 
@@ -297,8 +305,8 @@ This writes the embedded skill to `~/.claude/skills/codecanary-fix/SKILL.md`, wh
 
 Then in Claude Code, ask it to `handle codecanary` on your PR (or invoke `/codecanary-fix` directly) — the skill is auto-discovered and matched to your request via its frontmatter description. Two modes:
 
-- **PR mode** (default) — watches the GitHub Actions review check via `codecanary findings --watch`, renders a triage table, asks you to confirm which fixes to apply, commits and pushes, then loops on the next review. In repos with `review_on: ready`, where pushes to a ready PR aren't reviewed, each cycle moves the PR to draft, pushes the fixes in one commit, waits for the required checks (`codecanary checks --watch`) and marks the PR ready again to request the next review; if the checks fail it stops and leaves the PR as a draft. Every finding you defer gets a reply posted on its review thread explaining why, via `codecanary reply`.
-- **Local mode** — triggered automatically when no PR is detected for the current branch. Single pass against your dirty working tree. Applies approved fixes without committing or pushing.
+- **PR mode** (default) — watches the GitHub Actions review check via `codecanary findings --watch` and triages without asking you to confirm individual findings. Who applies the fixes depends on `fix_on_ci` (reported by `codecanary mode --output json`, from `fix.enabled` in `.codecanary/config.yml`). With `fix_on_ci`, the workflow's fix job applies the fixes and pushes them, so the skill only waits for the bot's commits (`codecanary findings --watch`, `codecanary checks --watch`), pulls them, and reports clean once the head settles. It takes over locally — triages and applies the open findings itself, in one commit and one push — only when `codecanary findings --output json` reports `fix_stop`, or the `CodeCanary / review` status or a bot comment says the bot stopped. Without `fix_on_ci`, the skill applies the fixes itself, commits, pushes and loops on the next review. Every finding it skips gets a reply posted on its review thread explaining why, via `codecanary reply`. `review_on: ready` is a legacy value: pushes to a ready PR aren't reviewed under it, so the loop ends after one cycle of fixes.
+- **Local mode** — triggered automatically when no PR is detected for the current branch. Single pass against your dirty working tree. Applies the fixes it judges legitimate without committing or pushing.
 
 The full skill contract lives at [internal/skills/codecanary-fix/SKILL.md](internal/skills/codecanary-fix/SKILL.md).
 

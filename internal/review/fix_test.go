@@ -204,7 +204,7 @@ func TestBuildFixCommitMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	msg := buildFixCommitMessage(ds, "deadbeef")
+	msg := buildFixCommitMessage(ds, "deadbeef", fixCapability("claude").CoAuthorTrailer)
 	for _, want := range []string{
 		"CodeCanary: fix 2 findings\n\n",
 		"- 7-1: Nil map write\n",
@@ -218,8 +218,8 @@ func TestBuildFixCommitMessage(t *testing.T) {
 	if !isFixCommit(msg) {
 		t.Error("the fix commit message is not counted as a fix")
 	}
-	if one := buildFixCommitMessage(ds[:1], "x"); !strings.HasPrefix(one, "CodeCanary: fix 1 finding\n") {
-		t.Errorf("singular subject: %q", one)
+	if one := buildFixCommitMessage(ds[:1], "x", ""); !strings.HasPrefix(one, "CodeCanary: fix 1 finding\n") || strings.Contains(one, "Co-authored-by") {
+		t.Errorf("singular subject, no co-author: %q", one)
 	}
 }
 

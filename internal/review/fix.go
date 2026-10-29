@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 )
@@ -61,7 +60,7 @@ type CommitIdentity struct {
 // FixOptions configures one CI fix cycle.
 type FixOptions struct {
 	ConfigPath string
-	ClaudePath string // overrides config claude_path
+	ClaudePath string // overrides config claude_path (claude fix provider)
 	// ReviewedSHA is the commit the triggering review ran on. When the pull
 	// request has moved past it, the cycle does nothing: the new head gets a
 	// review of its own, and a fix of its own if that review finds anything.
@@ -71,7 +70,7 @@ type FixOptions struct {
 
 // Fix-cycle constants.
 const (
-	// fixEffort is the Claude CLI --effort level for the fix model.
+	// fixEffort is the fix model's reasoning effort (ModelConfig.Effort).
 	fixEffort = "medium"
 	// defaultFixTimeout bounds the fix model when timeout_minutes is unset:
 	// it reads, edits and re-reads files, so it runs longer than a review.
@@ -79,16 +78,24 @@ const (
 	// fixTrailer marks a commit as a CodeCanary fix. Its value is the
 	// commit whose review the fix answers.
 	fixTrailer = "CodeCanary-Fix"
-	// claudeCoAuthorTrailer credits the model that wrote the fix.
-	claudeCoAuthorTrailer = "Co-authored-by: Claude <noreply@anthropic.com>"
 )
+
+// fixModelLabel names the fix model in the job log.
+func fixModelLabel(mc *ModelConfig) string {
+	if mc.Model == "" {
+		return mc.Provider + " (default model)"
+	}
+	return mc.Provider + " " + mc.Model
+}
 
 // protectedWritePaths are checkout paths the fix must never change: git
 // metadata, CI workflows (which run with secrets, and which an App token
 // without the workflows permission can't push anyway), CodeCanary's own
-// config, and Claude Code project configuration. The Claude provider denies
-// edits to them (claudeWriteRules), and RunFix reverts any change to them
-// before committing, so neither layer relies on the other.
+// config, and the project configuration of the coding agents a developer
+// would later run trusted in their checkout (Claude Code, Codex). Each fix
+// provider denies edits to them (claudeWriteRules, codexFilesystemRules), and
+// RunFix reverts any change to them before committing, so neither layer
+// relies on the other.
 var protectedWritePaths = []string{
 	".git/**",
 	".github/**",
@@ -96,6 +103,8 @@ var protectedWritePaths = []string{
 	".codecanary.yml",
 	".claude/**",
 	".mcp.json",
+	".codex/**",
+	".agents/**",
 }
 
 // RunFix runs one CI fix cycle: it loads the open findings, stops when a
@@ -165,26 +174,30 @@ func RunFix(opts FixOptions) error {
 	if opts.ClaudePath != "" {
 		claudePath = opts.ClaudePath
 	}
-	if claudePath == "" {
-		claudePath = "claude"
+	mc := &ModelConfig{
+		Provider:   cfg.EffectiveFixProvider(),
+		Model:      cfg.EffectiveFixModel(),
+		ClaudePath: claudePath,
+		EditFiles:  true,
+		Effort:     fixEffort,
 	}
-	if _, err := exec.LookPath(claudePath); err != nil {
-		return fmt.Errorf("claude binary %q not found: %w", claudePath, err)
+	capability := fixCapability(mc.Provider)
+	if capability == nil { // Validate rules this out; a second line
+		return fmt.Errorf("provider %q can't run the fix", mc.Provider)
 	}
-	provider := NewProviderForRole(&ModelConfig{
-		Provider:       cfg.Provider,
-		Model:          cfg.EffectiveFixModel(),
-		ClaudePath:     claudePath,
-		ClaudeFixTools: true,
-		Effort:         fixEffort,
-	}, resolveEnv())
+	if capability.Preflight != nil {
+		if err := capability.Preflight(mc); err != nil {
+			return err
+		}
+	}
+	provider := NewProviderForRole(mc, resolveEnv())
 
 	timeout := cfg.EffectiveTimeout()
 	if timeout == 0 {
 		timeout = defaultFixTimeout
 	}
 	Stderrf(ansiBold, "Fixing %d finding%s on pull request #%d with %s...\n",
-		len(findings), pluralS(len(findings)), target.Number, cfg.EffectiveFixModel())
+		len(findings), pluralS(len(findings)), target.Number, fixModelLabel(mc))
 	result, err := provider.Run(context.Background(), BuildFixPrompt(findings, cfg), RunOpts{
 		MaxBudgetUSD: cfg.MaxBudgetUSD,
 		Timeout:      timeout,
@@ -219,7 +232,7 @@ func RunFix(opts FixOptions) error {
 		fmt.Fprintf(os.Stderr, "  ✓ %s refuted: %s\n", d.FixRef, d.Reason)
 	}
 
-	if err := commitAndPush(platform, target, applied, opts.ReviewedSHA); err != nil {
+	if err := commitAndPush(platform, cfg, target, applied, opts.ReviewedSHA, capability.CoAuthorTrailer); err != nil {
 		postFixFailure(platform, target, "the fix could not be pushed", err)
 	}
 	return nil
@@ -231,8 +244,8 @@ func RunFix(opts FixOptions) error {
 // The discard is all-or-nothing: once one finding is applied, every remaining
 // edit is committed, because a fix may touch files its finding doesn't name
 // and edits can't be tied to findings reliably. The prompt keeps edits to
-// applied findings.
-func commitAndPush(platform FixPlatform, target *FixTarget, applied []FixDisposition, reviewedSHA string) error {
+// applied findings. fix.format_command then formats the edited files.
+func commitAndPush(platform FixPlatform, cfg *ReviewConfig, target *FixTarget, applied []FixDisposition, reviewedSHA, coAuthorTrailer string) error {
 	reverted, err := revertProtectedChanges()
 	if err != nil {
 		return err
@@ -256,10 +269,11 @@ func commitAndPush(platform FixPlatform, target *FixTarget, applied []FixDisposi
 		discardChanges()
 		return nil
 	}
+	formatFixChanges(cfg)
 	if reviewedSHA == "" {
 		reviewedSHA = target.HeadSHA
 	}
-	if err := commitFix(target, buildFixCommitMessage(applied, reviewedSHA)); err != nil {
+	if err := commitFix(target, buildFixCommitMessage(applied, reviewedSHA, coAuthorTrailer)); err != nil {
 		return err
 	}
 	if err := platform.Push(target); err != nil {

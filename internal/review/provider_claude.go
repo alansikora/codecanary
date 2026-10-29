@@ -44,7 +44,24 @@ func init() {
 			TokenURL:     "https://platform.claude.com/v1/oauth/token",
 			Scope:        "user:inference",
 		},
+		Fix: &FixCapability{
+			DefaultModel:    "opus",
+			CoAuthorTrailer: "Co-authored-by: Claude <noreply@anthropic.com>",
+			Preflight:       claudeFixPreflight,
+		},
 	}
+}
+
+// claudeFixPreflight checks that the Claude CLI the fix runs is on PATH.
+func claudeFixPreflight(mc *ModelConfig) error {
+	path := mc.ClaudePath
+	if path == "" {
+		path = "claude"
+	}
+	if _, err := exec.LookPath(path); err != nil {
+		return fmt.Errorf("claude binary %q not found: %w", path, err)
+	}
+	return nil
 }
 
 func validateClaude(mc *ModelConfig) error {
@@ -108,7 +125,7 @@ func newClaudeCLIProvider(mc *ModelConfig, env []string) ModelProvider {
 		effort:       mc.Effort,
 	}
 	switch {
-	case mc.ClaudeFixTools:
+	case mc.EditFiles:
 		p.enableFixTools(gitRepoRoot())
 	case mc.ClaudeReviewTools != "":
 		p.enableReviewTools(mc.ClaudeReviewTools, gitRepoRoot())
