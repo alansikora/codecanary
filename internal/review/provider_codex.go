@@ -111,13 +111,9 @@ type codexDirs struct {
 // which the profile denies, and inside which bwrap can't mount the run's
 // own writable or denied paths.
 func codexWorkBase() (string, error) {
-	base := os.Getenv("RUNNER_TEMP")
-	if base == "" {
-		dir, err := os.UserCacheDir()
-		if err != nil {
-			return "", fmt.Errorf("codex: no directory for the fix's working files: %w", err)
-		}
-		base = filepath.Join(dir, "codecanary")
+	base, err := selectCodexWorkBase(os.Getenv("RUNNER_TEMP"), os.UserCacheDir)
+	if err != nil {
+		return "", err
 	}
 	if err := os.MkdirAll(base, 0o700); err != nil {
 		return "", err
@@ -126,6 +122,18 @@ func codexWorkBase() (string, error) {
 		return "", err
 	}
 	return base, nil
+}
+
+// selectCodexWorkBase picks $RUNNER_TEMP when set, else <user cache>/codecanary.
+func selectCodexWorkBase(runnerTemp string, userCacheDir func() (string, error)) (string, error) {
+	if runnerTemp != "" {
+		return runnerTemp, nil
+	}
+	dir, err := userCacheDir()
+	if err != nil {
+		return "", fmt.Errorf("codex: no directory for the fix's working files: %w", err)
+	}
+	return filepath.Join(dir, "codecanary"), nil
 }
 
 // checkCodexWorkBase rejects a working directory inside one of the denied

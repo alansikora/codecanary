@@ -203,10 +203,16 @@ func TestCodexWorkBase(t *testing.T) {
 		}
 	}
 	// RUNNER_TEMP wins over the user cache directory.
-	runnerTemp := filepath.Join(t.TempDir(), "_temp")
-	t.Setenv("RUNNER_TEMP", runnerTemp)
-	if base, err := codexWorkBase(); base != runnerTemp && err == nil {
-		t.Errorf("base = %q, want RUNNER_TEMP", base)
+	cache := func() (string, error) { return "/home/u/.cache", nil }
+	if base, err := selectCodexWorkBase("/home/runner/work/_temp", cache); err != nil || base != "/home/runner/work/_temp" {
+		t.Errorf("with RUNNER_TEMP: %q, %v", base, err)
+	}
+	if base, err := selectCodexWorkBase("", cache); err != nil || base != "/home/u/.cache/codecanary" {
+		t.Errorf("without RUNNER_TEMP: %q, %v", base, err)
+	}
+	noCache := func() (string, error) { return "", errors.New("no home") }
+	if _, err := selectCodexWorkBase("", noCache); err == nil {
+		t.Error("no RUNNER_TEMP and no cache dir: want an error")
 	}
 }
 
