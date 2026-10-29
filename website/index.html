@@ -533,7 +533,7 @@
             <span class="line"><span>that closes</span></span>
             <span class="line"><span class="grad">the loop.</span></span>
           </h1>
-          <p class="lead">CodeCanary reviews every push to your pull requests, <strong>fixes what it finds in CI</strong>, and re-reviews the fix. By the time you look again, the threads are resolved. Open source, runs in GitHub Actions or your terminal, bring your own model.</p>
+          <p class="lead">CodeCanary reviews every push to your pull request, <strong>can fix what it finds right in CI</strong>, then reviews the fix. When you come back, the threads are already resolved.</p>
           <div class="hero-cta">
             <div class="install">
               <span class="p">$</span>
@@ -588,9 +588,9 @@
     <!-- ================= STATS ================= -->
     <section class="stats" aria-label="At a glance">
       <div class="container stats-grid">
-        <div class="stat reveal"><b><em>0</em></b><span>LLM calls for threads with no code change or reply</span></div>
-        <div class="stat reveal" style="--d:.08s"><b>1</b><span>commit per fix cycle, then a fresh review</span></div>
-        <div class="stat reveal" style="--d:.16s"><b>2<em> / </em>5</b><span>default fix commits per push / per PR</span></div>
+        <div class="stat reveal"><b><em>0</em></b><span>model calls to re-check threads nobody touched</span></div>
+        <div class="stat reveal" style="--d:.08s"><b>1</b><span>commit per fix cycle, reviewed like any other push</span></div>
+        <div class="stat reveal" style="--d:.16s"><b>2<em> / </em>5</b><span>fix commits per push / per PR before it stops</span></div>
         <div class="stat reveal" style="--d:.24s"><b>5</b><span>LLM providers, no lock-in</span></div>
       </div>
     </section>
@@ -600,7 +600,7 @@
       <div class="container wf-head">
         <span class="eyebrow reveal">The loop</span>
         <h2 id="wf-title" class="reveal">Push once. <span class="soft">Review, fix and re-review run without you.</span></h2>
-        <p class="sub reveal">With <code>fix.enabled</code>, a review that leaves findings open is followed by a fix job in the same workflow. Scroll through one pull request.</p>
+        <p class="sub reveal">Turn on <code>fix.enabled</code> and every review that leaves findings open is followed by a fix job in the same workflow. Scroll to follow one pull request.</p>
       </div>
 
       <div class="wf-track" style="--steps:6">
@@ -612,19 +612,19 @@
                 <span class="rail" aria-hidden="true"></span>
                 <ol>
                 <li class="step on" data-i="0"><div class="step-h"><small>01</small><h3>You push</h3></div>
-                  <p>The CodeCanary workflow runs on every push to a pull request, from GitHub Actions. Drafts are skipped. Prefer one review per PR? Set <code>review_on: ready</code>.</p></li>
+                  <p>The CodeCanary GitHub Action runs on every push to a pull request and skips drafts. Want one review per PR instead? Set <code>review_on: ready</code>.</p></li>
                 <li class="step" data-i="1"><div class="step-h"><small>02</small><h3>Your model reviews the diff</h3></div>
                   <p>It reads the diff, the files around it, your <code>CLAUDE.md</code> and the <code>.claude/rules</code> that match the changed paths. Findings land inline on the exact diff lines, each with a severity.</p></li>
                 <li class="step" data-i="2"><div class="step-h"><small>03</small><h3>An agent fixes it in CI</h3></div>
-                  <p>The fix job runs a coding agent on the PR branch (the Claude CLI today). Each finding is applied with a minimal edit, or refuted with a reply on its thread when it doesn't hold for your repo. Tools: Read, Grep, Glob, Edit, Write. No Bash, no network.</p></li>
+                  <p>A coding agent (the Claude CLI today) works through each finding on the PR branch. It applies a minimal fix, or refutes the finding with a reply on its thread when it doesn't hold for your repo. It can read and edit files, but it has no shell and no network access.</p></li>
                 <li class="step" data-i="3"><div class="step-h"><small>04</small><h3>One commit, pushed</h3></div>
-                  <p>One commit, authored as the PR author, co-authored by the agent, with a <code>CodeCanary-Fix</code> trailer. It's pushed with the app token, so CI and the next review run on it.</p></li>
+                  <p>The fixes land as one commit under the PR author's name, co-authored by the agent. It's pushed with the CodeCanary app's token, so your CI and the next review run on it like on any other push.</p></li>
                 <li class="step" data-i="4"><div class="step-h"><small>05</small><h3>Triage, then re-review</h3></div>
-                  <p>A Go classifier sorts the open threads before any model runs. Threads with no code change and no reply are skipped at zero LLM cost; the rest are re-checked in parallel by the triage model. Only the new diff gets a full review.</p></li>
+                  <p>Before any model runs, a Go classifier sorts the open threads. Threads nobody touched are skipped for free. The rest are re-checked in parallel by the cheaper triage model, and only the new diff gets a full review.</p></li>
                 <li class="step" data-i="5"><div class="step-h"><small>06</small><h3>Threads resolve. Merge.</h3></div>
-                  <p>Threads whose code was fixed resolve themselves. With nothing at warning or above left open, the <code>CodeCanary / review</code> status turns green. Make it a required check and it gates the merge.</p></li>
+                  <p>Fixed threads resolve themselves. Once nothing at warning or above is open, the <code>CodeCanary / review</code> check turns green. Make it a required check and nothing merges until it does.</p></li>
               </ol></div>
-              <p class="wf-note"><b>Bounded by design.</b> By default, at most 2 fix commits since your last push and 5 per PR. Tune both with <code>fix.max_per_push</code> and <code>fix.max_per_pr</code>. At a limit it stops and comments with the findings still open.</p>
+              <p class="wf-note"><b>It won't loop forever.</b> It makes at most 2 fix commits per push and 5 per PR, then stops and comments with what's still open. Change either limit with <code>fix.max_per_push</code> and <code>fix.max_per_pr</code>.</p>
             </div>
 
             <div class="stage" id="stage" aria-label="Animated pull request showing the review and fix loop">
@@ -682,12 +682,12 @@
 
       <div class="container" style="padding-bottom: clamp(60px, 8vw, 100px)">
         <div class="guard">
-          <div class="reveal"><h4><svg><use href="#i-gauge"/></svg>Loop limits</h4><p><code>fix.max_per_push</code> (default 2) and <code>fix.max_per_pr</code> (default 5), counted from commit trailers. Your own push resets the per-push count.</p></div>
-          <div class="reveal" style="--d:.08s"><h4><svg><use href="#i-fork"/></svg>Never races you</h4><p>If you push again first, it stands down and your new commit gets its own review. Fork PRs and drafts are left alone, so your secrets never meet untrusted code.</p></div>
-          <div class="reveal" style="--d:.16s"><h4><svg><use href="#i-lock"/></svg>Confined edits</h4><p>Read, Grep, Glob, Edit and Write only. <code>.github/</code>, <code>.codecanary/</code> and <code>.claude/</code> are never changed; Go reverts any edit there.</p></div>
-          <div class="reveal" style="--d:.24s"><h4><svg><use href="#i-green"/></svg>Never red</h4><p>If the fix can't run (rate limit, provider error), it comments once and leaves CI green. Pick it up locally with <code>/codecanary-fix</code>.</p></div>
+          <div class="reveal"><h4><svg><use href="#i-gauge"/></svg>Loop limits</h4><p>Limits are counted from commit trailers, so there's no state to lose or reset by hand. Your own push resets the per-push count.</p></div>
+          <div class="reveal" style="--d:.08s"><h4><svg><use href="#i-fork"/></svg>Never races you</h4><p>If you push again first, it stands down and your new commit gets its own review. It skips drafts and never runs on fork PRs, where your secrets would meet untrusted code.</p></div>
+          <div class="reveal" style="--d:.16s"><h4><svg><use href="#i-lock"/></svg>Can't touch your pipeline</h4><p>The agent can read and edit files, nothing more. Edits to <code>.github/</code>, <code>.codecanary/</code> or <code>.claude/</code> are reverted before the commit, so it can't rewrite its own workflow or config.</p></div>
+          <div class="reveal" style="--d:.24s"><h4><svg><use href="#i-green"/></svg>Never red</h4><p>If the fix can't run, say on a rate limit, it posts one comment and leaves CI green. Finish locally with <code>/codecanary-fix</code>.</p></div>
         </div>
-        <p class="req reveal">Requires <code>review_on: push</code>, a provider that can edit files (today the Claude CLI, <code>provider: claude</code>) and workflow template v3 (<code>codecanary setup github</code>).</p>
+        <p class="req reveal">Needs <code>review_on: push</code>, a provider that can edit files (today that's <code>provider: claude</code>) and workflow template v3, which <code>codecanary setup github</code> installs.</p>
       </div>
     </section>
 
@@ -697,11 +697,11 @@
         <div>
           <span class="eyebrow reveal">Local</span>
           <h2 id="local-title" class="reveal">Same engine, <span class="soft">before you push.</span></h2>
-          <p class="sub reveal"><code>codecanary review</code> diffs your branch, uncommitted changes included, against the default branch and prints findings in your terminal. Nothing is fetched from or posted to GitHub.</p>
+          <p class="sub reveal">Run <code>codecanary review</code> to check your branch, uncommitted changes included, against the default branch. Findings print in your terminal, and nothing touches GitHub until you ask.</p>
           <ul class="bullets">
-            <li class="reveal"><svg><use href="#i-check"/></svg><span><strong>Incremental re-runs.</strong> State is kept per repo and branch under <code>~/.codecanary</code>, so the second run triages what the first one found.</span></li>
-            <li class="reveal" style="--d:.06s"><svg><use href="#i-check"/></svg><span><strong>Post when ready.</strong> <code>--post</code> reviews the PR and posts the findings to it on GitHub.</span></li>
-            <li class="reveal" style="--d:.12s"><svg><use href="#i-check"/></svg><span><strong>Sign off without a workflow.</strong> <code>codecanary signoff</code> posts the <code>CodeCanary / review</code> status from a clean local review.</span></li>
+            <li class="reveal"><svg><use href="#i-check"/></svg><span><strong>Picks up where it left off.</strong> The second run re-checks what the first one found instead of starting over.</span></li>
+            <li class="reveal" style="--d:.06s"><svg><use href="#i-check"/></svg><span><strong>Post when ready.</strong> Add <code>--post</code> to publish the findings on the PR.</span></li>
+            <li class="reveal" style="--d:.12s"><svg><use href="#i-check"/></svg><span><strong>Gate merges without a workflow.</strong> After a clean local review, <code>codecanary signoff</code> posts the <code>CodeCanary / review</code> status.</span></li>
             <li class="reveal" style="--d:.18s"><svg><use href="#i-check"/></svg><span><strong>Scriptable.</strong> <code>--output json</code> for tooling, <code>--dry-run</code> to see the prompt without calling a model.</span></li>
           </ul>
         </div>
@@ -735,9 +735,9 @@
         <div>
           <span class="eyebrow reveal">Claude Code</span>
           <h2 id="skill-title" class="reveal">Say “handle codecanary”. <span class="soft">Walk away.</span></h2>
-          <p class="sub reveal">The bundled <code>codecanary-fix</code> skill drives review → triage → fix until the PR is clean. It judges each finding against your project's conventions on its own: legitimate ones are applied, wrong ones are refuted. No per-finding approval prompts.</p>
+          <p class="sub reveal">The <code>codecanary-fix</code> skill for Claude Code runs review, triage and fix until the PR is clean. It weighs each finding against your project's conventions, applies the ones that hold up and refutes the rest, without stopping to ask you about each one.</p>
           <div class="modes">
-            <div class="mode reveal"><code>pr-loop</code><p>PR with the workflow. Fix, commit and push each cycle; with <code>fix_on_ci</code> it waits for the bot's fix commits and takes over when the bot stops.</p></div>
+            <div class="mode reveal"><code>pr-loop</code><p>PR with the workflow. Fixes, commits and pushes each cycle. When CI fixes are on, it waits for the bot and takes over if the bot stops.</p></div>
             <div class="mode reveal" style="--d:.06s"><code>local-loop-git</code><p>PR without a workflow. Local reviews, a commit per cycle, and an offer to push at the end.</p></div>
             <div class="mode reveal" style="--d:.12s"><code>local-loop-nogit</code><p>No PR. Local reviews, fixes applied in place, no git.</p></div>
           </div>
@@ -779,7 +779,7 @@
           <article class="card w4 reveal">
             <div class="card-ic"><svg><use href="#i-branch"/></svg></div>
             <h3>Incremental triage</h3>
-            <p>On re-push, a Go classifier sorts every open thread before any model call. Unchanged threads cost nothing; changed ones are evaluated in parallel with the cheaper triage model; the review covers only new code.</p>
+            <p>On every push, a Go classifier sorts the open threads before any model call. Untouched threads cost nothing, changed ones go to the cheaper triage model, and the review only covers new code. Each push pays for what changed, not for the whole PR again.</p>
             <div class="mini" aria-hidden="true">
               <div><b style="color:var(--muted)">[skip]</b><span>no code change, no reply</span><span class="zero">0 LLM calls</span></div>
               <div><b style="color:var(--accent)">[evaluate]</b><span>code changed or author replied</span><span class="zero" style="color:var(--muted)">triage model</span></div>
@@ -789,17 +789,17 @@
           <article class="card reveal" style="--d:.06s">
             <div class="card-ic"><svg><use href="#i-chat"/></svg></div>
             <h3>Conversational</h3>
-            <p>Reply to a finding and it's re-evaluated in context. It tells a code fix from a dismissal, an acknowledgment or a rebuttal.</p>
+            <p>Reply to a finding and CodeCanary re-reads the thread. It can tell a fix from a dismissal, an acknowledgment or a rebuttal.</p>
           </article>
           <article class="card reveal">
             <div class="card-ic"><svg><use href="#i-gate"/></svg></div>
             <h3>Merge gate</h3>
-            <p>Every review posts a <code>CodeCanary / review</code> commit status. Warnings and above fail it; suggestions and nitpicks don't.</p>
+            <p>Every review posts a <code>CodeCanary / review</code> commit status. Warnings and above fail it. Suggestions and nitpicks never block a merge.</p>
           </article>
           <article class="card reveal" style="--d:.06s">
             <div class="card-ic"><svg><use href="#i-target"/></svg></div>
             <h3>Anti-hallucination</h3>
-            <p>An explicit file allowlist, line validation against the diff and a distance threshold keep findings on real code.</p>
+            <p>Every finding is checked against a file allowlist and the lines in the diff. One that points outside the changed code is dropped.</p>
           </article>
           <article class="card reveal" style="--d:.12s">
             <div class="card-ic"><svg><use href="#i-flag"/></svg></div>
@@ -809,13 +809,13 @@
           <article class="card w3 reveal">
             <div class="card-ic"><svg><use href="#i-book"/></svg></div>
             <h3>Your conventions, scoped</h3>
-            <p>Project <code>CLAUDE.md</code> files and <code>.claude/rules/*.md</code> feed the review. A rule with <code>paths</code> frontmatter is included only when a changed file matches it, so reviewers see the rules that apply.</p>
+            <p>Project <code>CLAUDE.md</code> files and <code>.claude/rules/*.md</code> feed the review. A rule with <code>paths</code> frontmatter is included only when a changed file matches it, so the review only sees the rules for the code you touched.</p>
             <div class="chips"><span class="y">CLAUDE.md</span><span class="y">.claude/rules/*.md</span><span>review.yml</span><span>review.local.yml</span></div>
           </article>
           <article class="card w3 reveal" style="--d:.06s">
             <div class="card-ic"><svg><use href="#i-coin"/></svg></div>
             <h3>Costs you can see</h3>
-            <p>A fast model for triage, a full model for review, and a per-invocation usage table on every run. Cap a review with <code>max_budget_usd</code>.</p>
+            <p>A cheap model for triage, a full model for review, and a usage table with the cost of every call. Set <code>max_budget_usd</code> to cap any single review.</p>
             <div class="chips"><span>triage_model</span><span>review_model</span><span class="y">max_budget_usd</span></div>
           </article>
         </div>
@@ -880,7 +880,7 @@ logic. Missing token → 401.</code></pre>
       <div class="container">
         <span class="eyebrow reveal">Bring your own LLM</span>
         <h2 id="prov-title" class="reveal">Five providers. <span class="soft">Your keys, your bill.</span></h2>
-        <p class="sub reveal">Keys live in your system keychain. <code>codecanary setup</code> suggests these models; change them any time in <code>config.yml</code>. Every provider reviews; the CI fix needs one that can edit files.</p>
+        <p class="sub reveal">Your key stays in the system keychain. Setup suggests the models below, and you can change them any time in <code>config.yml</code>. Every provider can review. The CI fix currently needs the Claude CLI.</p>
         <div class="prov reveal">
           <div class="prov-row head"><span>Provider</span><span>Review model</span><span>Triage model</span></div>
           <div class="prov-row"><div class="prov-name"><i></i><div>Anthropic<small>API key</small></div></div><div><span class="lbl">review</span><code>claude-sonnet-5-5</code></div><div><span class="lbl">triage</span><code>claude-haiku-4-5</code></div></div>
