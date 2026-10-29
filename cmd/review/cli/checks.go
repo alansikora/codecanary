@@ -25,9 +25,8 @@ var checksCmd = &cobra.Command{
 leaving out CodeCanary's own check and commit status. With --watch, blocks
 until they pass or one fails.
 
-Used by the codecanary-fix skill in repos with review_on: ready, where a
-fix is pushed to a draft and the PR is marked ready (which requests the
-review) only once CI is green. A repo with no required checks reports pass.
+Use it to wait for CI on a pushed fix before acting on the result. A repo
+with no required checks reports pass.
 
 PR number is auto-detected from the current branch when omitted. Exits
 non-zero when a required check failed.`,

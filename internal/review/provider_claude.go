@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -71,6 +72,12 @@ type claudeCLIProvider struct {
 	// repository root, which is the only working directory the file tools may
 	// read. Empty when tools are off (the CLI inherits codecanary's cwd).
 	workDir string
+	// writable marks the fix model: reviewTools then includes Edit and Write,
+	// which claudeSettings pre-approves inside workDir, outside
+	// protectedWritePaths. See enableFixTools.
+	writable bool
+	// effort is the CLI's --effort level; empty leaves the CLI default.
+	effort string
 }
 
 // claudeAdvisorEnableEnvVar is the Claude CLI env var that opts into the
@@ -98,11 +105,30 @@ func newClaudeCLIProvider(mc *ModelConfig, env []string) ModelProvider {
 		env:          env,
 		extraArgs:    mc.ClaudeArgs,
 		binaryPath:   binaryPath,
+		effort:       mc.Effort,
 	}
-	if mc.ClaudeReviewTools != "" {
+	switch {
+	case mc.ClaudeFixTools:
+		p.enableFixTools(gitRepoRoot())
+	case mc.ClaudeReviewTools != "":
 		p.enableReviewTools(mc.ClaudeReviewTools, gitRepoRoot())
 	}
 	return p
+}
+
+// claudeFixTools are the tools the fix model gets: the reviewer's read-only
+// file tools plus Edit and Write. Never Bash or a network tool — the fix runs
+// on the PR head with the provider secret in its environment, so the code it
+// reads is untrusted input, exactly as for the reviewer.
+const claudeFixTools = "Read,Grep,Glob,Edit,Write"
+
+// enableFixTools turns on the fix model's tools, under the same confinement
+// as the reviewer's (enableReviewTools) and failing closed the same way. With
+// tools refused, Run still works but the model can't edit; the fix then finds
+// no changes and commits nothing.
+func (p *claudeCLIProvider) enableFixTools(repoRoot string) {
+	p.enableReviewTools(claudeFixTools, repoRoot)
+	p.writable = p.reviewTools != ""
 }
 
 // enableReviewTools turns on reviewer tool use, confined to repoRoot. It fails
@@ -258,6 +284,20 @@ var claudeReviewDenyRules = []string{
 	"Read(.env.*)",
 }
 
+// claudeWriteRules are the permission rules added for the fix model. Under
+// --permission-mode dontAsk an edit that isn't pre-approved is denied, so
+// Edit and Write are allowed outright — --restricted keeps them inside the
+// working directory — and denied on protectedWritePaths, which the fix must
+// never change. Edit rules cover every file-editing tool, and deny wins over
+// allow. Read stays denied on claudeReviewDenyRules as for the reviewer.
+func claudeWriteRules() (allow, deny []string) {
+	allow = []string{"Edit", "Write"}
+	for _, p := range protectedWritePaths {
+		deny = append(deny, "Edit("+p+")")
+	}
+	return allow, deny
+}
+
 // claudeToolUseArgs confine the file tools when claude_review_tools is set:
 //   - --restricted: confines the built-in file tools to the working
 //     directories, loads only managed settings and --settings, refuses
@@ -283,10 +323,16 @@ func (p *claudeCLIProvider) claudeSettings() map[string]any {
 		settings["advisorModel"] = p.advisorModel
 	}
 	if p.reviewTools != "" {
-		settings["permissions"] = map[string]any{
+		permissions := map[string]any{
 			"blockReadsOutsideWorkingDirectories": true,
 			"deny":                                claudeReviewDenyRules,
 		}
+		if p.writable {
+			allow, deny := claudeWriteRules()
+			permissions["allow"] = allow
+			permissions["deny"] = append(slices.Clone(claudeReviewDenyRules), deny...)
+		}
+		settings["permissions"] = permissions
 	}
 	return settings
 }
@@ -308,6 +354,9 @@ func (p *claudeCLIProvider) buildArgs(opts RunOpts) []string {
 	}
 	if p.model != "" {
 		args = append(args, "--model", p.model)
+	}
+	if p.effort != "" {
+		args = append(args, "--effort", p.effort)
 	}
 	if opts.MaxBudgetUSD > 0 {
 		args = append(args, "--max-budget-usd", fmt.Sprintf("%.2f", opts.MaxBudgetUSD))

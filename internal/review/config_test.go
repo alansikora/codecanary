@@ -783,3 +783,78 @@ func TestParseRepoSlugURL(t *testing.T) {
 		})
 	}
 }
+
+func TestValidate_Fix(t *testing.T) {
+	base := func(reviewOn, provider string, fix *FixConfig) *ReviewConfig {
+		model := "sonnet"
+		if provider != "claude" {
+			model = "claude-sonnet-4-6"
+		}
+		return &ReviewConfig{Provider: provider, ReviewModel: model, TriageModel: model, ReviewOn: reviewOn, Fix: fix}
+	}
+	tests := []struct {
+		name    string
+		cfg     *ReviewConfig
+		wantErr string
+	}{
+		{"no fix block", base("", "claude", nil), ""},
+		{"enabled, review_on unset (push)", base("", "claude", &FixConfig{Enabled: true}), ""},
+		{"enabled, review_on push", base("push", "claude", &FixConfig{Enabled: true, Model: "opus", MaxPerPush: 3, MaxPerPR: 8}), ""},
+		{"enabled, full model ID", base("push", "claude", &FixConfig{Enabled: true, Model: "claude-opus-5-5"}), ""},
+		{"enabled under review_on ready", base("ready", "claude", &FixConfig{Enabled: true}), "requires review_on: push"},
+		{"disabled under review_on ready", base("ready", "claude", &FixConfig{}), ""},
+		{"enabled with an API provider", base("push", "anthropic", &FixConfig{Enabled: true}), "requires provider: claude"},
+		{"enabled with a bad model", base("push", "claude", &FixConfig{Enabled: true, Model: "gpt-5"}), "fix.model"},
+		{"negative max_per_push", base("push", "claude", &FixConfig{MaxPerPush: -1}), "fix.max_per_push"},
+		{"negative max_per_pr", base("push", "claude", &FixConfig{Enabled: true, MaxPerPR: -1}), "fix.max_per_pr"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.cfg.Validate()
+			switch {
+			case tt.wantErr == "" && err != nil:
+				t.Fatalf("unexpected error: %v", err)
+			case tt.wantErr != "" && err == nil:
+				t.Fatalf("expected an error containing %q", tt.wantErr)
+			case tt.wantErr != "" && !strings.Contains(err.Error(), tt.wantErr):
+				t.Fatalf("error %q does not contain %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestFixDefaults(t *testing.T) {
+	var unset *ReviewConfig
+	if unset.FixEnabled() {
+		t.Error("nil config: fix enabled")
+	}
+	cfg := &ReviewConfig{Fix: &FixConfig{Enabled: true}}
+	if !cfg.FixEnabled() || cfg.EffectiveFixModel() != "opus" {
+		t.Errorf("enabled=%t model=%q, want true opus", cfg.FixEnabled(), cfg.EffectiveFixModel())
+	}
+	if perPush, perPR := cfg.EffectiveFixLimits(); perPush != 2 || perPR != 5 {
+		t.Errorf("default limits = %d, %d; want 2, 5", perPush, perPR)
+	}
+	cfg.Fix = &FixConfig{Model: "sonnet", MaxPerPush: 1, MaxPerPR: 9}
+	if perPush, perPR := cfg.EffectiveFixLimits(); perPush != 1 || perPR != 9 || cfg.EffectiveFixModel() != "sonnet" {
+		t.Errorf("configured = %d, %d, %q; want 1, 9, sonnet", perPush, perPR, cfg.EffectiveFixModel())
+	}
+}
+
+// The fix: block parses from YAML as the README documents it.
+func TestLoadConfig_FixBlock(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yml")
+	body := "version: 1\nprovider: claude\nreview_model: sonnet\ntriage_model: haiku\nreview_on: push\nfix:\n  enabled: true\n  model: opus\n  max_per_push: 3\n  max_per_pr: 6\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if !cfg.FixEnabled() || cfg.Fix.Model != "opus" || cfg.Fix.MaxPerPush != 3 || cfg.Fix.MaxPerPR != 6 {
+		t.Errorf("fix block = %+v", cfg.Fix)
+	}
+}

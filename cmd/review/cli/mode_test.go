@@ -136,9 +136,11 @@ func TestModeOutput_Skill(t *testing.T) {
 
 func ptr(s string) *string { return &s }
 
-// review_on comes from the repo's committed config, which is what the bot
-// runs with; it defaults to push when unset or when there is no config.
-func TestRepoReviewOn(t *testing.T) {
+// review_on and fix_on_ci come from the repo's committed config, which is
+// what the bot runs with; they default to push and false when unset or when
+// there is no config.
+func TestModeOutput_RepoConfig(t *testing.T) {
+	stubModeEnv(t, "v1.2.3", "", false)
 	t.Setenv("GITHUB_ACTIONS", "")
 	write := func(t *testing.T, body string) {
 		t.Helper()
@@ -152,17 +154,20 @@ func TestRepoReviewOn(t *testing.T) {
 		t.Chdir(dir)
 	}
 	base := "version: 1\nprovider: claude\nreview_model: sonnet\ntriage_model: haiku\n"
+	check := func(t *testing.T, label, wantReviewOn string, wantFix bool) {
+		t.Helper()
+		m := modeJSON(t)
+		if m["review_on"] != wantReviewOn || m["fix_on_ci"] != wantFix {
+			t.Errorf("%s: review_on=%v fix_on_ci=%v, want %s %t", label, m["review_on"], m["fix_on_ci"], wantReviewOn, wantFix)
+		}
+	}
 
 	write(t, base+"review_on: ready\n")
-	if got := repoReviewOn(); got != "ready" {
-		t.Errorf("review_on: ready → %q", got)
-	}
+	check(t, "review_on: ready", "ready", false)
 	write(t, base)
-	if got := repoReviewOn(); got != "push" {
-		t.Errorf("unset review_on → %q, want push", got)
-	}
+	check(t, "unset review_on", "push", false)
+	write(t, base+"fix:\n  enabled: true\n")
+	check(t, "fix.enabled", "push", true)
 	t.Chdir(t.TempDir())
-	if got := repoReviewOn(); got != "push" {
-		t.Errorf("no config → %q, want push", got)
-	}
+	check(t, "no config", "push", false)
 }

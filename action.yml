@@ -24,6 +24,18 @@ inputs:
     description: 'Evaluate thread replies only, skip new findings'
     required: false
     default: 'false'
+  mode:
+    description: '"review" reviews the PR; "fix" applies or refutes the open findings and pushes the fix (`codecanary fix`; needs fix.enabled in the config)'
+    required: false
+    default: 'review'
+
+outputs:
+  findings:
+    description: 'Findings the review left open (review mode)'
+    value: ${{ steps.run-review.outputs.findings }}
+  fix:
+    description: '"true" when the config enables the CI fix (review mode)'
+    value: ${{ steps.run-review.outputs.fix }}
 
 runs:
   using: 'composite'
@@ -88,6 +100,7 @@ runs:
         fi
 
     - name: Fetch PR history
+      if: inputs.mode != 'fix'
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
@@ -108,6 +121,8 @@ runs:
         fi
 
     - name: Run review
+      id: run-review
+      if: inputs.mode != 'fix'
       shell: bash
       env:
         CODECANARY_PROVIDER_SECRET: ${{ inputs.provider_secret }}
@@ -128,3 +143,19 @@ runs:
           --config "${{ inputs.config_path }}" \
           $POST_FLAG \
           $REPLY_ONLY_FLAG
+
+    - name: Run fix
+      if: inputs.mode == 'fix'
+      shell: bash
+      env:
+        CODECANARY_PROVIDER_SECRET: ${{ inputs.provider_secret }}
+        GH_TOKEN: ${{ steps.review-token.outputs.token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        REPO: ${{ github.repository }}
+        CONFIG_PATH: ${{ inputs.config_path }}
+        REVIEWED_SHA: ${{ github.event.pull_request.head.sha }}
+      run: |
+        codecanary fix "$PR_NUMBER" \
+          --repo "$REPO" \
+          --config "$CONFIG_PATH" \
+          --reviewed-sha "$REVIEWED_SHA"

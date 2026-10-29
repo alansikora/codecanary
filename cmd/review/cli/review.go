@@ -52,6 +52,12 @@ var reviewCmd = &cobra.Command{
 			if baseBranch != "" {
 				review.Stderrf(review.ColorYellow, "Warning: --base ignored in --post mode\n")
 			}
+			// Only for the fix job's gate; Run loads the config again and
+			// reports a config that fails to load.
+			fixOnCI := false
+			if cfg, err := review.LoadReviewConfig(configPath); err == nil {
+				fixOnCI = cfg.FixEnabled()
+			}
 			return review.Run(review.RunOptions{
 				Repo:           repo,
 				PRNumber:       prNumber,
@@ -67,6 +73,7 @@ var reviewCmd = &cobra.Command{
 					Repo:     repo,
 					PRNumber: prNumber,
 					DryRun:   dryRun,
+					FixOnCI:  fixOnCI,
 					Updates: review.UpdateCheck{
 						BinaryVersion:   Version,
 						TemplateVersion: setup.TemplateVersion(),

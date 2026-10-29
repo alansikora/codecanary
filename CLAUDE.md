@@ -13,6 +13,7 @@ cmd/
       review.go    # codecanary review <pr>
       findings.go  # codecanary findings <pr> — fetch bot findings for the review skill
       reply.go     # codecanary reply --url <comment-url> --body <text> — post a reply on a review thread
+      fix.go       # codecanary fix <pr> — CI fix cycle (workflow fix job; fix.enabled)
       install_skill.go # codecanary install-skill — write embedded Claude skill to disk
       setup.go     # codecanary setup [local|github]
       auth.go      # codecanary auth [status|delete]
@@ -45,6 +46,12 @@ internal/
     local.go             # Local diff & git operations
     repo.go              # Git repo helpers shared across flows (repo root)
     state.go             # Local state persistence
+    # CI fix cycle (codecanary fix)
+    fix.go               # RunFix() + FixPlatform interface, loop limits
+    fix_prompt.go        # Fix prompt + disposition parsing (applied/refuted/skipped)
+    fix_git.go           # Fix-commit counting, commit, protected-path revert
+    fix_github.go        # GithubPlatform's FixPlatform implementation (push with app token)
+    reply.go             # Review-thread replies (shared by `codecanary reply` and the fix)
     docs.go              # Project doc discovery
     prompt_golden_test.go # Renders corpus fixtures into prompts, diffs vs goldens
     testdata/corpus/     # Frozen review inputs + prompt goldens + SIZES.txt (public PRs only)
