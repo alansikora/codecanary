@@ -203,7 +203,8 @@ procedure for step 2 in place of a plain fetch:
 1. Run `codecanary findings --watch --output json` to wait for the
    review of the current head, then `codecanary checks <PR> --watch
    --output json` to wait for the PR's required checks (it leaves out
-   CodeCanary's own). Check `conclusion` as in step 3.
+   CodeCanary's own). Check the findings `conclusion` as in step 3, and
+   the checks `state` (`pass` or `fail`, with `failing` names).
 2. `git fetch` and compare the PR branch with your local branch. When
    the bot pushed fix commits, `git pull --ff-only`, then go back to
    step 1 of this procedure: the push triggers a new review, and
@@ -211,8 +212,11 @@ procedure for step 2 in place of a plain fetch:
    fails means you have local commits the bot did not see; report it and
    stop — never force-push, never merge over the bot's commit unasked.
 3. Decide whether the head has settled:
-   - Findings empty, conclusion healthy, nothing new on the branch:
-     the review is clean — go to **exit handling**.
+   - Checks `state` is `fail`, or the command errors or times out:
+     report the failing checks and stop. Never call the PR clean while
+     required checks fail; fixing CI is a separate job.
+   - Findings empty, conclusion healthy, checks `state` `pass`, nothing
+     new on the branch: the review is clean — go to **exit handling**.
    - The bot **stopped**: the `CodeCanary / review` commit status
      description contains `stopped after N fixes`, or the PR carries the
      bot's comment asking for a local fix (it says to fix locally with
