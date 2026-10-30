@@ -259,7 +259,9 @@ procedure for step 2 in place of a plain fetch:
    - The bot **stopped**: the `CodeCanary / review` commit status
      description contains `stopped after N fixes`, or the PR carries the
      bot's comment asking for a local fix (it says to fix locally with
-     `/codecanary-fix`; a rate limit produces this one). Take over: the
+     `/codecanary-fix`; a rate limit produces this one, and so does a
+     fix that committed nothing and left findings open — `fix_stop`
+     `kind` `left-open`). Take over: the
      current findings are yours. Go on to step 5, triage and apply them
      as the local modes do, commit and push once. Read the status
      description and PR comments from the CLI's JSON when it carries
