@@ -38,6 +38,12 @@ const fixNoticeTitle = "## \U0001F425 CodeCanary fix"
 // workflow run reply evaluation for them.
 const fixReplyMarker = "<!-- codecanary:fix-reply -->"
 
+// fixLeftOpenMarkerPrefix tags the fix's replies on findings it left open,
+// followed by the head SHA the fix ran on. Unlike fixReplyMarker it makes
+// triage read nothing and triggers no run: the finding waits for the author.
+// The SHA keeps a re-run on the same head from replying twice.
+const fixLeftOpenMarkerPrefix = "<!-- codecanary:fix-left-open "
+
 // maxFixReplyReason caps a refutation posted as a thread reply.
 const maxFixReplyReason = 1500
 
@@ -218,6 +224,14 @@ func fixReplyBody(reason string) string {
 	return fmt.Sprintf("%s\n**CodeCanary fix — not applied.** %s", fixReplyMarker, escapeAllTags(reason))
 }
 
+// fixLeftOpenReplyBody is the thread reply for a finding the fix left open
+// on headSHA. The reason is neutralised and capped as in fixReplyBody.
+func fixLeftOpenReplyBody(reason, headSHA string) string {
+	reason = truncateUTF8(strings.TrimSpace(reason), maxFixReplyReason)
+	return fmt.Sprintf("%s%s -->\n**CodeCanary fix — left open for you.** %s\n\nReply here with your decision, or fix it locally with `/codecanary-fix`.",
+		fixLeftOpenMarkerPrefix, headSHA, escapeAllTags(reason))
+}
+
 // isFixReply reports whether a thread reply was posted by the CI fix.
 func isFixReply(body string) bool {
 	return strings.Contains(body, fixReplyMarker)
@@ -247,6 +261,25 @@ func buildStopNotice(findings []PRFinding, limit *fixLimit) string {
 		b.WriteString(", or push a change of your own: a push of yours resets this limit")
 	}
 	b.WriteString(".\n")
+	return b.String()
+}
+
+// buildLeftOpenNotice is the comment posted when the fix committed nothing
+// and left findings open: the loop has stopped, and each finding waits for
+// the author. FetchFixStop reads its reason back (leftOpenNoticeReasonRe).
+func buildLeftOpenNotice(leftOpen []FixDisposition, headSHA string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s\n\nThe CodeCanary fix stopped on `%s` with nothing to commit: it left %d finding%s open for you to decide.\n\n",
+		fixNoticeTitle, shortSHA(headSHA), len(leftOpen), pluralS(len(leftOpen)))
+	for _, d := range leftOpen {
+		f := d.Finding
+		fmt.Fprintf(&b, "- **%s** `%s:%d` — %s", f.Severity, f.File, f.Line, escapeAllTags(f.Title))
+		if f.CommentURL != "" {
+			fmt.Fprintf(&b, " ([thread](%s))", f.CommentURL)
+		}
+		fmt.Fprintf(&b, "\n  %s\n", escapeAllTags(truncateUTF8(strings.Join(strings.Fields(d.Reason), " "), 300)))
+	}
+	b.WriteString("\nThe fix won't run again until something changes. Reply on each thread with your decision, push a change, or fix them locally with `/codecanary-fix`.\n")
 	return b.String()
 }
 
