@@ -77,6 +77,9 @@ type PRFinding struct {
 	// been marked resolved (by the bot's own triage or by a human).
 	// FetchPRFindings omits resolved findings by default.
 	Resolved bool `json:"resolved,omitempty"`
+	// LeftOpenOn lists the heads on which the CI fix already replied that
+	// it left this finding open (leftOpenSHAs).
+	LeftOpenOn []string `json:"-"`
 }
 
 // FetchPRComments returns all line-anchored review comments on the given
@@ -284,6 +287,22 @@ func threadHasAckReply(replies []findingsCommentNode) bool {
 	return false
 }
 
+// leftOpenSHAs returns the head SHAs of the bot's fix-left-open replies.
+func leftOpenSHAs(replies []findingsCommentNode) []string {
+	var shas []string
+	for _, r := range replies {
+		if !isBotAuthor(r.Author.Login) {
+			continue
+		}
+		if _, rest, ok := strings.Cut(r.Body, fixLeftOpenMarkerPrefix); ok {
+			if sha, _, ok := strings.Cut(rest, " -->"); ok {
+				shas = append(shas, sha)
+			}
+		}
+	}
+	return shas
+}
+
 // FetchPRFindings returns the findings posted by the codecanary bot on
 // the given PR, keyed off GitHub's reviewThreads GraphQL endpoint so we
 // can honour per-thread resolution state. By default, threads the bot
@@ -404,6 +423,7 @@ func FetchPRFindings(repo string, prNumber int, includeResolved bool) ([]PRFindi
 			CommitID:   head.Commit.Oid,
 			CreatedAt:  head.CreatedAt,
 			Resolved:   thread.IsResolved,
+			LeftOpenOn: leftOpenSHAs(thread.Comments.Nodes[1:]),
 		})
 	}
 	return findings, nil

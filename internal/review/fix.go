@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 )
@@ -31,6 +32,10 @@ type FixPlatform interface {
 	// PostNotice posts body as a pull request comment unless a comment
 	// carrying key was posted before, so a notice is posted once per key.
 	PostNotice(key, body string) error
+	// UpsertNotice posts body as a pull request comment carrying key, or
+	// edits the bot's comment that already carries it, so a re-run updates
+	// the notice instead of duplicating it.
+	UpsertNotice(key, body string) error
 	// Push pushes the checkout's HEAD to the pull request's head branch.
 	Push(target *FixTarget) error
 	// ReportUsage handles the fix's usage data, as for a review.
@@ -111,6 +116,8 @@ var protectedWritePaths = []string{
 // loop limit is reached, otherwise has the fix model apply or refute each
 // finding, replies on every refuted finding's thread, and commits the edits
 // once and pushes them to the head branch (the push triggers the next review).
+// Every finding left open gets a reply on its thread too, and when nothing
+// was committed one comment says the loop stopped (settleLeftOpen).
 //
 // Only a setup problem (config, checkout) is returned as an error. Model,
 // rate-limit and push failures post one notice on the pull request and
@@ -218,9 +225,6 @@ func RunFix(opts FixOptions) error {
 		return nil
 	}
 	applied, refuted, skipped := splitDispositions(dispositions)
-	for _, d := range skipped {
-		fmt.Fprintf(os.Stderr, "  ~ %s left open: %s\n", d.FixRef, d.Reason)
-	}
 
 	// Refutations go first, so the review the push triggers already reads
 	// them; they stand on their own if the push then fails.
@@ -232,10 +236,47 @@ func RunFix(opts FixOptions) error {
 		fmt.Fprintf(os.Stderr, "  ✓ %s refuted: %s\n", d.FixRef, d.Reason)
 	}
 
-	if err := commitAndPush(platform, cfg, target, applied, opts.ReviewedSHA, capability.CoAuthorTrailer); err != nil {
+	committed, err := commitAndPush(platform, cfg, target, applied, opts.ReviewedSHA, capability.CoAuthorTrailer)
+	if err != nil {
 		postFixFailure(platform, target, "the fix could not be pushed", err)
 	}
+	leftOpen := skipped
+	if err == nil && !committed {
+		// Applied findings whose edits were not committed stay open too.
+		for _, d := range applied {
+			d.Reason = "the fix model reported it applied, but left no change to commit"
+			leftOpen = append(leftOpen, d)
+		}
+	}
+	// A failed push already posted its notice; the stop notice is for a
+	// cycle that ended cleanly with nothing to push.
+	settleLeftOpen(platform, target, leftOpen, err == nil && !committed)
 	return nil
+}
+
+// settleLeftOpen replies on the thread of every finding the fix left open,
+// once per head, with the reason. When the cycle pushed nothing (stopped),
+// no review follows, so one comment per head also says the loop stopped and
+// lists what waits for the author; a re-run on the head edits it. The
+// replies carry no fix-reply marker: they trigger no run, and triage ignores
+// them. Both are best-effort.
+func settleLeftOpen(platform FixPlatform, target *FixTarget, leftOpen []FixDisposition, stopped bool) {
+	for _, d := range leftOpen {
+		fmt.Fprintf(os.Stderr, "  ~ %s left open: %s\n", d.FixRef, d.Reason)
+		if slices.Contains(d.Finding.LeftOpenOn, target.HeadSHA) {
+			continue
+		}
+		if err := platform.ReplyToFinding(d.Finding, fixLeftOpenReplyBody(d.Reason, target.HeadSHA)); err != nil {
+			fmt.Fprintf(os.Stderr, "  ! %s — could not post the left-open reply: %v\n", d.FixRef, err)
+		}
+	}
+	if !stopped || len(leftOpen) == 0 {
+		return
+	}
+	Stderrf(ansiYellow, "CodeCanary fix stopped: %d finding%s left open for the author\n", len(leftOpen), pluralS(len(leftOpen)))
+	if err := platform.UpsertNotice(fixNoticeKey("left-open", target.HeadSHA), buildLeftOpenNotice(leftOpen, target.HeadSHA)); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not post the stop notice: %v\n", err)
+	}
 }
 
 // commitAndPush commits the fix model's edits as one commit and pushes it.
@@ -244,43 +285,44 @@ func RunFix(opts FixOptions) error {
 // The discard is all-or-nothing: once one finding is applied, every remaining
 // edit is committed, because a fix may touch files its finding doesn't name
 // and edits can't be tied to findings reliably. The prompt keeps edits to
-// applied findings. fix.format_command then formats the edited files.
-func commitAndPush(platform FixPlatform, cfg *ReviewConfig, target *FixTarget, applied []FixDisposition, reviewedSHA, coAuthorTrailer string) error {
+// applied findings. fix.format_command then formats the edited files. It
+// reports whether a commit was made.
+func commitAndPush(platform FixPlatform, cfg *ReviewConfig, target *FixTarget, applied []FixDisposition, reviewedSHA, coAuthorTrailer string) (bool, error) {
 	reverted, err := revertProtectedChanges()
 	if err != nil {
-		return err
+		return false, err
 	}
 	for _, p := range reverted {
 		Stderrf(ansiYellow, "Warning: reverted the fix's change to %s — the fix may not change it\n", p)
 	}
 	changed, err := changedPaths()
 	if err != nil {
-		return err
+		return false, err
 	}
 	switch {
 	case len(changed) == 0 && len(applied) > 0:
 		fmt.Fprintf(os.Stderr, "The fix model reported %d finding%s applied but left no changes — nothing to commit\n", len(applied), pluralS(len(applied)))
-		return nil
+		return false, nil
 	case len(changed) == 0:
 		fmt.Fprintf(os.Stderr, "No finding applied — nothing to commit\n")
-		return nil
+		return false, nil
 	case len(applied) == 0:
 		fmt.Fprintf(os.Stderr, "The fix model changed %s without reporting a finding applied — discarding the changes\n", strings.Join(changed, ", "))
 		discardChanges()
-		return nil
+		return false, nil
 	}
 	formatFixChanges(cfg)
 	if reviewedSHA == "" {
 		reviewedSHA = target.HeadSHA
 	}
 	if err := commitFix(target, buildFixCommitMessage(applied, reviewedSHA, coAuthorTrailer)); err != nil {
-		return err
+		return false, err
 	}
 	if err := platform.Push(target); err != nil {
-		return err
+		return true, err
 	}
 	Stderrf(ansiGreen, "Pushed a fix for %d finding%s to %s\n", len(applied), pluralS(len(applied)), target.HeadBranch)
-	return nil
+	return true, nil
 }
 
 // fixLimit is a reached fix loop limit.

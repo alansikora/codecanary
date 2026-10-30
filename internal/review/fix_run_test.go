@@ -18,10 +18,12 @@ type fakeFixPlatform struct {
 	messages []string
 	pushErr  error
 
-	pushed   int
-	replies  map[string]string // fix_ref → body
-	notices  map[string]string // key → body
-	statuses []string          // "sha state desc"
+	pushed    int
+	replies   map[string]string // fix_ref → latest body
+	nReplies  int
+	notices   map[string]string // key → body
+	nComments int               // notice comments created (an upsert edit doesn't count)
+	statuses  []string          // "sha state desc"
 }
 
 func (f *fakeFixPlatform) LoadFixTarget() (*FixTarget, error)     { return f.target, nil }
@@ -36,12 +38,29 @@ func (f *fakeFixPlatform) SetReviewStatus(sha, state, desc string) error {
 }
 func (f *fakeFixPlatform) ReplyToFinding(fd PRFinding, body string) error {
 	f.replies[fd.FixRef] = body
+	f.nReplies++
+	// The reply lands on the thread, where the next load reads it back.
+	reply := findingsCommentNode{Body: body}
+	reply.Author.Login = BotLogin
+	for i := range f.findings {
+		if f.findings[i].FixRef == fd.FixRef {
+			f.findings[i].LeftOpenOn = append(f.findings[i].LeftOpenOn, leftOpenSHAs([]findingsCommentNode{reply})...)
+		}
+	}
 	return nil
 }
 func (f *fakeFixPlatform) PostNotice(key, body string) error {
 	if _, ok := f.notices[key]; !ok {
 		f.notices[key] = body
+		f.nComments++
 	}
+	return nil
+}
+func (f *fakeFixPlatform) UpsertNotice(key, body string) error {
+	if _, ok := f.notices[key]; !ok {
+		f.nComments++
+	}
+	f.notices[key] = body
 	return nil
 }
 func (f *fakeFixPlatform) Push(*FixTarget) error {
@@ -157,8 +176,13 @@ echo 'fix: {}' >> .codecanary/config.yml`
 		}
 	}
 
-	if len(p.replies) != 1 || !strings.Contains(p.replies["7-2"], "Modules don't indent") || !isFixReply(p.replies["7-2"]) {
-		t.Errorf("replies = %v, want one fix reply on 7-2", p.replies)
+	if len(p.replies) != 2 || !strings.Contains(p.replies["7-2"], "Modules don't indent") || !isFixReply(p.replies["7-2"]) {
+		t.Errorf("replies = %v, want a fix reply on 7-2", p.replies)
+	}
+	// The skipped finding gets its reason on the thread; with a fix pushed,
+	// the next review runs, so there is no stop notice.
+	if r := p.replies["7-3"]; !strings.Contains(r, "Needs a workflow edit.") || isFixReply(r) {
+		t.Errorf("left-open reply on 7-3 = %q", r)
 	}
 	if len(p.notices) != 0 || len(p.statuses) != 0 {
 		t.Errorf("unexpected notices %v / statuses %v", p.notices, p.statuses)
@@ -269,5 +293,70 @@ func TestRunFix_DiscardsUnclaimedEdits(t *testing.T) {
 	}
 	if _, ok := p.replies["7-1"]; !ok {
 		t.Error("refutation not posted")
+	}
+}
+
+// thetechfx/bedrock#7946: one finding, left open, nothing to commit. The
+// finding gets its reason on its thread, and the PR one comment saying the
+// loop stopped; a re-run on the same head posts neither again, and edits
+// the comment.
+func TestRunFix_LeftOpenNothingToCommit(t *testing.T) {
+	answer := "```json\n[" + `{"fix_ref": "7-1", "disposition": "skipped", "reason": "Valid, but no stored marker exists for 'ever classified', so the author must decide."}` + "]\n```"
+	dir, bin := fixRepo(t, "", answer)
+	head := runGit(t, dir, "rev-parse", "HEAD")
+	p := newFakeFixPlatform(head)
+	p.findings = p.findings[:1]
+
+	for range 2 {
+		if err := RunFix(FixOptions{ConfigPath: ".codecanary/config.yml", ClaudePath: bin, ReviewedSHA: head, Platform: p}); err != nil {
+			t.Fatalf("RunFix: %v", err)
+		}
+	}
+	if p.pushed != 0 || runGit(t, dir, "rev-parse", "HEAD") != head {
+		t.Error("committed with nothing applied")
+	}
+
+	reply := p.replies["7-1"]
+	if p.nReplies != 1 || !strings.Contains(reply, "no stored marker exists") {
+		t.Errorf("%d replies, 7-1 = %q; want one reply with the reason", p.nReplies, reply)
+	}
+	// The workflow re-runs the review only for the fix-reply marker, and
+	// triage would read that reply as the author's: neither may happen here.
+	if isFixReply(reply) || isAckReply(reply) || !strings.Contains(reply, fixLeftOpenMarkerPrefix+head+" -->") {
+		t.Errorf("left-open reply carries the wrong marker: %q", reply)
+	}
+
+	notice, ok := p.notices[fixNoticeKey("left-open", head)]
+	if !ok || p.nComments != 1 || len(p.notices) != 1 {
+		t.Fatalf("notices = %v (%d created), want one left-open notice", p.notices, p.nComments)
+	}
+	for _, want := range []string{
+		"stopped on `" + shortSHA(head) + "` with nothing to commit: it left 1 finding open for you to decide",
+		"- **bug** `a.go:3` — Nil map write ([thread](https://github.com/o/r/pull/7#discussion_r1))",
+		"no stored marker exists",
+		"/codecanary-fix",
+	} {
+		if !strings.Contains(notice, want) {
+			t.Errorf("notice lacks %q:\n%s", want, notice)
+		}
+	}
+}
+
+// A finding reported applied whose edit left nothing to commit is still open.
+func TestRunFix_AppliedWithoutChangesIsLeftOpen(t *testing.T) {
+	answer := "```json\n[" + `{"fix_ref": "7-1", "disposition": "applied", "reason": "Initialised the map."}` + "]\n```"
+	dir, bin := fixRepo(t, "", answer)
+	head := runGit(t, dir, "rev-parse", "HEAD")
+	p := newFakeFixPlatform(head)
+	p.findings = p.findings[:1]
+
+	if err := RunFix(FixOptions{ConfigPath: ".codecanary/config.yml", ClaudePath: bin, ReviewedSHA: head, Platform: p}); err != nil {
+		t.Fatalf("RunFix: %v", err)
+	}
+	if r := p.replies["7-1"]; !strings.Contains(r, "left no change to commit") {
+		t.Errorf("reply = %q", r)
+	}
+	if _, ok := p.notices[fixNoticeKey("left-open", head)]; !ok {
+		t.Errorf("notices = %v, want a left-open notice", p.notices)
 	}
 }

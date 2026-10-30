@@ -161,9 +161,36 @@ func (g *GithubPlatform) PostNotice(key, body string) error {
 	return PostComment(g.Repo, g.PRNumber, key+"\n"+body)
 }
 
+func (g *GithubPlatform) UpsertNotice(key, body string) error {
+	comments, err := fetchIssueComments(g.Repo, g.PRNumber)
+	if err != nil {
+		return err
+	}
+	for i := len(comments) - 1; i >= 0; i-- {
+		c := comments[i]
+		if !isBotAuthor(c.User.Login) || !strings.Contains(c.Body, key) {
+			continue
+		}
+		owner, name, err := parseRepoSlug(g.Repo)
+		if err != nil {
+			return err
+		}
+		payload, err := json.Marshal(struct {
+			Body string `json:"body"`
+		}{Body: key + "\n" + body})
+		if err != nil {
+			return fmt.Errorf("marshaling comment payload: %w", err)
+		}
+		_, err = ghAPIRequest("PATCH", fmt.Sprintf("repos/%s/%s/issues/comments/%d", owner, name, c.ID), payload)
+		return err
+	}
+	return PostComment(g.Repo, g.PRNumber, key+"\n"+body)
+}
+
 // issueComment is the subset of a pull request's conversation comment the
 // fix reads back.
 type issueComment struct {
+	ID      int64  `json:"id"`
 	Body    string `json:"body"`
 	HTMLURL string `json:"html_url"`
 	User    struct {
@@ -194,8 +221,9 @@ func fetchIssueComments(repo string, prNumber int) ([]issueComment, error) {
 // the open findings to the author: `codecanary findings` surfaces it as
 // `fix_stop`, the signal for the codecanary-fix skill to take over.
 type FixStop struct {
-	// Kind is "limit" (a loop limit was reached) or "failed" (the fix
-	// could not finish: provider error, rate limit, rejected push).
+	// Kind is "limit" (a loop limit was reached), "failed" (the fix
+	// could not finish: provider error, rate limit, rejected push) or
+	// "left-open" (it committed nothing and left findings to the author).
 	Kind string `json:"kind"`
 	// Reason is the human-visible reason, e.g. "stopped after 2 fixes
 	// since your last push".
@@ -205,9 +233,10 @@ type FixStop struct {
 }
 
 var (
-	limitNoticeReasonRe  = regexp.MustCompile(`CodeCanary (stopped after \d+ fix(?:es)? (?:since your last push|on this PR))`)
-	failedNoticeReasonRe = regexp.MustCompile("did not finish on `[0-9a-f]+`: ([^\n]+?)\\.\n")
-	stoppedStatusRe      = regexp.MustCompile(`; (stopped after \d+ fix(?:es)?)$`)
+	limitNoticeReasonRe    = regexp.MustCompile(`CodeCanary (stopped after \d+ fix(?:es)? (?:since your last push|on this PR))`)
+	failedNoticeReasonRe   = regexp.MustCompile("did not finish on `[0-9a-f]+`: ([^\n]+?)\\.\n")
+	leftOpenNoticeReasonRe = regexp.MustCompile(`with nothing to commit: it (left \d+ findings? open)`)
+	stoppedStatusRe        = regexp.MustCompile(`; (stopped after \d+ fix(?:es)?)$`)
 )
 
 // FetchFixStop reports whether the CI fix stopped on headSHA, from the
@@ -248,6 +277,12 @@ func fixStopFromSignals(comments []issueComment, statusDesc, headSHA string) *Fi
 		case strings.Contains(c.Body, fixNoticeKey("failed", headSHA)):
 			stop := &FixStop{Kind: "failed", Reason: "the fix did not finish", CommentURL: c.HTMLURL}
 			if m := failedNoticeReasonRe.FindStringSubmatch(c.Body); m != nil {
+				stop.Reason = m[1]
+			}
+			return stop
+		case strings.Contains(c.Body, fixNoticeKey("left-open", headSHA)):
+			stop := &FixStop{Kind: "left-open", Reason: "findings left open for the author", CommentURL: c.HTMLURL}
+			if m := leftOpenNoticeReasonRe.FindStringSubmatch(c.Body); m != nil {
 				stop.Reason = m[1]
 			}
 			return stop
