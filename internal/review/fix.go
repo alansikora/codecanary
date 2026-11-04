@@ -344,20 +344,57 @@ func postFixFailure(platform FixPlatform, target *FixTarget, what string, err er
 // buildFailureNotice is the comment posted when the fix could not finish.
 // FetchFixStop reads its reason back (failedNoticeReasonRe).
 func buildFailureNotice(headSHA, what string, err error) string {
-	return fmt.Sprintf("%s\n\nThe CodeCanary fix did not finish on `%s`: %s (%s).\n\nFix the open findings locally with `/codecanary-fix`.\n",
-		fixNoticeTitle, shortSHA(headSHA), what, failureSummary(err))
+	next := "Fix the open findings locally with `/codecanary-fix`."
+	if isPushRejected(err) {
+		next = "The branch moved while the fix ran, so nothing was pushed. The push that moved it starts a fresh review and fix; if it does not, fix the open findings locally with `/codecanary-fix`."
+	}
+	return fmt.Sprintf("%s\n\nThe CodeCanary fix did not finish on `%s`: %s (%s).\n\n%s\n",
+		fixNoticeTitle, shortSHA(headSHA), what, failureSummary(err), next)
+}
+
+// gitPushErrPrefix starts every error from a failed `git push` (fixGit).
+const gitPushErrPrefix = "git push:"
+
+// isPushRejected reports whether git refused the fix's push because the remote
+// branch is ahead, as when someone pushes mid-fix. "[remote rejected]", a hook
+// or branch protection declining the push, is deliberately not a match.
+func isPushRejected(err error) bool {
+	msg := err.Error()
+	return strings.HasPrefix(msg, gitPushErrPrefix) && strings.Contains(msg, "[rejected]")
 }
 
 // failureSummary is a one-line description of err for a PR comment: the
 // provider's classification when there is one (rate limit, authentication),
-// else the error's first line, shortened.
+// else the error's first line, shortened. A failed push also gets the line of
+// git's output that carries the reason.
 func failureSummary(err error) string {
 	var pe *ProviderError
 	if errors.As(err, &pe) {
 		return fmt.Sprintf("%s %s", pe.Provider, pe.Kind)
 	}
-	line, _, _ := strings.Cut(err.Error(), "\n")
+	msg := err.Error()
+	line, _, _ := strings.Cut(msg, "\n")
+	if reason := gitPushReason(msg); reason != "" {
+		head, _, _ := strings.Cut(line, ": To ")
+		line = head + ": " + reason
+	}
 	return truncateUTF8(line, 200)
+}
+
+// gitPushReason finds the reason in a failed push's output, past the first
+// line: git leads with "To <url>", which says nothing. Other errors can carry
+// model or CLI output, so only git's are searched.
+func gitPushReason(msg string) string {
+	if !strings.HasPrefix(msg, gitPushErrPrefix) {
+		return ""
+	}
+	for _, l := range strings.Split(msg, "\n")[1:] {
+		l = strings.TrimSpace(l)
+		if strings.HasPrefix(l, "! [") || strings.HasPrefix(l, "fatal:") || (strings.HasPrefix(l, "remote:") && l != "remote:") {
+			return l
+		}
+	}
+	return ""
 }
 
 // truncateUTF8 cuts s to at most n bytes plus "…", dropping a rune the cut

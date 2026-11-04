@@ -271,3 +271,54 @@ func TestRunFix_DiscardsUnclaimedEdits(t *testing.T) {
 		t.Error("refutation not posted")
 	}
 }
+
+func TestFailureSummary_GitPushRejection(t *testing.T) {
+	err := errors.New("git push: exit status 1: To https://github.com/o/r.git\n ! [rejected]          HEAD -> br (fetch first)\nerror: failed to push some refs\nhint: Updates were rejected")
+	got := failureSummary(err)
+	if !strings.Contains(got, "[rejected]") || !strings.Contains(got, "fetch first") || strings.Contains(got, "https://") {
+		t.Errorf("failureSummary = %q", got)
+	}
+}
+
+func TestFailureSummary_ReasonOnFirstLineIsNotRepeated(t *testing.T) {
+	got := failureSummary(errors.New("remote: Permission to o/r.git denied"))
+	if got != "remote: Permission to o/r.git denied" {
+		t.Errorf("failureSummary = %q", got)
+	}
+}
+
+func TestBuildFailureNotice_RejectedPushSaysTheBranchMoved(t *testing.T) {
+	rejected := errors.New("git push: exit status 1: To u\n ! [rejected] HEAD -> b (fetch first)")
+	n := buildFailureNotice("abcdef1234", "the fix could not be pushed", rejected)
+	if !strings.Contains(n, "branch moved") || !strings.Contains(n, "did not finish on `abcdef12`") {
+		t.Errorf("notice = %q", n)
+	}
+	other := buildFailureNotice("abcdef1234", "the fix could not be pushed", errors.New("remote: Permission denied"))
+	if strings.Contains(other, "branch moved") {
+		t.Errorf("non-rejection notice mentions a moved branch: %q", other)
+	}
+}
+
+func TestFailureSummary_OnlyGitPushOutputIsSearched(t *testing.T) {
+	err := errors.New("claude exited 1\nfatal: something the CLI printed\n! [rejected] fetch first")
+	if got := failureSummary(err); got != "claude exited 1" {
+		t.Errorf("failureSummary = %q", got)
+	}
+	if n := buildFailureNotice("abcdef1234", "the fix model failed", err); strings.Contains(n, "branch moved") {
+		t.Errorf("a non-push failure claims the branch moved: %q", n)
+	}
+}
+
+func TestFailureSummary_SkipsBlankRemoteLines(t *testing.T) {
+	err := errors.New("git push: exit status 1: To u\nremote:\nremote: error: GH013: rule violations")
+	if got := failureSummary(err); got != "git push: exit status 1: remote: error: GH013: rule violations" {
+		t.Errorf("failureSummary = %q", got)
+	}
+}
+
+func TestIsPushRejected_RemoteRejectionIsNotAMovedBranch(t *testing.T) {
+	err := errors.New("git push: exit status 1: To u\n ! [remote rejected] HEAD -> b (protected branch hook declined)")
+	if isPushRejected(err) {
+		t.Error("a hook declining the push was read as the branch moving")
+	}
+}
