@@ -344,8 +344,19 @@ func postFixFailure(platform FixPlatform, target *FixTarget, what string, err er
 // buildFailureNotice is the comment posted when the fix could not finish.
 // FetchFixStop reads its reason back (failedNoticeReasonRe).
 func buildFailureNotice(headSHA, what string, err error) string {
-	return fmt.Sprintf("%s\n\nThe CodeCanary fix did not finish on `%s`: %s (%s).\n\nFix the open findings locally with `/codecanary-fix`.\n",
-		fixNoticeTitle, shortSHA(headSHA), what, failureSummary(err))
+	next := "Fix the open findings locally with `/codecanary-fix`."
+	if isPushRejected(err) {
+		next = "The branch moved while the fix ran, so nothing was pushed. The push that moved it starts a fresh review and fix; if it does not, fix the open findings locally with `/codecanary-fix`."
+	}
+	return fmt.Sprintf("%s\n\nThe CodeCanary fix did not finish on `%s`: %s (%s).\n\n%s\n",
+		fixNoticeTitle, shortSHA(headSHA), what, failureSummary(err), next)
+}
+
+// isPushRejected reports whether git refused a push because the remote
+// branch is ahead (non-fast-forward), as when someone pushes mid-fix.
+func isPushRejected(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "[rejected]") || strings.Contains(msg, "non-fast-forward") || strings.Contains(msg, "fetch first")
 }
 
 // failureSummary is a one-line description of err for a PR comment: the

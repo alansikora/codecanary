@@ -286,3 +286,15 @@ func TestFailureSummary_ReasonOnFirstLineIsNotRepeated(t *testing.T) {
 		t.Errorf("failureSummary = %q", got)
 	}
 }
+
+func TestBuildFailureNotice_RejectedPushSaysTheBranchMoved(t *testing.T) {
+	rejected := errors.New("git push: exit status 1: To u\n ! [rejected] HEAD -> b (fetch first)")
+	n := buildFailureNotice("abcdef1234", "the fix could not be pushed", rejected)
+	if !strings.Contains(n, "branch moved") || !strings.Contains(n, "did not finish on `abcdef12`") {
+		t.Errorf("notice = %q", n)
+	}
+	other := buildFailureNotice("abcdef1234", "the fix could not be pushed", errors.New("remote: Permission denied"))
+	if strings.Contains(other, "branch moved") {
+		t.Errorf("non-rejection notice mentions a moved branch: %q", other)
+	}
+}
