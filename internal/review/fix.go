@@ -356,7 +356,19 @@ func failureSummary(err error) string {
 	if errors.As(err, &pe) {
 		return fmt.Sprintf("%s %s", pe.Provider, pe.Kind)
 	}
-	line, _, _ := strings.Cut(err.Error(), "\n")
+	msg := err.Error()
+	// git prints the remote URL before the reason ("To https://…", then
+	// "! [rejected] … (fetch first)"), so the first line alone says nothing.
+	// Lead with the line that carries the reason.
+	for _, l := range strings.Split(msg, "\n") {
+		l = strings.TrimSpace(l)
+		if strings.HasPrefix(l, "! [") || strings.HasPrefix(l, "remote:") || strings.HasPrefix(l, "fatal:") {
+			head, _, _ := strings.Cut(msg, "\n")
+			head, _, _ = strings.Cut(head, ": To ")
+			return truncateUTF8(head+": "+l, 200)
+		}
+	}
+	line, _, _ := strings.Cut(msg, "\n")
 	return truncateUTF8(line, 200)
 }
 

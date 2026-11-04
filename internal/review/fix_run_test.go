@@ -271,3 +271,11 @@ func TestRunFix_DiscardsUnclaimedEdits(t *testing.T) {
 		t.Error("refutation not posted")
 	}
 }
+
+func TestFailureSummary_GitPushRejection(t *testing.T) {
+	err := errors.New("git push: exit status 1: To https://github.com/o/r.git\n ! [rejected]          HEAD -> br (fetch first)\nerror: failed to push some refs\nhint: Updates were rejected")
+	got := failureSummary(err)
+	if !strings.Contains(got, "[rejected]") || !strings.Contains(got, "fetch first") || strings.Contains(got, "https://") {
+		t.Errorf("failureSummary = %q", got)
+	}
+}
