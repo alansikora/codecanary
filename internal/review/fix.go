@@ -365,6 +365,9 @@ func failureSummary(err error) string {
 		if strings.HasPrefix(l, "! [") || strings.HasPrefix(l, "remote:") || strings.HasPrefix(l, "fatal:") {
 			head, _, _ := strings.Cut(msg, "\n")
 			head, _, _ = strings.Cut(head, ": To ")
+			if strings.Contains(head, l) {
+				return truncateUTF8(head, 200)
+			}
 			return truncateUTF8(head+": "+l, 200)
 		}
 	}

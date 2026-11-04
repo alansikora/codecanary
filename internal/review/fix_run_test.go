@@ -279,3 +279,10 @@ func TestFailureSummary_GitPushRejection(t *testing.T) {
 		t.Errorf("failureSummary = %q", got)
 	}
 }
+
+func TestFailureSummary_ReasonOnFirstLineIsNotRepeated(t *testing.T) {
+	got := failureSummary(errors.New("remote: Permission to o/r.git denied"))
+	if got != "remote: Permission to o/r.git denied" {
+		t.Errorf("failureSummary = %q", got)
+	}
+}
