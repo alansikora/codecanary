@@ -352,38 +352,49 @@ func buildFailureNotice(headSHA, what string, err error) string {
 		fixNoticeTitle, shortSHA(headSHA), what, failureSummary(err), next)
 }
 
-// isPushRejected reports whether git refused a push because the remote
-// branch is ahead (non-fast-forward), as when someone pushes mid-fix.
+// gitPushErrPrefix starts every error from a failed `git push` (fixGit).
+const gitPushErrPrefix = "git push:"
+
+// isPushRejected reports whether git refused the fix's push because the remote
+// branch is ahead, as when someone pushes mid-fix. "[remote rejected]", a hook
+// or branch protection declining the push, is deliberately not a match.
 func isPushRejected(err error) bool {
 	msg := err.Error()
-	return strings.Contains(msg, "[rejected]") || strings.Contains(msg, "non-fast-forward") || strings.Contains(msg, "fetch first")
+	return strings.HasPrefix(msg, gitPushErrPrefix) && strings.Contains(msg, "[rejected]")
 }
 
 // failureSummary is a one-line description of err for a PR comment: the
 // provider's classification when there is one (rate limit, authentication),
-// else the error's first line, shortened.
+// else the error's first line, shortened. A failed push also gets the line of
+// git's output that carries the reason.
 func failureSummary(err error) string {
 	var pe *ProviderError
 	if errors.As(err, &pe) {
 		return fmt.Sprintf("%s %s", pe.Provider, pe.Kind)
 	}
 	msg := err.Error()
-	// git prints the remote URL before the reason ("To https://…", then
-	// "! [rejected] … (fetch first)"), so the first line alone says nothing.
-	// Lead with the line that carries the reason.
-	for _, l := range strings.Split(msg, "\n") {
+	line, _, _ := strings.Cut(msg, "\n")
+	if reason := gitPushReason(msg); reason != "" {
+		head, _, _ := strings.Cut(line, ": To ")
+		line = head + ": " + reason
+	}
+	return truncateUTF8(line, 200)
+}
+
+// gitPushReason finds the reason in a failed push's output, past the first
+// line: git leads with "To <url>", which says nothing. Other errors can carry
+// model or CLI output, so only git's are searched.
+func gitPushReason(msg string) string {
+	if !strings.HasPrefix(msg, gitPushErrPrefix) {
+		return ""
+	}
+	for _, l := range strings.Split(msg, "\n")[1:] {
 		l = strings.TrimSpace(l)
-		if strings.HasPrefix(l, "! [") || strings.HasPrefix(l, "remote:") || strings.HasPrefix(l, "fatal:") {
-			head, _, _ := strings.Cut(msg, "\n")
-			head, _, _ = strings.Cut(head, ": To ")
-			if strings.Contains(head, l) {
-				return truncateUTF8(head, 200)
-			}
-			return truncateUTF8(head+": "+l, 200)
+		if strings.HasPrefix(l, "! [") || strings.HasPrefix(l, "fatal:") || (strings.HasPrefix(l, "remote:") && l != "remote:") {
+			return l
 		}
 	}
-	line, _, _ := strings.Cut(msg, "\n")
-	return truncateUTF8(line, 200)
+	return ""
 }
 
 // truncateUTF8 cuts s to at most n bytes plus "…", dropping a rune the cut

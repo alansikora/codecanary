@@ -298,3 +298,27 @@ func TestBuildFailureNotice_RejectedPushSaysTheBranchMoved(t *testing.T) {
 		t.Errorf("non-rejection notice mentions a moved branch: %q", other)
 	}
 }
+
+func TestFailureSummary_OnlyGitPushOutputIsSearched(t *testing.T) {
+	err := errors.New("claude exited 1\nfatal: something the CLI printed\n! [rejected] fetch first")
+	if got := failureSummary(err); got != "claude exited 1" {
+		t.Errorf("failureSummary = %q", got)
+	}
+	if n := buildFailureNotice("abcdef1234", "the fix model failed", err); strings.Contains(n, "branch moved") {
+		t.Errorf("a non-push failure claims the branch moved: %q", n)
+	}
+}
+
+func TestFailureSummary_SkipsBlankRemoteLines(t *testing.T) {
+	err := errors.New("git push: exit status 1: To u\nremote:\nremote: error: GH013: rule violations")
+	if got := failureSummary(err); got != "git push: exit status 1: remote: error: GH013: rule violations" {
+		t.Errorf("failureSummary = %q", got)
+	}
+}
+
+func TestIsPushRejected_RemoteRejectionIsNotAMovedBranch(t *testing.T) {
+	err := errors.New("git push: exit status 1: To u\n ! [remote rejected] HEAD -> b (protected branch hook declined)")
+	if isPushRejected(err) {
+		t.Error("a hook declining the push was read as the branch moving")
+	}
+}
