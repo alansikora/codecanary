@@ -140,7 +140,7 @@ For remaining threads, `EvaluateThreadsParallel()` runs up to 3 concurrent LLM c
 
 For `TriageCrossFileChange`, only the full PR diff is used (no level 1 — there's no file-scoped diff to show).
 
-The LLM returns JSON: `{"resolved": true, "reason": "code_change"}` or `{"resolved": false}`.
+The LLM returns JSON: `{"resolved": true, "reason": "code_change"}` or `{"resolved": false}`. `validateResolutionReason` enforces that code-only classes accept only `code_change`, and that a reply-only thread (`TriageHasReply`) never closes as `code_change`: its prompt shows no diff, so that verdict would rest on the author's word alone.
 
 LLM resolution reasons and their effects:
 

@@ -598,3 +598,31 @@ func TestResolutionFormat_RequestsRationale(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateResolutionReason_ReplyOnlyCannotClaimCodeChange(t *testing.T) {
+	// The author replies "fixed" but pushed nothing that touches the finding.
+	// The reply prompt shows no diff, so a code_change verdict rests on the
+	// author's word alone and must not resolve the thread.
+	output := "```json\n{\"resolved\": true, \"reason\": \"code_change\"}\n```"
+	parsed := parseThreadResolution(output, 0)
+
+	res := validateResolutionReason(parsed, TriageHasReply)
+	if res.Resolved || res.Reason != "" {
+		t.Errorf("reply-only code_change should be rejected, got %+v", res)
+	}
+
+	// The same verdict stands when the code at the finding did change.
+	for _, class := range []ThreadClassification{TriageCodeChanged, TriageCodeChangedReply, TriageCrossFileChange} {
+		if res := validateResolutionReason(parsed, class); !res.Resolved || res.Reason != "code_change" {
+			t.Errorf("class %d: code_change should be accepted, got %+v", class, res)
+		}
+	}
+
+	// Reply-only threads still resolve by the reply's own reasons.
+	for _, reason := range []string{"dismissed", "acknowledged", "rebutted"} {
+		in := ThreadResolution{Resolved: true, Reason: reason}
+		if res := validateResolutionReason(in, TriageHasReply); !res.Resolved || res.Reason != reason {
+			t.Errorf("reply-only %s should be accepted, got %+v", reason, res)
+		}
+	}
+}
