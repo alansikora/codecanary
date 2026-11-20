@@ -32,7 +32,7 @@ Before fetching anything, `Run()` asks the platform whether this run should revi
 
 ### 1. Fetch PR data
 
-**GitHub PR** (`--post`): Fetches PR metadata (title, body, author, branches) and diff via `gh pr view` and `gh pr diff`.
+**GitHub PR** (`--post`): Fetches PR metadata (title, body, author, branches) via `gh pr view`, the changed-file list via the paginated files API (`gh api --paginate repos/{repo}/pulls/{n}/files`; `gh pr view --json files` stops at 100 files), and the diff via `gh pr diff`. When GitHub refuses the diff (HTTP 406: over 300 files or about 20,000 lines), `FetchPR` returns a `DiffTooLargeError` that names the file count and asks for smaller PRs.
 
 **Local**: Detects the default branch (`main`, falling back to `master`, or the explicit `--base`) and computes diff from merge-base to HEAD via `git diff $(git merge-base HEAD <default-branch>)..HEAD`. Uncommitted working-tree changes scoped to the branch files are appended to the incremental diff on subsequent runs. Uses current branch name as the title and `git config user.name` as the author.
 

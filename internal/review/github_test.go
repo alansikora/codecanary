@@ -2,6 +2,8 @@ package review
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -120,5 +122,23 @@ func TestBuildActivityReviewBody(t *testing.T) {
 	}
 	if !strings.HasSuffix(got, "\n<!-- codecanary:review {\"sha\":\"abc123\"} -->\n") {
 		t.Errorf("body missing trailing baseline marker:\n%q", got)
+	}
+}
+
+func TestDiffTooLargeDetection(t *testing.T) {
+	ghErr := errors.New("gh pr diff: could not find pull request diff: HTTP 406: Sorry, the diff exceeded the maximum number of files (300).")
+	if !isDiffTooLarge(ghErr) {
+		t.Fatal("406 diff error not detected")
+	}
+	if isDiffTooLarge(errors.New("gh pr diff: HTTP 502: Bad Gateway")) {
+		t.Fatal("transient error misread as too large")
+	}
+	wrapped := fmt.Errorf("fetching PR: %w", &DiffTooLargeError{Files: 301, Err: ghErr})
+	var tooLarge *DiffTooLargeError
+	if !errors.As(wrapped, &tooLarge) || tooLarge.Files != 301 {
+		t.Fatalf("DiffTooLargeError not recoverable through wrapping: %v", wrapped)
+	}
+	if !strings.Contains(wrapped.Error(), "changes 301 files") {
+		t.Errorf("message lacks file count: %v", wrapped)
 	}
 }
