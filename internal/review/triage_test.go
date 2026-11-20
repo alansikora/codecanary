@@ -243,7 +243,7 @@ func TestBuildCrossFilePrompt_OnlyAllowsCodeChangeReason(t *testing.T) {
 	}
 }
 
-func TestBuildReplyPrompt_AllowsAllReasons(t *testing.T) {
+func TestBuildReplyPrompt_OffersReplyReasonsOnly(t *testing.T) {
 	tt := TriagedThread{
 		Thread: ReviewThread{
 			Path: "main.go",
@@ -257,10 +257,15 @@ func TestBuildReplyPrompt_AllowsAllReasons(t *testing.T) {
 	}
 	prompt := buildReplyPrompt(tt, nil)
 
-	for _, reason := range []string{`"code_change"`, `"acknowledged"`, `"dismissed"`, `"rebutted"`} {
+	for _, reason := range []string{`"acknowledged"`, `"dismissed"`, `"rebutted"`} {
 		if !strings.Contains(prompt, reason) {
 			t.Errorf("buildReplyPrompt must offer %s as a reason", reason)
 		}
+	}
+	// The reply prompt shows no code change, and validateResolutionReason
+	// rejects code_change on TriageHasReply, so the prompt must not offer it.
+	if strings.Contains(prompt, `"code_change"`) {
+		t.Error("buildReplyPrompt must not offer \"code_change\" as a reason")
 	}
 }
 
@@ -590,6 +595,7 @@ func TestResolutionFormat_RequestsRationale(t *testing.T) {
 		"writeResolutionFormat":           func(b *strings.Builder) { writeResolutionFormat(b, false) },
 		"writeResolutionFormat/explain":   func(b *strings.Builder) { writeResolutionFormat(b, true) },
 		"writeCodeChangeResolutionFormat": writeCodeChangeResolutionFormat,
+		"writeReplyResolutionFormat":      writeReplyResolutionFormat,
 	} {
 		var b strings.Builder
 		fn(&b)
