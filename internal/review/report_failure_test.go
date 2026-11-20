@@ -38,6 +38,17 @@ func TestBuildReviewFailureNotice(t *testing.T) {
 	if !strings.Contains(got, "latest replies") || strings.Contains(got, "second line") || strings.Contains(got, "Workflow run") {
 		t.Errorf("reply-only notice without a run URL: %q", got)
 	}
+
+	// The parse error seen on a real PR ends its first line with a colon;
+	// the sentence must not end in ":.".
+	got = buildReviewFailureNotice(sha, errors.New("parsing findings: no ```json code fence found in output:\nNo new findings."), false, "")
+	if strings.Contains(got, ":.") || !strings.Contains(got, "found in output.") {
+		t.Errorf("trailing punctuation not trimmed: %q", got)
+	}
+	// The notice is never edited, so it must say where the current result is.
+	if !strings.Contains(got, "Later runs do not update this notice") {
+		t.Errorf("notice does not say it can be outdated: %q", got)
+	}
 }
 
 func TestReviewNoticeKeyIsPerKindAndHead(t *testing.T) {

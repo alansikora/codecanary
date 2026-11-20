@@ -447,17 +447,21 @@ func reviewNoticeKey(kind, sha string) string {
 }
 
 // buildReviewFailureNotice is the comment posted when a run did not finish.
-// The cause is failureSummary's one line, as in the fix's failure notice;
-// the full error stays in the workflow logs.
+// The cause is failureSummary's one line, as in the fix's failure notice,
+// with trailing punctuation trimmed so the sentence ends cleanly; the full
+// error stays in the workflow logs. The notice is posted once per head and
+// never edited, so it points to where the current result is shown.
 func buildReviewFailureNotice(sha string, runErr error, replyOnly bool, runURL string) string {
 	what := fmt.Sprintf("The review did not finish on `%s`, so this commit was **not reviewed**", shortSHA(sha))
 	if replyOnly {
 		what = fmt.Sprintf("The latest replies on `%s` were not processed", shortSHA(sha))
 	}
-	body := fmt.Sprintf("## \U0001F425 CodeCanary\n\n\u26a0\ufe0f %s: %s.\n\nFix the cause and re-run the job.", what, failureSummary(runErr))
+	cause := strings.TrimRight(failureSummary(runErr), ".: ")
+	body := fmt.Sprintf("## \U0001F425 CodeCanary\n\n\u26a0\ufe0f %s: %s.\n\nFix the cause and re-run the job.", what, cause)
 	if runURL != "" {
 		body += fmt.Sprintf(" [Workflow run](%s)", runURL)
 	}
+	body += "\n\nLater runs do not update this notice: the latest review and the `" + ReviewCommitStatusContext + "` status show the current result."
 	return body + "\n"
 }
 
