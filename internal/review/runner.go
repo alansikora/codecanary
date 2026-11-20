@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -266,8 +267,25 @@ func currentHEAD() (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// Run orchestrates the full review flow using the platform adapter.
+// Run orchestrates the full review flow using the platform adapter. A run
+// that fails is reported through the platform, so it never looks like a
+// clean review. A --fail-on threshold hit is a finished review, not a
+// failure.
 func Run(opts RunOptions) error {
+	err := run(opts)
+	if isRunFailure(err) && !opts.DryRun && opts.Platform != nil {
+		opts.Platform.ReportFailure(err, opts.ReplyOnly)
+	}
+	return err
+}
+
+// isRunFailure reports whether Run's error means the review did not finish.
+func isRunFailure(err error) bool {
+	var failOn *FailOnSeverityError
+	return err != nil && !errors.As(err, &failOn)
+}
+
+func run(opts RunOptions) error {
 	startTime := time.Now()
 	platform := opts.Platform
 	pr := opts.PR

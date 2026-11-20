@@ -236,6 +236,8 @@ In GitHub Actions, Publish also sets two step outputs, which the action re-expor
 
 With `--fail-on <severity>`, `Run()` returns a `FailOnSeverityError` when any finding is at or above that severity in the canonical order (`critical`, `bug`, `warning`, `suggestion`, `nitpick`), making the CLI exit non-zero so CI can gate on review results. The check runs *after* publishing, saving state and reporting usage, so a failing threshold never costs the PR its comments or its telemetry. The flag value is validated up front against `review.ValidateSeverity`, which reads the same `severityLevels` slice that config validation uses.
 
+When a run fails for any other reason (provider error, budget, a git or GitHub API error), `Run()` calls `platform.ReportFailure` before returning the error. **GitHub** posts a short PR comment saying the commit was not reviewed (or, for a reply-only run, that the latest replies were not processed), with `failureSummary`'s one-line cause and a link to the workflow run, and for full reviews sets the `CodeCanary / review` commit status on HEAD to `error`. The comment goes through `PostNotice` with a `<!-- codecanary:review-notice <kind> <sha> -->` key, so it is posted once per head, like the fix's notices. Without this, a failed run left the PR looking unreviewed with a required check stuck on the previous status. The full error stays in the workflow logs. **Local** does nothing: the error is already printed. A `FailOnSeverityError` is not a failure: that review finished and was published.
+
 ### 12. Telemetry
 
 If telemetry is enabled (opt-in), fires an anonymous event with aggregate stats: provider, platform, finding counts by severity, token counts, cost, and duration. No code content is sent.
