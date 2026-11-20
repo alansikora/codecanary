@@ -40,7 +40,7 @@ Abstracts LLM invocations. The core engine calls `provider.Run(ctx, prompt, opts
 
 ### Platform layer — `ReviewPlatform` interface
 
-Abstracts environment-specific operations: loading previous findings, publishing results, saving state, resolving threads, reporting usage.
+Abstracts environment-specific operations: loading previous findings, publishing results, saving state, resolving threads, reporting usage, reporting a failed run.
 
 **Implementations**: `GithubPlatform` (posts to PRs, reads threads via API), `LocalPlatform` (prints to terminal, persists state to `~/.codecanary/state/`).
 

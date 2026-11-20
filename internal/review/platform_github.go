@@ -438,3 +438,67 @@ func openThreadsStatus(threads []ReviewThread) (state, desc string) {
 	}
 	return commitStatusFromSummary(computeReviewSummary(open, nil, nil))
 }
+
+// reviewNoticeKey is the hidden marker that makes a review notice
+// once-per-head, like fixNoticeKey for the fix: kind is "failed" or
+// "replies-failed", sha the head it was posted for.
+func reviewNoticeKey(kind, sha string) string {
+	return fmt.Sprintf("<!-- codecanary:review-notice %s %s -->", kind, sha)
+}
+
+// buildReviewFailureNotice is the comment posted when a run did not finish.
+// The cause is failureSummary's one line, as in the fix's failure notice,
+// with trailing punctuation trimmed so the sentence ends cleanly; the full
+// error stays in the workflow logs. The notice is posted once per head and
+// never edited, so it points to where the current result is shown.
+func buildReviewFailureNotice(sha string, runErr error, replyOnly bool, runURL string) string {
+	what := fmt.Sprintf("The review did not finish on `%s`, so this commit was **not reviewed**", shortSHA(sha))
+	if replyOnly {
+		what = fmt.Sprintf("The latest replies on `%s` were not processed", shortSHA(sha))
+	}
+	cause := strings.TrimRight(failureSummary(runErr), ".: ")
+	body := fmt.Sprintf("## \U0001F425 CodeCanary\n\n\u26a0\ufe0f %s: %s.\n\nFix the cause and re-run the job.", what, cause)
+	if runURL != "" {
+		body += fmt.Sprintf(" [Workflow run](%s)", runURL)
+	}
+	body += "\n\nLater runs do not update this notice: the latest review and the `" + ReviewCommitStatusContext + "` status show the current result."
+	return body + "\n"
+}
+
+// ReportFailure posts a PR notice, once per head, and for full reviews an
+// "error" commit status on HEAD, so a failed run never looks like a clean
+// review.
+func (g *GithubPlatform) ReportFailure(runErr error, replyOnly bool) {
+	if g.Repo == "" || g.PRNumber == 0 {
+		return
+	}
+	sha, err := currentHEAD()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not report the failed run: %v\n", err)
+		return
+	}
+	kind := "failed"
+	if replyOnly {
+		kind = "replies-failed"
+	}
+	body := buildReviewFailureNotice(sha, runErr, replyOnly, workflowRunURL())
+	if err := g.PostNotice(reviewNoticeKey(kind, sha), body); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not post failure notice: %v\n", err)
+	}
+	if replyOnly {
+		// The last review's status on HEAD still describes the code.
+		return
+	}
+	if err := PostReviewCommitStatus(g.Repo, sha, "error", "review failed; see the workflow logs"); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not post %s commit status: %v\n", ReviewCommitStatusContext, err)
+	}
+}
+
+// workflowRunURL links the current GitHub Actions run, or "" outside Actions.
+func workflowRunURL() string {
+	server, repo, id := os.Getenv("GITHUB_SERVER_URL"), os.Getenv("GITHUB_REPOSITORY"), os.Getenv("GITHUB_RUN_ID")
+	if server == "" || repo == "" || id == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s/%s/actions/runs/%s", server, repo, id)
+}

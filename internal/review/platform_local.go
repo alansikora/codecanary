@@ -92,3 +92,5 @@ func (l *LocalPlatform) ReportUsage(tracker *UsageTracker) {
 func (l *LocalPlatform) SkipReview(_ *ReviewConfig, _ bool) (bool, error) {
 	return false, nil
 }
+
+func (l *LocalPlatform) ReportFailure(_ error, _ bool) {}

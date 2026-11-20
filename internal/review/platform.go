@@ -42,6 +42,13 @@ type ReviewPlatform interface {
 	// commit status, derived from the open threads, so a required check
 	// doesn't block the PR. Locally it never skips.
 	SkipReview(cfg *ReviewConfig, replyOnly bool) (bool, error)
+
+	// ReportFailure tells the PR that a run failed (best-effort), so a
+	// failed run never looks like a clean review or leaves a required check
+	// waiting with no explanation. On GitHub it posts a PR notice and, for
+	// full reviews, an "error" commit status on HEAD. Locally it does
+	// nothing: the error is already printed.
+	ReportFailure(runErr error, replyOnly bool)
 }
 
 // combineFindings strips the Status field from stillOpen findings (so persisted
