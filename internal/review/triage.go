@@ -844,12 +844,17 @@ func parseThreadResolution(output string, index int) ThreadResolution {
 	return ThreadResolution{Index: index, Resolved: false}
 }
 
-// validateResolutionReason enforces that code-change-only classifications
-// (no author reply) can only resolve with reason "code_change". If Claude
-// returns "acknowledged"/"dismissed"/"rebutted", treat it as unresolved.
+// validateResolutionReason enforces two rules the evaluator cannot override:
+//   - code-change-only classifications (no author reply) resolve only with
+//     reason "code_change"; "acknowledged"/"dismissed"/"rebutted" become
+//     unresolved.
+//   - a reply-only classification (the code at the finding did not change,
+//     and the prompt shows no diff) never resolves with "code_change",
+//     whatever the reply claims.
 func validateResolutionReason(res ThreadResolution, class ThreadClassification) ThreadResolution {
-	if res.Resolved && res.Reason != "code_change" &&
-		(class == TriageCodeChanged || class == TriageCrossFileChange) {
+	codeOnly := class == TriageCodeChanged || class == TriageCrossFileChange
+	if res.Resolved && ((codeOnly && res.Reason != "code_change") ||
+		(class == TriageHasReply && res.Reason == "code_change")) {
 		res.Resolved = false
 		res.Reason = ""
 	}
