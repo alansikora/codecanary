@@ -282,3 +282,41 @@ func (r *claudeJSONResponse) firstModel() string {
 	}
 	return ""
 }
+
+// ReviewCost summarizes a run's model usage for the review body: the tier
+// that picked the model, the review model, and the tokens and cost of every
+// call (review and triage).
+type ReviewCost struct {
+	Tier         string  `json:"tier,omitempty"`
+	ReviewModel  string  `json:"review_model"`
+	InputTokens  int     `json:"input_tokens"`
+	OutputTokens int     `json:"output_tokens"`
+	CostUSD      float64 `json:"cost_usd"`
+}
+
+// ReviewCost totals the tracked calls.
+func (u *UsageTracker) ReviewCost(tier, reviewModel string) *ReviewCost {
+	c := &ReviewCost{Tier: tier, ReviewModel: reviewModel}
+	for _, call := range u.Calls() {
+		c.InputTokens += call.InputTokens + call.CacheReadTokens + call.CacheCreateTokens
+		c.OutputTokens += call.OutputTokens
+		c.CostUSD += call.CostUSD
+	}
+	return c
+}
+
+// renderCostNote is the one-line cost footer of a posted review, "" for nil.
+func renderCostNote(c *ReviewCost) string {
+	if c == nil {
+		return ""
+	}
+	var parts []string
+	if c.Tier != "" {
+		parts = append(parts, fmt.Sprintf("tier `%s`", strings.ReplaceAll(c.Tier, "`", "'")))
+	}
+	parts = append(parts,
+		fmt.Sprintf("model `%s`", strings.ReplaceAll(c.ReviewModel, "`", "'")),
+		fmt.Sprintf("%s in / %s out tokens", formatTokenCount(c.InputTokens), formatTokenCount(c.OutputTokens)),
+		"cost "+formatCostUSD(c.CostUSD))
+	return "\n<sub>" + strings.Join(parts, " · ") + "</sub>\n"
+}

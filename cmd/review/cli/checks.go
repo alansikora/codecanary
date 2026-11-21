@@ -50,11 +50,17 @@ non-zero when a required check failed.`,
 			repo = detected
 		}
 
+		// Best-effort: a repo that renamed its status (status_context) has
+		// it left out too; the default name always is.
+		statusContext := ""
+		if cfg, err := review.LoadReviewConfig(""); err == nil {
+			statusContext = cfg.EffectiveStatusContext()
+		}
 		var rc review.RequiredChecks
 		if watch {
-			rc, err = review.WaitForRequiredChecks(repo, prNumber, time.Duration(timeoutMinutes)*time.Minute)
+			rc, err = review.WaitForRequiredChecks(repo, prNumber, statusContext, time.Duration(timeoutMinutes)*time.Minute)
 		} else {
-			rc, err = review.FetchRequiredChecks(repo, prNumber)
+			rc, err = review.FetchRequiredChecks(repo, prNumber, statusContext)
 		}
 		if err != nil {
 			return err

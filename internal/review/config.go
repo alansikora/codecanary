@@ -62,6 +62,21 @@ type ReviewConfig struct {
 	// refutes a review's findings and pushes the result. Nil or
 	// enabled: false (the default) leaves the fix to the developer.
 	Fix *FixConfig `yaml:"fix"`
+	// StatusContext names the commit status the review posts (default
+	// DefaultStatusContext).
+	StatusContext string `yaml:"status_context"`
+	// Tiers maps a PR label to how PRs carrying it are reviewed; DefaultTier
+	// applies to a PR with no tier label or more than one. See policy.go.
+	Tiers       map[string]TierConfig `yaml:"tiers"`
+	DefaultTier string                `yaml:"default_tier"`
+	// Intent reviews the diff against the PR body's intent section.
+	Intent *IntentConfig `yaml:"intent"`
+	// ContextFiles loads extra rule files when changed files match a path.
+	ContextFiles []ContextFilesRule `yaml:"context_files"`
+	// ResolveAcceptedReplies resolves a thread when triage accepts the
+	// author's reply (dismissed, acknowledged, rebutted) instead of keeping
+	// it open, and answers a reply it does not accept once.
+	ResolveAcceptedReplies bool `yaml:"resolve_accepted_replies"`
 }
 
 // FixConfig is the `fix:` block of config.yml. See docs/review-flow.md
@@ -390,6 +405,9 @@ func (c *ReviewConfig) Validate() error {
 	if err := c.validateFix(); err != nil {
 		return err
 	}
+	if err := c.validatePolicy(); err != nil {
+		return err
+	}
 	for i, r := range c.Rules {
 		if r.Severity != "" && !validSeverities[r.Severity] {
 			return fmt.Errorf("rule %d (%q): invalid severity %q", i, r.ID, r.Severity)
@@ -626,10 +644,10 @@ func LocalConfigPath() (string, error) {
 // is in .codecanary/), then walks up from cwd looking for
 // .codecanary/<filename> (covers the case where config is in ~/.codecanary/).
 // Returns nil (no error) if the file is not found.
-func findPolicyFile(configPath, filename string) (*ReviewPolicy, error) {
+func findPolicyFile(configPath, filename string, walkRepo bool) (*ReviewPolicy, error) {
 	// Try adjacent to the config file first.
 	adjacent := filepath.Join(filepath.Dir(configPath), filename)
-	if policy, err := loadReviewPolicyFile(adjacent); policy != nil || err != nil {
+	if policy, err := loadReviewPolicyFile(adjacent); policy != nil || err != nil || !walkRepo {
 		return policy, err
 	}
 	return findRepoPolicyFile(filename, adjacent)
@@ -709,6 +727,15 @@ func loadReviewPolicyFile(path string) (*ReviewPolicy, error) {
 // It also discovers the project's review.yml by walking up from cwd; if
 // present, its rules, context, and ignore fields override config.yml.
 func LoadConfig(path string) (*ReviewConfig, error) {
+	return loadConfig(path, true)
+}
+
+// loadConfig reads the config at path. Policy files are looked up next to
+// it and, when walkRepo is set, in the .codecanary/ directories above the
+// current directory. A config read from a copy of the base branch passes
+// walkRepo false, so a policy file missing on the base is never filled in
+// from the PR's checkout.
+func loadConfig(path string, walkRepo bool) (*ReviewConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading config file: %w", err)
@@ -721,11 +748,11 @@ func LoadConfig(path string) (*ReviewConfig, error) {
 
 	// Merge optional review policy files (rules, context, ignore) from repo.
 	// review.local.yml fields are appended on top of review.yml.
-	policy, err := findPolicyFile(path, "review.yml")
+	policy, err := findPolicyFile(path, "review.yml", walkRepo)
 	if err != nil {
 		return nil, err
 	}
-	localPolicy, err := findPolicyFile(path, "review.local.yml")
+	localPolicy, err := findPolicyFile(path, "review.local.yml", walkRepo)
 	if err != nil {
 		return nil, err
 	}

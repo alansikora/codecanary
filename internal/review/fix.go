@@ -326,7 +326,7 @@ func stopAtLimit(platform FixPlatform, target *FixTarget, findings []PRFinding, 
 	}
 	desc += fmt.Sprintf("; stopped after %d fix%s", limit.Count, pluralEs(limit.Count))
 	if err := platform.SetReviewStatus(target.HeadSHA, state, desc); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not set the %s status: %v\n", ReviewCommitStatusContext, err)
+		fmt.Fprintf(os.Stderr, "Warning: could not set the review status: %v\n", err)
 	}
 }
 

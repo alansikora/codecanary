@@ -40,13 +40,13 @@ func TestGithubEventAction(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("GITHUB_EVENT_PATH", path)
-	if got := githubEventAction(); got != "synchronize" {
-		t.Errorf("githubEventAction = %q, want synchronize", got)
+	if got := githubEvent().Action; got != "synchronize" {
+		t.Errorf("githubEvent().Action = %q, want synchronize", got)
 	}
 
 	t.Setenv("GITHUB_EVENT_PATH", "")
-	if got := githubEventAction(); got != "" {
-		t.Errorf("githubEventAction without an event = %q, want empty", got)
+	if got := githubEvent().Action; got != "" {
+		t.Errorf("githubEvent() without an event = %q, want empty", got)
 	}
 }
 

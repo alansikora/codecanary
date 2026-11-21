@@ -2,6 +2,7 @@ package review
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -56,6 +57,9 @@ const (
 	reviewMarkerSuffix  = " -->"
 	findingMarkerPrefix = "<!-- codecanary:finding "
 	ackMarkerPrefix     = "<!-- codecanary:ack:"
+	// rejectedReplyMarker marks the bot's answer to an author reply triage
+	// did not accept (resolve_accepted_replies).
+	rejectedReplyMarker = "<!-- codecanary:reply-rejected -->"
 	legacyAckPrefix     = "<!-- clanopy:ack:"
 )
 
@@ -67,6 +71,9 @@ type PRData struct {
 	Author       string
 	BaseBranch   string
 	HeadBranch   string
+	BaseSHA      string   // base branch tip the PR targets (GitHub mode)
+	HeadSHA      string   // PR head commit (GitHub mode)
+	Labels       []string // PR labels (GitHub mode)
 	Diff         string
 	FullDiff     string // unfiltered diff for finding validation (set by prepareReview)
 	Files        []string
@@ -92,7 +99,12 @@ type ghPRView struct {
 	} `json:"author"`
 	BaseRefName string `json:"baseRefName"`
 	HeadRefName string `json:"headRefName"`
-	Files       []struct {
+	BaseRefOid  string `json:"baseRefOid"`
+	HeadRefOid  string `json:"headRefOid"`
+	Labels      []struct {
+		Name string `json:"name"`
+	} `json:"labels"`
+	Files []struct {
 		Path string `json:"path"`
 	} `json:"files"`
 }
@@ -104,7 +116,7 @@ func FetchPR(repo string, number int) (*PRData, error) {
 	// Fetch PR metadata as JSON.
 	viewOut, err := runGH("gh pr view", "pr", "view", numStr,
 		"--repo", repo,
-		"--json", "title,body,author,baseRefName,headRefName,files",
+		"--json", "title,body,author,baseRefName,headRefName,baseRefOid,headRefOid,labels,files",
 	)
 	if err != nil {
 		return nil, err
@@ -127,6 +139,11 @@ func FetchPR(repo string, number int) (*PRData, error) {
 		files[i] = f.Path
 	}
 
+	labels := make([]string, len(view.Labels))
+	for i, l := range view.Labels {
+		labels[i] = l.Name
+	}
+
 	return &PRData{
 		Number:     number,
 		Title:      view.Title,
@@ -134,6 +151,9 @@ func FetchPR(repo string, number int) (*PRData, error) {
 		Author:     view.Author.Login,
 		BaseBranch: view.BaseRefName,
 		HeadBranch: view.HeadRefName,
+		BaseSHA:    view.BaseRefOid,
+		HeadSHA:    view.HeadRefOid,
+		Labels:     labels,
 		Diff:       string(diffOut),
 		Files:      files,
 	}, nil
@@ -351,21 +371,15 @@ func PostReview(repo string, prNumber int, result *ReviewResult, prFiles []strin
 	return nil
 }
 
-// ReviewCommitStatusContext is the commit-status context the review bot
-// writes when a review run completes. Using a stable string lets teams
-// require it in branch protection — "CodeCanary / review must be green
-// before merge." Matches the context used by `codecanary signoff`, so
-// both the bot (on PRs with the workflow) and a local signoff can
-// satisfy the same required check.
-const ReviewCommitStatusContext = "CodeCanary / review"
-
 // PostReviewCommitStatus POSTs a commit status on the given SHA summarising
 // the review outcome. state is "success" when all findings are resolved or
 // handled by the author, "failure" otherwise. Description is shown on the
 // PR checks list, so keep it short and human-readable. Errors are returned
 // so the caller can log them — a failed status post should not abort the
 // larger Publish flow, since the review itself has already been posted.
-func PostReviewCommitStatus(repo, sha, state, description string) error {
+// statusContext names the status (status_context, see
+// ReviewConfig.EffectiveStatusContext); "" means DefaultStatusContext.
+func PostReviewCommitStatus(repo, statusContext, sha, state, description string) error {
 	if sha == "" {
 		return fmt.Errorf("commit status requires a SHA")
 	}
@@ -375,7 +389,7 @@ func PostReviewCommitStatus(repo, sha, state, description string) error {
 	}
 	payload := map[string]string{
 		"state":       state,
-		"context":     ReviewCommitStatusContext,
+		"context":     cmp.Or(statusContext, DefaultStatusContext),
 		"description": description,
 	}
 	payloadJSON, err := json.Marshal(payload)
@@ -585,6 +599,30 @@ type ghReview struct {
 	Body   string `json:"body"`
 }
 
+// fetchPRReviews returns the PR's reviews, oldest first.
+func fetchPRReviews(repo string, prNumber int) ([]ghReview, error) {
+	owner, name, err := parseRepoSlug(repo)
+	if err != nil {
+		return nil, err
+	}
+	apiPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, name, prNumber)
+	out, err := exec.Command("gh", "api", "--paginate", apiPath).Output()
+	if err != nil {
+		return nil, fmt.Errorf("fetching PR reviews: %w", err)
+	}
+	var reviews []ghReview
+	// --paginate concatenates one JSON array per page.
+	dec := json.NewDecoder(bytes.NewReader(out))
+	for dec.More() {
+		var page []ghReview
+		if err := dec.Decode(&page); err != nil {
+			return nil, fmt.Errorf("parsing PR reviews: %w", err)
+		}
+		reviews = append(reviews, page...)
+	}
+	return reviews, nil
+}
+
 // LatestCodecanaryReview captures the identity and body of the most recent
 // CodeCanary top-level review, together with the commit SHA embedded in its
 // hidden marker. Returned by FetchLatestCodecanaryReview for the
@@ -600,20 +638,9 @@ type LatestCodecanaryReview struct {
 // embedded in that marker. Returns (nil, nil) when no matching review
 // exists. A non-nil error is returned only for transport/parsing failures.
 func FetchLatestCodecanaryReview(repo string, prNumber int) (*LatestCodecanaryReview, error) {
-	owner, name, err := parseRepoSlug(repo)
+	reviews, err := fetchPRReviews(repo, prNumber)
 	if err != nil {
 		return nil, err
-	}
-
-	apiPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, name, prNumber)
-	out, err := exec.Command("gh", "api", apiPath).Output()
-	if err != nil {
-		return nil, fmt.Errorf("fetching PR reviews: %w", err)
-	}
-
-	var reviews []ghReview
-	if err := json.Unmarshal(out, &reviews); err != nil {
-		return nil, fmt.Errorf("parsing PR reviews: %w", err)
 	}
 
 	// Walk newest → oldest so we return the latest CodeCanary review.

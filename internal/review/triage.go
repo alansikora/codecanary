@@ -474,7 +474,7 @@ func isAckReply(body string) bool {
 func hasNewHumanReply(t ReviewThread, botLogin string) bool {
 	lastAckIdx := -1
 	for i, r := range t.Replies {
-		if r.Author == botLogin && isAckReply(r.Body) {
+		if r.Author == botLogin && (isAckReply(r.Body) || strings.Contains(r.Body, rejectedReplyMarker)) {
 			lastAckIdx = i
 		}
 	}
@@ -556,7 +556,7 @@ func buildReplyPrompt(t TriagedThread, cfg *ReviewConfig) string {
 	b.WriteString("- **Acknowledged**: Reply indicates the finding is intentional, accepted, or tracked elsewhere (e.g. \"intentional\", \"will fix in a future PR\", \"tracked in issue #N\").\n")
 	b.WriteString("- **Rebutted**: Reply provides concrete technical reasoning showing the finding is not applicable. Vague disagreement (\"I don't think so\") does NOT qualify — the reply must cite specific technical details, framework behavior, or project constraints.\n")
 	b.WriteString("- **Not resolved**: Reply is a question, vague disagreement, or does not address the finding.\n\n")
-	writeResolutionFormat(&b)
+	writeResolutionFormat(&b, cfg != nil && cfg.ResolveAcceptedReplies)
 
 	return b.String()
 }
@@ -590,7 +590,7 @@ func buildCodeChangeReplyPrompt(t TriagedThread, cfg *ReviewConfig) string {
 	b.WriteString("- **Acknowledged**: Reply indicates the finding is intentional, accepted, or tracked elsewhere (e.g. \"intentional\", \"will fix in a future PR\", \"tracked in issue #N\").\n")
 	b.WriteString("- **Rebutted**: Reply provides concrete technical reasoning showing the finding is not applicable. Vague disagreement (\"I don't think so\") does NOT qualify — the reply must cite specific technical details, framework behavior, or project constraints.\n")
 	b.WriteString("- **Not resolved**: The issue is still in the code, and the reply is a question, vague disagreement, or does not address the finding.\n\n")
-	writeResolutionFormat(&b)
+	writeResolutionFormat(&b, cfg != nil && cfg.ResolveAcceptedReplies)
 
 	return b.String()
 }
@@ -706,9 +706,15 @@ func writeReplies(b *strings.Builder, t ReviewThread, botLogin string) {
 
 // writeResolutionFormat writes the expected JSON response format with all reason options.
 // Used for prompts where author replies are present (TriageHasReply, TriageCodeChangedReply).
-func writeResolutionFormat(b *strings.Builder) {
+// explainRejection (resolve_accepted_replies) asks for the reason a reply
+// does not settle the finding; it is posted to the author once.
+func writeResolutionFormat(b *strings.Builder, explainRejection bool) {
 	b.WriteString("Return a JSON object inside a ```json code fence:\n")
 	b.WriteString("- If resolved: `{\"resolved\": true, \"reason\": \"<reason>\", \"rationale\": \"<one sentence>\"}` — `reason` is one of `\"code_change\"`, `\"dismissed\"`, `\"acknowledged\"`, `\"rebutted\"`. `rationale` must be a single sentence naming the specific change, reply, or reasoning that resolved the finding (e.g. \"Removed the three `original_error_*` fields from the service logger\").\n")
+	if explainRejection {
+		b.WriteString("- If NOT resolved: `{\"resolved\": false, \"rationale\": \"<one sentence>\"}` — `rationale` tells the author, in one sentence addressed to them, what the reply leaves unanswered. It is posted on the thread.\n")
+		return
+	}
 	b.WriteString("- If NOT resolved: `{\"resolved\": false}`\n")
 }
 
@@ -941,6 +947,23 @@ func countNonSkipped(triaged []TriagedThread) int {
 		}
 	}
 	return n
+}
+
+// rejectedReplies returns the threads whose author reply triage evaluated
+// and did not accept, with the evaluator's rationale. Evaluations that
+// failed are left out: nothing was decided.
+func rejectedReplies(triaged []TriagedThread, resolutions []ThreadResolution) []fixedThread {
+	var out []fixedThread
+	for i, r := range resolutions {
+		if i >= len(triaged) || r.Resolved || r.Error != nil {
+			continue
+		}
+		switch triaged[i].Class {
+		case TriageHasReply, TriageCodeChangedReply:
+			out = append(out, fixedThread{Index: r.Index, Rationale: r.Rationale})
+		}
+	}
+	return out
 }
 
 // toFixedThreads converts thread resolutions to the fixedThread type used by downstream code.

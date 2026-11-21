@@ -282,6 +282,21 @@ func codeFence(content string) string {
 	return strings.Repeat("`", n)
 }
 
+// The tags that open the first visible line of every finding comment, so a
+// script can tell blocking from non-blocking findings with a grep.
+const (
+	blockingTag    = "[blocking]"
+	nonBlockingTag = "[non-blocking]"
+)
+
+// blockingLabel returns the tag for a finding of the given severity.
+func blockingLabel(severity string) string {
+	if isBlocking(severity) {
+		return blockingTag
+	}
+	return nonBlockingTag
+}
+
 // FormatFindingComment renders a single finding as markdown for an inline PR
 // review comment. The finding data is embedded as JSON in the HTML marker so it
 // can be round-tripped without lossy body parsing.
@@ -295,7 +310,7 @@ func FormatFindingComment(f *Finding) string {
 		fmt.Fprintf(&b, "%s%s\n", findingMarkerPrefix, reviewMarkerSuffix)
 	}
 	icon := severityIcon(f.Severity)
-	fmt.Fprintf(&b, "%s **%s** \u2014 `%s`\n\n", icon, f.Severity, f.ID)
+	fmt.Fprintf(&b, "%s %s **%s** \u2014 `%s`\n\n", blockingLabel(f.Severity), icon, f.Severity, f.ID)
 	fmt.Fprintf(&b, "%s\n", f.Description)
 
 	if f.Suggestion != "" {
