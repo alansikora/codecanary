@@ -32,17 +32,17 @@ type ghCheck struct {
 // it posts, or the review job of its workflow. Waiting on those would
 // deadlock a draft (CodeCanary doesn't run there) or wait on the review the
 // caller is about to request.
-func isCodecanaryCheck(c ghCheck) bool {
-	return c.Name == ReviewCommitStatusContext ||
+func isCodecanaryCheck(c ghCheck, statusContext string) bool {
+	return c.Name == DefaultStatusContext || (statusContext != "" && c.Name == statusContext) ||
 		(strings.EqualFold(c.Name, reviewCheckName) && strings.EqualFold(c.Workflow, "CodeCanary"))
 }
 
 // requiredChecksState folds required checks into one state. Skipped checks
 // count as passed, as GitHub's merge gate treats them.
-func requiredChecksState(checks []ghCheck) RequiredChecks {
+func requiredChecksState(checks []ghCheck, statusContext string) RequiredChecks {
 	rc := RequiredChecks{State: "pass"}
 	for _, c := range checks {
-		if isCodecanaryCheck(c) {
+		if isCodecanaryCheck(c, statusContext) {
 			continue
 		}
 		switch c.Bucket {
@@ -62,8 +62,9 @@ func requiredChecksState(checks []ghCheck) RequiredChecks {
 }
 
 // FetchRequiredChecks returns the state of the PR's required checks, leaving
-// out CodeCanary's own. A repo with no required checks reports "pass".
-func FetchRequiredChecks(repo string, prNumber int) (RequiredChecks, error) {
+// out CodeCanary's own (statusContext names its commit status; the default
+// name is always left out). A repo with no required checks reports "pass".
+func FetchRequiredChecks(repo string, prNumber int, statusContext string) (RequiredChecks, error) {
 	args := []string{"pr", "checks", fmt.Sprintf("%d", prNumber),
 		"--required", "--json", "name,bucket,workflow"}
 	if repo != "" {
@@ -86,14 +87,14 @@ func FetchRequiredChecks(repo string, prNumber int) (RequiredChecks, error) {
 	if err := json.Unmarshal(out, &checks); err != nil {
 		return RequiredChecks{}, fmt.Errorf("parsing pr checks: %w", err)
 	}
-	return requiredChecksState(checks), nil
+	return requiredChecksState(checks, statusContext), nil
 }
 
 // WaitForRequiredChecks polls until the PR's required checks (other than
 // CodeCanary's) pass or one fails. A zero timeout waits indefinitely.
-func WaitForRequiredChecks(repo string, prNumber int, timeout time.Duration) (RequiredChecks, error) {
+func WaitForRequiredChecks(repo string, prNumber int, statusContext string, timeout time.Duration) (RequiredChecks, error) {
 	return waitForRequiredChecks(func() (RequiredChecks, error) {
-		return FetchRequiredChecks(repo, prNumber)
+		return FetchRequiredChecks(repo, prNumber, statusContext)
 	}, prNumber, timeout, 15*time.Second, os.Stderr)
 }
 

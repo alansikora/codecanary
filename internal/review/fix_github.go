@@ -136,8 +136,10 @@ func (g *GithubPlatform) OpenThreadsStatus() (state, desc string, err error) {
 	return state, desc, nil
 }
 
+func (g *GithubPlatform) SetStatusContext(name string) { g.StatusContext = name }
+
 func (g *GithubPlatform) SetReviewStatus(sha, state, desc string) error {
-	return PostReviewCommitStatus(g.Repo, sha, state, desc)
+	return PostReviewCommitStatus(g.Repo, g.statusContext(), sha, state, desc)
 }
 
 func (g *GithubPlatform) ReplyToFinding(f PRFinding, body string) error {
@@ -279,13 +281,19 @@ func fetchReviewStatusDescription(repo, sha string) (string, error) {
 	if err := json.Unmarshal(out, &combined); err != nil {
 		return "", fmt.Errorf("parsing commit status: %w", err)
 	}
-	// The combined status holds the latest status per context.
+	// The combined status holds the latest status per context. The review
+	// status may be renamed (status_context), so take the one that carries
+	// a fix-limit suffix, else the default-named one.
+	desc := ""
 	for _, st := range combined.Statuses {
-		if st.Context == ReviewCommitStatusContext {
+		if stoppedStatusRe.MatchString(st.Description) {
 			return st.Description, nil
 		}
+		if st.Context == DefaultStatusContext {
+			desc = st.Description
+		}
 	}
-	return "", nil
+	return desc, nil
 }
 
 // Push pushes HEAD to the head branch with the installation token in

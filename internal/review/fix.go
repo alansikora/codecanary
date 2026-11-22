@@ -26,6 +26,8 @@ type FixPlatform interface {
 	OpenThreadsStatus() (state, desc string, err error)
 	// SetReviewStatus sets the review commit status on sha.
 	SetReviewStatus(sha, state, desc string) error
+	// SetStatusContext names the review commit status (status_context).
+	SetStatusContext(name string)
 	// ReplyToFinding posts body in the finding's review thread.
 	ReplyToFinding(f PRFinding, body string) error
 	// PostNotice posts body as a pull request comment unless a comment
@@ -125,6 +127,7 @@ func RunFix(opts FixOptions) error {
 		return nil
 	}
 	platform := opts.Platform
+	platform.SetStatusContext(cfg.EffectiveStatusContext())
 
 	target, err := platform.LoadFixTarget()
 	if err != nil {
@@ -326,7 +329,7 @@ func stopAtLimit(platform FixPlatform, target *FixTarget, findings []PRFinding, 
 	}
 	desc += fmt.Sprintf("; stopped after %d fix%s", limit.Count, pluralEs(limit.Count))
 	if err := platform.SetReviewStatus(target.HeadSHA, state, desc); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not set the %s status: %v\n", ReviewCommitStatusContext, err)
+		fmt.Fprintf(os.Stderr, "Warning: could not set the review status: %v\n", err)
 	}
 }
 

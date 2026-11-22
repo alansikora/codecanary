@@ -71,13 +71,14 @@ block merges until a clean local review exists for the tip commit.`,
 
 		statusState, desc := review.CommitStatusForFindings(state.Findings)
 
-		if err := review.PostReviewCommitStatus(slug, sha, statusState, desc); err != nil {
+		statusContext := review.RepoStatusContext()
+		if err := review.PostReviewCommitStatus(slug, statusContext, sha, statusState, desc); err != nil {
 			return fmt.Errorf("posting commit status: %w", err)
 		}
 
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 			"✓ %s = %s on %s@%s (%s)\n",
-			review.ReviewCommitStatusContext, statusState, slug, shortSHA(sha), desc)
+			statusContext, statusState, slug, shortSHA(sha), desc)
 		return nil
 	},
 }

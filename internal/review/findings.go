@@ -41,6 +41,11 @@ type ReviewResult struct {
 	// Coverage lists changed files the review did not see in full; nil when
 	// every file was reviewed with its full contents.
 	Coverage *ReviewCoverage `json:"coverage,omitempty"`
+	// Cost is what this run's model calls used, shown on the review.
+	Cost *ReviewCost `json:"cost,omitempty"`
+	// RulesChanged lists PR files that are rule sources, when the review
+	// read the rules from the base branch instead (see rulesource.go).
+	RulesChanged []string `json:"rules_changed,omitempty"`
 }
 
 // jsonFenceRe matches a ```json ... ``` code fence.

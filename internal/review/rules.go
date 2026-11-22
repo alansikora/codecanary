@@ -29,22 +29,14 @@ type claudeRule struct {
 	Paths       []string `yaml:"paths"`
 }
 
-// ReadClaudeRules discovers Claude Code path-scoped rule files under
+// readClaudeRulesFrom discovers Claude Code path-scoped rule files under
 // .claude/rules/*.md and returns a map of path → content for the rules that
 // apply to the changed files. A rule applies when a changed file matches one
 // of its `paths` globs; a rule with no `paths` frontmatter always applies
 // (matching Claude Code semantics). Results share a byte budget independent of
 // the CLAUDE.md caps. When prFiles is empty, only unscoped rules load.
-func ReadClaudeRules(prFiles []string) map[string]string {
-	root, err := os.Getwd()
-	if err != nil {
-		return map[string]string{}
-	}
-	return readClaudeRulesFrom(root, prFiles)
-}
-
-// readClaudeRulesFrom is the testable core of ReadClaudeRules; it resolves
-// candidate paths relative to root, which must be an absolute path.
+//
+// Candidate paths resolve relative to root, which must be an absolute path.
 func readClaudeRulesFrom(root string, prFiles []string) map[string]string {
 	rules := make(map[string]string)
 

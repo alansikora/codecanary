@@ -587,7 +587,8 @@ func (p *stickyAckPanicProvider) Run(_ context.Context, _ string, _ RunOpts) (*p
 
 func TestResolutionFormat_RequestsRationale(t *testing.T) {
 	for _, fn := range map[string]func(*strings.Builder){
-		"writeResolutionFormat":           writeResolutionFormat,
+		"writeResolutionFormat":           func(b *strings.Builder) { writeResolutionFormat(b, false) },
+		"writeResolutionFormat/explain":   func(b *strings.Builder) { writeResolutionFormat(b, true) },
 		"writeCodeChangeResolutionFormat": writeCodeChangeResolutionFormat,
 	} {
 		var b strings.Builder

@@ -136,17 +136,21 @@ func computeReviewSummary(threads []ReviewThread, fixed []fixedThread, newFindin
 // required check: suggestions and nitpicks stay visible on the PR but don't
 // make the author push again. Everything classified by triage (resolved by
 // code, file removed, dismissed, acknowledged, rebutted) counts as handled.
+//
+// The description is always statusCounts, so a script can read the counts.
 func commitStatusFromSummary(summary ReviewSummary) (state, desc string) {
+	nonBlocking := max(summary.NewFindings+summary.StillOpen-summary.Blocking, 0)
+	desc = statusCounts(summary.Blocking, nonBlocking)
 	if summary.Blocking > 0 {
-		return "failure", fmt.Sprintf("%d unresolved blocking finding%s", summary.Blocking, pluralS(summary.Blocking))
+		return "failure", desc
 	}
-	if unresolved := summary.NewFindings + summary.StillOpen; unresolved > 0 {
-		return "success", fmt.Sprintf("%d non-blocking finding%s open", unresolved, pluralS(unresolved))
-	}
-	if summary.ResolvedByCode+summary.FileRemoved+summary.Dismissed+summary.Acknowledged+summary.Rebutted > 0 {
-		return "success", "all findings resolved"
-	}
-	return "success", "no findings"
+	return "success", desc
+}
+
+// statusCounts is the commit-status description: the open findings, split
+// by whether they block.
+func statusCounts(blocking, nonBlocking int) string {
+	return fmt.Sprintf("blocking: %d, non-blocking: %d", blocking, nonBlocking)
 }
 
 // CommitStatusForFindings maps the open findings of a local review to the

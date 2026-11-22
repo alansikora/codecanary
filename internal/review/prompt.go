@@ -61,10 +61,14 @@ func BuildPrompt(pr *PRData, cfg *ReviewConfig, startIndex int, projectDocs map[
 	}
 	fmt.Fprintf(&b, "<pr-title>%s</pr-title>\n", escapeAllTags(pr.Title))
 	fmt.Fprintf(&b, "**Author:** %s\n", pr.Author)
-	if pr.Body != "" {
+	// Under intent review only the intent and testing sections of the body
+	// reach the prompt (writeIntentSection); the rest is left out.
+	intent := ExtractIntent(pr, cfg)
+	if pr.Body != "" && intent == nil {
 		fmt.Fprintf(&b, "<pr-body>\n%s\n</pr-body>\n", escapeAllTags(pr.Body))
 	}
 	b.WriteString("\n")
+	writeIntentSection(&b, intent, false)
 
 	// Context from config.
 	if cfg != nil && cfg.Context != "" {
@@ -132,7 +136,8 @@ type ResolvedContext struct {
 // BuildIncrementalPrompt reviews only new code, avoiding duplicate reports.
 // startIndex is the number of existing findings so fix_ref numbering continues.
 // resolved provides context about recently resolved findings to prevent ping-ponging.
-func BuildIncrementalPrompt(diff string, cfg *ReviewConfig, knownIssues []ReviewThread, prNumber int, startIndex int, fileContents map[string]string, files []string, resolved []ResolvedContext, projectDocs map[string]string) string {
+// intent is the PR's intent under intent review, nil otherwise.
+func BuildIncrementalPrompt(diff string, cfg *ReviewConfig, knownIssues []ReviewThread, prNumber int, startIndex int, fileContents map[string]string, files []string, resolved []ResolvedContext, projectDocs map[string]string, intent *PRIntent) string {
 	var b strings.Builder
 
 	b.WriteString("You are a code reviewer. Review ONLY the following incremental changes and report NEW findings.\n")
@@ -169,6 +174,8 @@ func BuildIncrementalPrompt(diff string, cfg *ReviewConfig, knownIssues []Review
 		}
 		b.WriteString("\n")
 	}
+
+	writeIntentSection(&b, intent, true)
 
 	writeKnownIssuesSection(&b, knownIssues)
 
@@ -347,7 +354,7 @@ const maxKnownIssueReply = 600
 func lastAuthorReply(t ReviewThread) string {
 	for i := len(t.Replies) - 1; i >= 0; i-- {
 		body := strings.TrimSpace(t.Replies[i].Body)
-		if body == "" || isAckReply(body) {
+		if body == "" || isAckReply(body) || strings.Contains(body, rejectedReplyMarker) {
 			continue
 		}
 		if len(body) > maxKnownIssueReply {

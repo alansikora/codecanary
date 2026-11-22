@@ -23,7 +23,7 @@ func TestRequiredChecksState(t *testing.T) {
 		{"a non-CodeCanary job named review still counts", []ghCheck{{Name: "review", Bucket: "pending", Workflow: "CI"}}, "pending"},
 	}
 	for _, c := range cases {
-		if got := requiredChecksState(c.checks); got.State != c.want {
+		if got := requiredChecksState(c.checks, ""); got.State != c.want {
 			t.Errorf("%s: state = %q (%+v), want %q", c.name, got.State, got, c.want)
 		}
 	}

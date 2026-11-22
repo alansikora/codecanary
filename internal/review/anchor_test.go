@@ -173,8 +173,8 @@ func TestOpenQuestionsDoNotCount(t *testing.T) {
 	if s.NewFindings != 0 || s.Blocking != 0 {
 		t.Errorf("summary = %+v, want no new or blocking findings", s)
 	}
-	if state, desc := commitStatusFromSummary(s); state != "success" || desc != "no findings" {
-		t.Errorf("commit status = %s/%q, want success/no findings", state, desc)
+	if state, desc := commitStatusFromSummary(s); state != "success" || desc != "blocking: 0, non-blocking: 0" {
+		t.Errorf("commit status = %s/%q, want success/blocking: 0, non-blocking: 0", state, desc)
 	}
 	if len(questions) != 1 {
 		t.Fatalf("want 1 question, got %d", len(questions))
@@ -236,7 +236,7 @@ func TestReviewBodiesRenderOpenQuestions(t *testing.T) {
 
 func TestPromptsDescribeNeedsVerification(t *testing.T) {
 	full := BuildPrompt(&PRData{Number: 1, Files: []string{"a.go"}, Diff: "diff"}, nil, 0, nil)
-	inc := BuildIncrementalPrompt("diff", nil, nil, 1, 0, nil, []string{"a.go"}, nil, nil)
+	inc := BuildIncrementalPrompt("diff", nil, nil, 1, 0, nil, []string{"a.go"}, nil, nil, nil)
 	for name, p := range map[string]string{"full": full, "incremental": inc} {
 		if !strings.Contains(p, "`needs_verification` (boolean, optional)") {
 			t.Errorf("%s prompt does not document needs_verification", name)

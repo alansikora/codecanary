@@ -4,11 +4,14 @@
 # Template version. CodeCanary compares it with the template it ships and
 # adds a note to its reviews when this file is older. Keep this line when
 # customizing; update it only when you take the changes from a newer template.
-# codecanary-workflow: v4
+# codecanary-workflow: v5
 name: CodeCanary
 on:
   pull_request_target:
-    types: [opened, reopened, synchronize, ready_for_review]
+    # labeled/unlabeled/edited only review when they change what the review
+    # depends on (a `tiers:` label; the body, under `intent:`) on a head that
+    # has not been reviewed yet; otherwise the run exits without a model call.
+    types: [opened, reopened, synchronize, ready_for_review, labeled, unlabeled, edited]
   pull_request_review_comment:
     types: [created]
 

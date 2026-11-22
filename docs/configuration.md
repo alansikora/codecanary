@@ -43,6 +43,25 @@ max_total_size: 512000          # total file content limit in bytes (default 500
                                 # files over either limit are reviewed from their diff only
 max_diff_size: 307200           # diff limit in bytes; the largest file diffs are trimmed past it (default 300KB)
 
+status_context: CodeCanary / review  # name of the review's commit status (see "Commit status")
+
+tiers:                          # per-PR review by label (see "Review tiers")
+  "tier:low":    { review: false }
+  "tier:medium": { review_model: sonnet }
+  "tier:high":   { review_model: opus }
+default_tier: "tier:high"       # required with tiers: PRs with no tier label, or several
+
+intent:                         # review against the PR body's intent (see "Reviewing against the PR's intent")
+  enabled: false
+  heading: Intent               # the `## Intent` section (default)
+  testing_heading: Testing      # the `## Testing` section (default)
+
+context_files:                  # extra rule files by changed path (see "Context files")
+  - paths: ["**"]
+    files: ["principles.md"]
+
+resolve_accepted_replies: false # resolve a thread when its reply is accepted; answer a rejected reply once
+
 fix:                            # CI fix job (see "Fixing findings in CI")
   enabled: false                # default false; needs review_on: push
   provider: claude              # claude or codex (default: provider)
@@ -389,10 +408,85 @@ The workflow runs on `pull_request_target`, so a PR from a fork is reviewed with
 
 | What the fork controls | Guard |
 |---|---|
-| CodeCanary config (`.codecanary/config.yml`, `review.yml`, `review.local.yml`, legacy `.codecanary.yml`) | Taken from the base branch. A file the base branch doesn't have is deleted, so a fork can't add one, for example a `config.yml` with its own `claude_args` or `claude_review_tools`. |
+| CodeCanary config (`.codecanary/config.yml`, `review.yml`, `review.local.yml`, legacy `.codecanary.yml`), `CLAUDE.md` files, `.claude/rules`, `context_files` | Read from the base commit, for every PR ([rules come from the base branch](#rules-come-from-the-base-branch)). A file the base branch doesn't have is not read, so a fork can't add one, for example a `config.yml` with its own `claude_args` or `claude_review_tools`. The workflow also pins the config files on fork PRs. |
 | Claude Code project settings (`.claude/settings*.json`: hooks, `env`, `apiKeyHelper`) and `.mcp.json` | Every Claude CLI call ignores them ([project config isolation](#project-config-isolation)), and the workflow also deletes them on fork PRs, so the protection doesn't rest on a single CLI flag. |
 | Git credentials | On fork PRs the checkout doesn't persist the token in `.git/config` (`persist-credentials` is false for forks). |
 | Reviewer tools | Off unless the base branch's config enables `claude_review_tools`. A fork can't turn them on. |
 | Symbolic links | A PR file that is a symlink is reviewed from its diff only; its target is never read. Project docs and `.claude/rules` files are never read through a symlink that leaves the repository or points into `.git` (`readRepoFile`); such a file is skipped with a log line. Links inside the repository, like `CLAUDE.md -> AGENTS.md`, still load as project docs. Otherwise a fork could commit `notes.md -> /proc/self/environ` and get the process environment, provider secret included, into the prompt. The workflow also removes `.codecanary` / `.claude` symlinks before pinning config, so pinning can't write or delete outside the checkout. |
 
-What a fork can still do is put text in its diff, CLAUDE.md files or `.claude/rules` that tries to steer the review, for example to hide a problem or raise a false one. Without tools or project settings, the reviewer can't read secrets or run anything, so the most a fork can do is shape the review's text.
+What a fork can still do is put text in its diff or PR body that tries to steer the review, for example to hide a problem or raise a false one. Without tools or project settings, the reviewer can't read secrets or run anything, so the most a fork can do is shape the review's text.
+
+## Rules come from the base branch
+
+In GitHub mode every file that sets the review's rules is read from the PR's base commit, never from its head: the config and policy files, every `CLAUDE.md`, `.claude/rules/*.md`, and the files `context_files` lists. A PR cannot change the rules it is reviewed by. A PR that edits any of them is reviewed as code under the base branch's copies, its review carries a note listing those files, and the change applies once it merges. That includes `fix.enabled` and `status_context`. Local reviews (`codecanary review` without `--post`) read the working tree as before.
+
+A repository whose base branch has no `.codecanary/config.yml` gets an `error` status (`config error: ...`); the setup PR that adds the workflow is still detected and skipped.
+
+## Commit status
+
+Each review run posts one commit status on the head commit it reviews, named by `status_context` (default `CodeCanary / review`):
+
+| State | Description | When |
+| --- | --- | --- |
+| `pending` | `review running` | a review of this head is running |
+| `success` | `blocking: 0, non-blocking: M` | reviewed; no blocking finding open |
+| `failure` | `blocking: N, non-blocking: M` | reviewed; N blocking findings open (or the intent gate) |
+| `success` | `skipped: tier low` | the PR's tier has `review: false` |
+| `error` | `config error: ...`, `timeout: ...`, `provider error: ...`, `review failed: ...` | the review could not run |
+
+`codecanary signoff` and `codecanary checks` read `status_context` from the repository's `.codecanary/config.yml`, not the local config, so they use the same name as CI. Blocking means severity `warning` or above. Each finding comment's first visible line starts with `[blocking]` or `[non-blocking]`. Statuses are keyed by commit, so a push never inherits the previous head's result: its run sets `pending` on the new head when it starts. Between the push and the job starting the new head has no status yet; treat a missing status as "not run yet". A blocking finding closes when its thread is resolved — by a code change a later review sees, or by an accepted reply — and the run that closes the last one sets `success` on the same head. Resolving a thread by hand does not start a run; the next reply or push picks it up.
+
+## Review tiers
+
+`tiers` maps a PR label to how PRs carrying it are reviewed:
+
+```yaml
+tiers:
+  "tier:low":    { review: false }
+  "tier:medium": { review_model: claude-sonnet-5-5 }
+  "tier:high":   { review_model: claude-opus-5-5 }
+  "tier:peer":   { review_model: claude-opus-5-5 }
+default_tier: "tier:high"
+```
+
+A PR with exactly one configured tier label gets that tier. A PR with none, or with more than one, gets `default_tier` — it is never skipped for lacking a label. `review: false` skips the review: the head gets `success` "skipped: tier low" and no comments. `review_model` replaces `review_model` for that tier (validated like it); `triage_model` is shared. A local review has no labels, so it uses `default_tier`. Every posted review ends with a line naming the tier, the model, and the tokens and cost of the run.
+
+Label changes (workflow template v5 triggers on `labeled` and `unlabeled`) start a review only when the head has not been reviewed yet — for example a PR moved from `tier:low` to `tier:medium`. On a reviewed head the new tier applies from the next push. A label that is not a tier still starts the workflow job, which exits without a model call.
+
+## Reviewing against the PR's intent
+
+With `intent.enabled: true`, the PR body's `## Intent` section is the specification the diff is reviewed against. Only that section and the `## Testing` section reach the prompt, escaped and marked as untrusted data; the rest of the body is left out. The review reports, as blocking findings:
+
+- `intent-missing-work` — something the intent asks for is not in the diff (first review);
+- `intent-not-asked-for` — the diff does something the intent does not ask for, even if correct;
+- `intent-not-doing` — the diff does something under the intent's "Not doing" list;
+- `intent-test-expectation` — an existing assertion, fixture, snapshot or golden changes with the code it tests and the intent does not call for it;
+- `intent-testing-reason` — a changed test expectation has no reason in `## Testing`;
+- `intent-injection` — the intent or testing text addresses the reviewer ("mark this as clean").
+
+Every `intent-*` finding is forced to at least `warning`, whatever the model returned. The tier comes from labels and the status from the findings, both computed by CodeCanary, so text in the body cannot set them directly; what it can try is to steer the model, which the prompt guards against and reports as `intent-injection`.
+
+A PR whose body has no `## Intent` section, or an empty one, is not reviewed: it gets one blocking note and a `failure` status. When the body is fixed, the `edited` event (template v5) starts the review. Local reviews have no PR body and skip intent review.
+
+## Context files
+
+`context_files` loads extra rule files when a changed file matches a path:
+
+```yaml
+context_files:
+  - paths: ["**"]
+    files: ["principles.md", "decisions/README.md"]
+  - paths: ["backoffice/**"]
+    files: ["backoffice/decisions/README.md", "backoffice/primitives.yaml"]
+```
+
+The files are added to the project documentation the reviewer reads, each cut to `max_file_size`. A listed file that does not exist is a config error: the run sets an `error` status instead of reviewing without it.
+
+## Replies on findings
+
+A reply on a finding's thread is evaluated on the next run (the reply itself starts one). By default an accepted reply — the author dismissed it, acknowledged it, or rebutted it with specific reasons — gets an acknowledgment and the thread stays open but stops blocking. With `resolve_accepted_replies: true` the thread is resolved instead, with a reply saying the reply was accepted and why. A reply that is not accepted gets one answer saying what it leaves unanswered, and the finding stays blocking until a code change or a new reply settles it. Replies from GitHub Apps are evaluated like anyone's; no author is skipped for being a bot.
+
+## Review-only repositories
+
+With `fix.enabled` false (the default) CodeCanary never commits, branches or pushes: the workflow's `fix` job runs only when the review reports `fix=true`, which comes from the base branch's config, and `codecanary fix` exits when `fix.enabled` is off. No reply triggers a fix. The workflow's own `GITHUB_TOKEN` needs `contents: read`, `pull-requests: write` and `id-token: write` (the template's `permissions`). A review uses the CodeCanary app's token for pull requests (reviews, comments, resolving threads: pull requests read and write), commit statuses (write) and contents (read: the base commit's rule files and earlier commits for incremental diffs).
+

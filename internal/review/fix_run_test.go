@@ -30,6 +30,8 @@ func (f *fakeFixPlatform) LoadCommitMessages() ([]string, error)  { return f.mes
 func (f *fakeFixPlatform) OpenThreadsStatus() (string, string, error) {
 	return "failure", "1 unresolved blocking finding", nil
 }
+func (f *fakeFixPlatform) SetStatusContext(string) {}
+
 func (f *fakeFixPlatform) SetReviewStatus(sha, state, desc string) error {
 	f.statuses = append(f.statuses, sha+" "+state+" "+desc)
 	return nil
