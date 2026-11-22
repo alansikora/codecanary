@@ -436,3 +436,35 @@ func TestReplyMessagesEscapeModelRationale(t *testing.T) {
 		t.Error("a rejected reply with a forged rationale must not count as handled")
 	}
 }
+
+func TestRepoStatusContextWarnsOnBadConfig(t *testing.T) {
+	repo := t.TempDir()
+	dir := filepath.Join(repo, ".codecanary")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repo)
+
+	var warn strings.Builder
+	if got := repoStatusContext(&warn); got != DefaultStatusContext || warn.Len() != 0 {
+		t.Errorf("no repo config: %q, warning %q; want the default, silently", got, warn.String())
+	}
+
+	cfgPath := filepath.Join(dir, "config.yml")
+	if err := os.WriteFile(cfgPath, []byte("version: 1\nprovider: claude\nreview_model: sonnet\ntriage_model: haiku\nstatus_context: codecanary/review\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := repoStatusContext(&warn); got != "codecanary/review" || warn.Len() != 0 {
+		t.Errorf("valid repo config: %q, warning %q", got, warn.String())
+	}
+
+	if err := os.WriteFile(cfgPath, []byte("version: 1\nprovider: claude\nreview_model: sonnet\nstatus_context: codecanary/review\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := repoStatusContext(&warn); got != DefaultStatusContext {
+		t.Errorf("invalid repo config: %q, want the default", got)
+	}
+	if !strings.Contains(warn.String(), cfgPath) || !strings.Contains(warn.String(), "triage_model") {
+		t.Errorf("warning should name the file and the error, got %q", warn.String())
+	}
+}

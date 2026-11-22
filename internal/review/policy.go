@@ -2,6 +2,8 @@ package review
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"maps"
 	"slices"
 	"strings"
@@ -85,14 +87,21 @@ func (c *ReviewConfig) EffectiveStatusContext() string {
 // RepoStatusContext returns status_context from the repository's own
 // .codecanary/config.yml (the one CI reads), for local commands that post or
 // read the status: the local config under ~/.codecanary usually does not set
-// it. DefaultStatusContext when there is no readable repo config.
+// it. DefaultStatusContext when there is no repo config; a repo config that
+// fails to load is warned about on stderr, since falling back then can post
+// a status under a different name than CI uses.
 func RepoStatusContext() string {
+	return repoStatusContext(os.Stderr)
+}
+
+func repoStatusContext(warn io.Writer) string {
 	path, err := FindRepoConfig()
 	if err != nil {
 		return DefaultStatusContext
 	}
 	cfg, err := LoadConfig(path)
 	if err != nil {
+		_, _ = fmt.Fprintf(warn, "Warning: could not load %s (%v) — using the status name %q; if the repo sets status_context, CI uses that name instead\n", path, err, DefaultStatusContext)
 		return DefaultStatusContext
 	}
 	return cfg.EffectiveStatusContext()
