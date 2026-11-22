@@ -47,6 +47,14 @@ export default {
       }
       const oidcToken = authHeader.slice(7);
 
+      // 1b. Read the requested mode. A malformed body is rejected before
+      // anything is minted: it must never fall through to a full token.
+      const parsed = await parseTokenRequest(request);
+      if ("error" in parsed) {
+        return Response.json({ error: parsed.error }, { status: 400 });
+      }
+      const permissions = tokenPermissions(parsed.mode);
+
       // 2. Verify OIDC token against GitHub's JWKS.
       const JWKS = jose.createRemoteJWKSet(
         new URL(`${GITHUB_OIDC_ISSUER}/.well-known/jwks`)
@@ -75,9 +83,15 @@ export default {
         );
       }
 
-      // 6. Generate an installation token scoped to the requesting repo.
-      // Permissions are inherited from the App's installation config.
+      // 6. Generate an installation token scoped to the requesting repo,
+      // with the permissions the mode asks for (see tokenPermissions).
       const repo = repository.split("/")[1];
+      const tokenRequest: { repositories: string[]; permissions?: Record<string, string> } = {
+        repositories: [repo],
+      };
+      if (permissions) {
+        tokenRequest.permissions = permissions;
+      }
       const tokenResponse = await fetch(
         `${GITHUB_API}/app/installations/${installationId}/access_tokens`,
         {
@@ -87,9 +101,7 @@ export default {
             Accept: "application/vnd.github+json",
             "User-Agent": "codecanary-token-proxy",
           },
-          body: JSON.stringify({
-            repositories: [repo],
-          }),
+          body: JSON.stringify(tokenRequest),
         }
       );
 
@@ -102,14 +114,80 @@ export default {
         );
       }
 
-      const tokenData = (await tokenResponse.json()) as { token: string };
-      return Response.json({ token: tokenData.token });
+      // GitHub echoes what it granted; pass that on rather than what was
+      // asked, so the caller checks the token it actually holds.
+      const tokenData = (await tokenResponse.json()) as {
+        token: string;
+        permissions?: Record<string, string>;
+      };
+      return Response.json({ token: tokenData.token, permissions: tokenData.permissions ?? {} });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       return Response.json({ error: message }, { status: 500 });
     }
   },
 };
+
+// REVIEW_PERMISSIONS is what `codecanary review` (the action's review and
+// reply_only runs) needs, and nothing that writes code. Each entry, with the
+// calls that need it:
+//   contents: read       git fetch of the base or a previous commit over HTTPS
+//                        with this token (ensureCommit, github_rules.go)
+//   pull_requests: write gh pr view / gh pr diff, the PR's reviews, review
+//                        comments and threads (read, post, edit the review
+//                        body, reply, resolve, minimize), gh pr comment
+//   statuses: write      the CodeCanary / review commit status
+//                        (POST repos/{o}/{r}/statuses/{sha})
+// metadata: read is always included by GitHub. The review reads no check
+// runs, issues or Actions data with this token.
+export const REVIEW_PERMISSIONS: Readonly<Record<string, string>> = Object.freeze({
+  contents: "read",
+  pull_requests: "write",
+  statuses: "write",
+});
+
+export type TokenMode = "review" | "fix" | "legacy";
+
+// parseTokenRequest reads the optional body of POST /token:
+// { "mode": "review" | "fix" }. No body, or a mode this worker doesn't know,
+// is "legacy" and gets the App's full installation permissions, as before
+// the body existed: action versions already pinned by users (v0.8.0 and
+// older) send no body and must keep working. Anything that isn't a JSON
+// object with an optional string `mode` is an error.
+export async function parseTokenRequest(
+  request: Request
+): Promise<{ mode: TokenMode } | { error: string }> {
+  const text = (await request.text()).trim();
+  if (text === "") {
+    return { mode: "legacy" };
+  }
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return { error: "Request body is not valid JSON" };
+  }
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    return { error: 'Request body must be a JSON object like {"mode":"review"}' };
+  }
+  const mode = (body as { mode?: unknown }).mode;
+  if (mode === undefined) {
+    return { mode: "legacy" };
+  }
+  if (typeof mode !== "string") {
+    return { error: '"mode" must be a string ("review" or "fix")' };
+  }
+  if (mode === "review" || mode === "fix") {
+    return { mode };
+  }
+  return { mode: "legacy" };
+}
+
+// tokenPermissions is the `permissions` to request for mode, or undefined to
+// inherit the installation's (fix must push; legacy is today's behaviour).
+export function tokenPermissions(mode: TokenMode): Record<string, string> | undefined {
+  return mode === "review" ? { ...REVIEW_PERMISSIONS } : undefined;
+}
 
 async function handleCheckInstall(request: Request, url: URL, env: Env): Promise<Response> {
   const authHeader = request.headers.get("Authorization");

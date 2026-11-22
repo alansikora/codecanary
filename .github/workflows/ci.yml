@@ -62,3 +62,26 @@ jobs:
         env:
           CODECANARY_REQUIRE_BWRAP: "1"
         run: go test -race -count=1 ./...
+
+      # The action's app-token exchange, against a fake token service.
+      - name: Test app token script
+        run: scripts/app-token.test.sh
+
+  oidc-worker:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: oidc/worker
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: oidc/worker/package-lock.json
+
+      - run: npm ci
+
+      - name: Test
+        run: npm test
