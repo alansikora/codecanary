@@ -727,19 +727,8 @@ func ghAPIRequest(method, apiPath string, payloadJSON []byte) ([]byte, error) {
 
 // FetchPreviousReviewSHA gets the SHA from the last review's hidden data.
 func FetchPreviousReviewSHA(repo string, prNumber int) string {
-	owner, name, err := parseRepoSlug(repo)
+	reviews, err := fetchPRReviews(repo, prNumber)
 	if err != nil {
-		return ""
-	}
-
-	apiPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, name, prNumber)
-	out, err := exec.Command("gh", "api", apiPath).Output()
-	if err != nil {
-		return ""
-	}
-
-	var reviews []ghReview
-	if err := json.Unmarshal(out, &reviews); err != nil {
 		return ""
 	}
 
@@ -1067,20 +1056,9 @@ func ghAPIPOST(apiPath string, payloadJSON []byte) ([]byte, error) {
 
 // FindReviewNodeIDs returns the node_ids of all reviews on a PR.
 func FindReviewNodeIDs(repo string, prNumber int) ([]string, error) {
-	owner, name, err := parseRepoSlug(repo)
+	reviews, err := fetchPRReviews(repo, prNumber)
 	if err != nil {
 		return nil, err
-	}
-
-	apiPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, name, prNumber)
-	out, err := exec.Command("gh", "api", apiPath).Output()
-	if err != nil {
-		return nil, fmt.Errorf("fetching PR reviews: %w", err)
-	}
-
-	var reviews []ghReview
-	if err := json.Unmarshal(out, &reviews); err != nil {
-		return nil, fmt.Errorf("parsing PR reviews: %w", err)
 	}
 
 	prefixes := reviewMarkerPrefixes
@@ -1280,20 +1258,9 @@ type ReviewInfo struct {
 
 // FindReviews returns reviews with their parsed finding IDs.
 func FindReviews(repo string, prNumber int) ([]ReviewInfo, error) {
-	owner, name, err := parseRepoSlug(repo)
+	reviews, err := fetchPRReviews(repo, prNumber)
 	if err != nil {
 		return nil, err
-	}
-
-	apiPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, name, prNumber)
-	out, err := exec.Command("gh", "api", apiPath).Output()
-	if err != nil {
-		return nil, fmt.Errorf("fetching PR reviews: %w", err)
-	}
-
-	var reviews []ghReview
-	if err := json.Unmarshal(out, &reviews); err != nil {
-		return nil, fmt.Errorf("parsing PR reviews: %w", err)
 	}
 
 	prefixes := reviewMarkerPrefixes

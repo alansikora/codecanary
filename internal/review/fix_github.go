@@ -136,6 +136,8 @@ func (g *GithubPlatform) OpenThreadsStatus() (state, desc string, err error) {
 	return state, desc, nil
 }
 
+func (g *GithubPlatform) SetStatusContext(name string) { g.StatusContext = name }
+
 func (g *GithubPlatform) SetReviewStatus(sha, state, desc string) error {
 	return PostReviewCommitStatus(g.Repo, g.statusContext(), sha, state, desc)
 }

@@ -34,6 +34,17 @@ func (g *GithubPlatform) LoadRules(pr *PRData, configPath string) (*RuleSources,
 	if err != nil {
 		return nil, err
 	}
+	rs, err := g.loadBaseRules(pr, configPath, root)
+	if err != nil {
+		_ = os.RemoveAll(root)
+		return nil, err
+	}
+	rs.Cleanup = func() { _ = os.RemoveAll(root) }
+	return rs, nil
+}
+
+// loadBaseRules is LoadRules after the temporary directory is made.
+func (g *GithubPlatform) loadBaseRules(pr *PRData, configPath, root string) (*RuleSources, error) {
 	paths, err := baseRuleSourcePaths(pr.BaseSHA)
 	if err != nil {
 		return nil, fmt.Errorf("config error: listing base commit %s: %w", shortSHA(pr.BaseSHA), err)

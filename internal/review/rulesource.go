@@ -27,6 +27,9 @@ type RuleSources struct {
 	// BaseSHA is the commit the files were read from, "" when they come
 	// from the working tree.
 	BaseSHA string
+	// Cleanup removes what LoadRules created (the copy of the base files);
+	// nil when there is nothing to remove.
+	Cleanup func()
 }
 
 // configFilePaths are the repository paths of CodeCanary's own config.

@@ -82,6 +82,22 @@ func (c *ReviewConfig) EffectiveStatusContext() string {
 	return DefaultStatusContext
 }
 
+// RepoStatusContext returns status_context from the repository's own
+// .codecanary/config.yml (the one CI reads), for local commands that post or
+// read the status: the local config under ~/.codecanary usually does not set
+// it. DefaultStatusContext when there is no readable repo config.
+func RepoStatusContext() string {
+	path, err := FindRepoConfig()
+	if err != nil {
+		return DefaultStatusContext
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		return DefaultStatusContext
+	}
+	return cfg.EffectiveStatusContext()
+}
+
 // IntentConfig is the `intent:` block: review the diff against the PR body's
 // intent section (see writeIntentSection).
 type IntentConfig struct {

@@ -52,10 +52,7 @@ non-zero when a required check failed.`,
 
 		// Best-effort: a repo that renamed its status (status_context) has
 		// it left out too; the default name always is.
-		statusContext := ""
-		if cfg, err := review.LoadReviewConfig(""); err == nil {
-			statusContext = cfg.EffectiveStatusContext()
-		}
+		statusContext := review.RepoStatusContext()
 		var rc review.RequiredChecks
 		if watch {
 			rc, err = review.WaitForRequiredChecks(repo, prNumber, statusContext, time.Duration(timeoutMinutes)*time.Minute)

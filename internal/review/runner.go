@@ -371,6 +371,9 @@ func Run(opts RunOptions) (err error) {
 	if err != nil {
 		return err
 	}
+	if rules.Cleanup != nil {
+		defer rules.Cleanup()
+	}
 	cfg := rules.Config
 	tier := cfg.ResolveTier(pr.Labels)
 	if tier != nil {
@@ -548,6 +551,11 @@ func Run(opts RunOptions) (err error) {
 				findings = nil
 			}
 		}
+		// Before the filters below, which treat non-blocking findings and
+		// open questions differently: an intent finding is always blocking.
+		if cfg.IntentEnabled() {
+			enforceIntentSeverity(findings)
+		}
 		if isIncremental {
 			findings = FilterLateFindings(findings, incrementalDiff)
 			known := make([]Finding, len(reviewThreads))
@@ -560,10 +568,6 @@ func Run(opts RunOptions) (err error) {
 	findings, questions := SplitOpenQuestions(findings)
 	if len(questions) > 0 {
 		fmt.Fprintf(os.Stderr, "%d finding(s) need verification — listed as open questions, not threads\n", len(questions))
-	}
-
-	if cfg.IntentEnabled() {
-		enforceIntentSeverity(findings)
 	}
 
 	// 8. Build result.

@@ -71,10 +71,7 @@ block merges until a clean local review exists for the tip commit.`,
 
 		statusState, desc := review.CommitStatusForFindings(state.Findings)
 
-		statusContext := review.DefaultStatusContext
-		if cfg, err := review.LoadReviewConfig(""); err == nil {
-			statusContext = cfg.EffectiveStatusContext()
-		}
+		statusContext := review.RepoStatusContext()
 		if err := review.PostReviewCommitStatus(slug, statusContext, sha, statusState, desc); err != nil {
 			return fmt.Errorf("posting commit status: %w", err)
 		}

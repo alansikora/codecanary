@@ -92,13 +92,19 @@ func markdownSection(body, heading string) string {
 // intentFindingPrefix starts the id of every finding intent review asks for.
 const intentFindingPrefix = "intent-"
 
-// enforceIntentSeverity makes every intent-* finding blocking. The prompt
-// asks for that; this keeps it true whatever the model returns.
+// enforceIntentSeverity makes every intent-* finding a blocking thread: at
+// least blockingSeverity, and never an open question (those don't count
+// toward the status). The prompt asks for that; this keeps it true whatever
+// the model returns. Run it before FilterLateFindings and SplitOpenQuestions.
 func enforceIntentSeverity(findings []Finding) {
 	for i := range findings {
-		if strings.HasPrefix(findings[i].ID, intentFindingPrefix) && !isBlocking(findings[i].Severity) {
+		if !strings.HasPrefix(findings[i].ID, intentFindingPrefix) {
+			continue
+		}
+		if !isBlocking(findings[i].Severity) {
 			findings[i].Severity = blockingSeverity
 		}
+		findings[i].NeedsVerification = false
 	}
 }
 

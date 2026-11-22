@@ -107,7 +107,9 @@ func acknowledgmentMessage(reason string) string {
 func acceptedReplyMessage(reason, rationale string) string {
 	marker := fmt.Sprintf("%s%s -->", ackMarkerPrefix, reason)
 	msg := marker + "\nReply accepted — resolving"
-	if r := strings.TrimSpace(rationale); r != "" {
+	// The rationale is model output written from an untrusted reply:
+	// escape it so it cannot carry a marker (an ack would close the finding).
+	if r := escapeAllTags(strings.TrimSpace(rationale)); r != "" {
 		msg += ": " + r
 	} else {
 		msg += "."
@@ -609,7 +611,9 @@ func (g *GithubPlatform) AnswerRejectedReplies(threads []ReviewThread, rejected 
 // accept.
 func rejectedReplyMessage(rationale string) string {
 	msg := rejectedReplyMarker + "\nThis reply does not settle the finding, so it stays open"
-	if r := strings.TrimSpace(rationale); r != "" {
+	// The rationale is model output written from an untrusted reply:
+	// escape it so it cannot carry a marker (an ack would close the finding).
+	if r := escapeAllTags(strings.TrimSpace(rationale)); r != "" {
 		msg += ": " + r
 	} else {
 		msg += "."
