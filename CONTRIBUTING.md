@@ -14,7 +14,7 @@ Version is set via ldflags: `-X main.version=v{version}`
 golangci-lint run ./...
 ```
 
-All code must pass `golangci-lint` with default linters. Run before committing.
+All code must pass `golangci-lint` with default linters plus the `gofmt` formatter (configured in `.golangci.yml`). Run before committing; `golangci-lint fmt ./...` fixes formatting.
 
 ## Test
 
@@ -23,6 +23,8 @@ go test ./... && go vet ./...
 ```
 
 Tests exist for config, findings, formatting, and triage. Be careful with refactors.
+
+CI runs the tests on `ubuntu-latest` (after `scripts/setup-bwrap.sh`), so a test that passes on macOS can still fail in CI. This is most common with sandbox (bubblewrap) tests and anything that checks for `/tmp`: on macOS, `t.TempDir()` isn't under `/tmp`. For user-facing messages, assert the whole rendered string rather than a substring.
 
 ## Architecture
 

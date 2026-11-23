@@ -2,88 +2,7 @@
 
 AI-powered code review for GitHub pull requests.
 
-## Project structure
-
-```
-cmd/
-  review/          # Main binary — review CLI + setup wizard
-    main.go        # Entry point
-    cli/           # Cobra commands
-      root.go      # Root "codecanary" command
-      review.go    # codecanary review <pr>
-      findings.go  # codecanary findings <pr> — fetch bot findings for the review skill
-      reply.go     # codecanary reply --url <comment-url> --body <text> — post a reply on a review thread
-      resolve.go   # codecanary resolve <pr> --threads <ids> — action step: resolve the threads a review settled
-      fix.go       # codecanary fix <pr> — CI fix cycle (workflow fix job; fix.enabled)
-      install_skill.go # codecanary install-skill — write embedded Claude skill to disk
-      setup.go     # codecanary setup [local|github]
-      auth.go      # codecanary auth [status|delete]
-  evalsnap/        # Dev tool — freeze a PR's review inputs into a corpus fixture
-    main.go        # NOT part of the codecanary binary
-internal/
-  review/
-    runner.go            # Core review pipeline — single Run() entry point
-    config.go            # Config loading, validation, defaults
-    # Provider layer (LLM abstraction)
-    provider.go          # ModelProvider interface + factory registry
-    provider_anthropic.go
-    provider_openai.go
-    provider_openrouter.go
-    provider_claude.go   # Claude CLI wrapper (project-config isolation, opt-in confined reviewer tools)
-    provider_compat.go   # Shared types for OpenAI-compatible APIs
-    pricing.go           # Token-based cost estimation
-    # Platform layer (environment abstraction)
-    platform.go          # ReviewPlatform interface
-    platform_github.go   # GitHub Actions implementation
-    platform_local.go    # Local CLI implementation
-    # Supporting modules
-    prompt.go            # Prompt building (review, incremental, per-thread)
-    findings.go          # Finding parsing, filtering, result structures
-    triage.go            # Thread classification + parallel LLM evaluation
-    formatter.go         # JSON/Markdown/Terminal output formatting
-    usage.go             # Token tracking, budget checking
-    github.go            # GitHub API calls (fetch threads, post reviews)
-    comments.go          # PR review comment fetch + finding marker parser + review-check watcher
-    local.go             # Local diff & git operations
-    repo.go              # Git repo helpers shared across flows (repo root)
-    state.go             # Local state persistence
-    # CI fix cycle (codecanary fix)
-    fix.go               # RunFix() + FixPlatform interface, loop limits
-    fix_prompt.go        # Fix prompt + disposition parsing (applied/refuted/skipped)
-    fix_git.go           # Fix-commit counting, commit, protected-path revert
-    fix_format.go        # fix.format_command on the fix's files, inside a bubblewrap sandbox
-    fix_github.go        # GithubPlatform's FixPlatform implementation (push with app token)
-    reply.go             # Review-thread replies (shared by `codecanary reply` and the fix)
-    resolve.go           # Resolving finding threads after a review (`codecanary resolve`; the review token can't)
-    docs.go              # Project doc discovery
-    prompt_golden_test.go # Renders corpus fixtures into prompts, diffs vs goldens
-    testdata/corpus/     # Frozen review inputs + prompt goldens + SIZES.txt (public PRs only)
-  credentials/     # Credential storage (keychain with file fallback)
-    keyring.go     # Store/Retrieve/Delete — keychain first, ~/.codecanary/credentials.json fallback
-  evalcorpus/      # Frozen review inputs — fixture format + load/save (dev tooling)
-    corpus.go      # Fixture type, Dir/Load/Save/List
-  skills/          # Claude Code skills embedded in the binary via //go:embed
-    skills.go      # Exports CodecanaryFix() returning the skill body
-    codecanary-fix/SKILL.md  # Canonical skill source (duplicated at .claude/skills/codecanary-fix/SKILL.md; parity enforced by skills_test.go)
-  setup/           # Setup wizard logic (huh forms)
-    forms.go       # Shared huh form components
-    validate.go    # API key validation via test calls
-    guidance.go    # Token/permissions guidance text
-    workflow.go    # GitHub Actions workflow template
-    local.go       # RunLocal() — local setup flow
-    github.go      # RunGitHub() — GitHub Actions setup flow
-  auth/            # OAuth PKCE flow, GitHub App installation
-telemetry/         # Telemetry domain (anonymous usage analytics)
-  worker/          # Cloudflare Worker — telemetry ingestion (TypeScript)
-  dashboard/       # Cloudflare Pages — internal analytics dashboard (vanilla JS + Chart.js)
-oidc/              # OIDC domain
-  worker/          # Cloudflare Worker — OIDC token exchange proxy (TypeScript)
-action.yml         # GitHub Action definition (composite action)
-install.sh         # Downloads and installs codecanary binary permanently
-.claude/
-  skills/
-    codecanary-fix/ # Claude Code skill — drives review→fix→push loop using `codecanary findings` + `codecanary reply`
-```
+The project structure map is in `.claude/rules/project-structure.md`, which is always loaded. Test guidance is in `.claude/rules/go-tests.md`, which loads only when `**/*.go` changes. **Keep this file under 16 KB.** CodeCanary truncates each CLAUDE.md at `maxDocBytes` (16384, `internal/review/docs.go`), so anything past that point never reaches the reviewer. Path-scoped guidance belongs in `.claude/rules/*.md`, which has its own budget (8 KB per file).
 
 ## Binary
 
@@ -116,7 +35,7 @@ Version is set via ldflags: `-X main.version=v{version}`
 golangci-lint run ./...
 ```
 
-All code must pass `golangci-lint` with default linters (errcheck, staticcheck, etc.). Run this before committing.
+All code must pass `golangci-lint` with default linters (errcheck, staticcheck, etc.) plus the `gofmt` formatter (enabled in `.golangci.yml`). Run this before committing. golangci-lint v2 doesn't check formatting by default, so before `.golangci.yml` existed, unformatted files kept landing and needed gofmt-only follow-up PRs.
 
 ## Key dependencies
 
@@ -137,7 +56,7 @@ The review engine (`runner.go`) is provider- and platform-agnostic. It depends o
 
 Abstracts LLM invocations. The core engine calls `provider.Run(ctx, prompt, opts)` and gets back text + usage metadata. It never knows which LLM backend is being used.
 
-**Implementations**: `anthropic`, `openai`, `openrouter`, `claude` (CLI).
+**Implementations**: `anthropic`, `openai`, `openrouter`, `grok`, `claude` (CLI), `codex` (CLI, fix-only).
 **Selection**: factory registry in `provider.go` — `NewProviderForRole(mc, env)` returns the right implementation based on `mc.Provider`.
 
 Adding a new LLM provider means: create `provider_<name>.go` and register a `ProviderFactory` (constructor, validation, pricing, default models) via `init()`.
@@ -190,4 +109,9 @@ There is a **single `Run()` function** — not separate paths for GitHub vs. loc
 - **Workflow template is embedded.** `internal/setup/codecanary.yml` is the single source of truth for the GitHub Actions workflow, embedded via `//go:embed`. `.github/workflows/codecanary.yml` must be identical — `go test ./internal/setup/` enforces this. When changing the workflow, edit either file and copy to the other, and bump the `# codecanary-workflow: v<N>` marker (plus the fingerprint in `internal/setup/workflow_test.go`) — the review bot compares that marker with consumer repos' copies to tell them their workflow is outdated.
 - **Claude skills are embedded.** `internal/skills/codecanary-fix/SKILL.md` is the single source of truth for the codecanary-fix skill, embedded via `//go:embed` and materialized by `codecanary install-skill`. `.claude/skills/codecanary-fix/SKILL.md` must be identical so Claude Code's project-mode discovery finds it when working in this repo — `go test ./internal/skills/` enforces this. When changing the skill, edit either file and copy to the other.
 - **Keep `docs/review-flow.md` in sync.** This document describes the full review pipeline — every step, the triage flow, platform differences, and key design decisions. When changing `runner.go`, `triage.go`, `prompt.go`, `findings.go`, `github.go`, `local.go`, `platform.go`, or the `ReviewPlatform` implementations, update the doc to reflect the new behavior.
-- Tests exist for config, findings, formatting, and triage. Be careful with refactors — run `go test ./...` and `go vet ./...`.
+- **Never swallow a config load error into a default.** If a config file exists but fails to load or validate, warn on stderr with the file name and the error, or fail. Don't quietly return the default `status_context`, `fix_on_ci: false`, or similar. A silent fallback makes the CLI disagree with CI with no explanation (for example `signoff` posting a differently named status than the required check).
+- **Wire a new config field into every entry point.** Config is read by `review` (GitHub and local), `fix`, `signoff`, `checks` and `mode`, and not all of them call `LoadRules` or load the same file. In GitHub mode, rule sources come from the base branch (`rulesource.go`). Locally, `LoadReviewConfig("")` can resolve to `~/.codecanary/repos/...`. When adding or renaming a field, check that each of these paths reads it from the same place.
+- **Model output and PR-author text are untrusted.** Any text a model wrote after reading the PR (rationales, fix reasons, summaries), and anything from the PR body or a fork author's reply, must go through `escapeAllTags` before it is posted. Otherwise it can forge a `codecanary:ack` marker or other bot markers (see `fixReplyBody`). Truncate on rune boundaries (`truncateUTF8`). Parse permission- or mode-like inputs fail-closed: reject unknown values instead of falling back to the most privileged behavior.
+- **Prompts and their validators must agree.** If Go code rejects a value (a resolution reason, a disposition, a severity), the prompt that asks the model for it must not offer that value. Tests that pin the prompt text must pin the restricted set. Prompts shared across providers must not name provider-specific tools.
+- **Update every mention, not just the lines you touched.** When a value, kind or step changes in `docs/review-flow.md`, the skill, or a prompt, grep the whole file (and its mirror) for the old value. Sync rules have repeatedly failed on a second paragraph further down the same doc.
+- Be careful with refactors: run `go test ./...` and `go vet ./...`. CI runs them on Ubuntu, not macOS (see `.claude/rules/go-tests.md`).
