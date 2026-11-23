@@ -552,6 +552,65 @@ func openThreadsStatus(threads []ReviewThread) (state, desc string) {
 	return commitStatusFromSummary(computeReviewSummary(open, nil, nil))
 }
 
+// reviewNoticeKey is the hidden marker that makes a review notice
+// once-per-head, like fixNoticeKey for the fix: kind is "failed" or
+// "replies-failed", sha the head it was posted for.
+func reviewNoticeKey(kind, sha string) string {
+	return fmt.Sprintf("<!-- codecanary:review-notice %s %s -->", kind, sha)
+}
+
+// buildReviewFailureNotice is the comment posted when a run did not finish.
+// The cause is failureSummary's one line, as in the fix's failure notice,
+// with trailing punctuation trimmed so the sentence ends cleanly; the full
+// error stays in the workflow logs. A later failure on the same head edits
+// the notice, but a later success does not remove it, so it points to where
+// the current result is shown.
+func buildReviewFailureNotice(sha string, runErr error, replyOnly bool, runURL, statusContext string) string {
+	what := fmt.Sprintf("The review did not finish on `%s`, so this commit was **not reviewed**", shortSHA(sha))
+	if replyOnly {
+		what = fmt.Sprintf("The latest replies on `%s` were not processed", shortSHA(sha))
+	}
+	cause := strings.TrimRight(failureSummary(runErr), ".: ")
+	body := fmt.Sprintf("## \U0001F425 CodeCanary\n\n\u26a0\ufe0f %s: %s.\n\nFix the cause and re-run the job.", what, cause)
+	if runURL != "" {
+		body += fmt.Sprintf(" [Workflow run](%s)", runURL)
+	}
+	body += "\n\nThis notice is not removed when a later run succeeds: the latest review and the `" + statusContext + "` status show the current result."
+	return body + "\n"
+}
+
+// ReportFailure posts a PR notice, one per head, so a failed run never
+// looks like a clean review. A re-run that fails again on the head edits
+// it, so it shows the latest cause. The "error" commit status is Run's
+// (SetRunStatus), not posted here.
+func (g *GithubPlatform) ReportFailure(runErr error, replyOnly bool) {
+	if g.Repo == "" || g.PRNumber == 0 {
+		return
+	}
+	sha, err := currentHEAD()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not report the failed run: %v\n", err)
+		return
+	}
+	kind := "failed"
+	if replyOnly {
+		kind = "replies-failed"
+	}
+	body := buildReviewFailureNotice(sha, runErr, replyOnly, workflowRunURL(), g.statusContext())
+	if err := g.UpsertNotice(reviewNoticeKey(kind, sha), body); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not post failure notice: %v\n", err)
+	}
+}
+
+// workflowRunURL links the current GitHub Actions run, or "" outside Actions.
+func workflowRunURL() string {
+	server, repo, id := os.Getenv("GITHUB_SERVER_URL"), os.Getenv("GITHUB_REPOSITORY"), os.Getenv("GITHUB_RUN_ID")
+	if server == "" || repo == "" || id == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s/%s/actions/runs/%s", server, repo, id)
+}
+
 // gateMarker keys a gate review to the head it was posted for, so a re-run
 // on the same head does not post it twice.
 func gateMarker(sha string) string {
@@ -619,4 +678,78 @@ func rejectedReplyMessage(rationale string) string {
 		msg += "."
 	}
 	return msg + "\n\nFix the code, or reply with the specific reason it does not apply."
+}
+
+// PostNotice posts body as a pull request comment unless the bot already
+// posted one carrying key.
+func (g *GithubPlatform) PostNotice(key, body string) error {
+	comments, err := fetchIssueComments(g.Repo, g.PRNumber)
+	if err != nil {
+		return err
+	}
+	for _, c := range comments {
+		if isBotAuthor(c.User.Login) && strings.Contains(c.Body, key) {
+			fmt.Fprintf(os.Stderr, "Notice already posted on pull request #%d — not posting it again\n", g.PRNumber)
+			return nil
+		}
+	}
+	return PostComment(g.Repo, g.PRNumber, key+"\n"+body)
+}
+
+// UpsertNotice posts body as a pull request comment carrying key, or edits
+// the bot's latest comment that carries it.
+func (g *GithubPlatform) UpsertNotice(key, body string) error {
+	comments, err := fetchIssueComments(g.Repo, g.PRNumber)
+	if err != nil {
+		return err
+	}
+	for i := len(comments) - 1; i >= 0; i-- {
+		c := comments[i]
+		if !isBotAuthor(c.User.Login) || !strings.Contains(c.Body, key) {
+			continue
+		}
+		owner, name, err := parseRepoSlug(g.Repo)
+		if err != nil {
+			return err
+		}
+		payload, err := json.Marshal(struct {
+			Body string `json:"body"`
+		}{Body: key + "\n" + body})
+		if err != nil {
+			return fmt.Errorf("marshaling comment payload: %w", err)
+		}
+		_, err = ghAPIRequest("PATCH", fmt.Sprintf("repos/%s/%s/issues/comments/%d", owner, name, c.ID), payload)
+		return err
+	}
+	return PostComment(g.Repo, g.PRNumber, key+"\n"+body)
+}
+
+// issueComment is the subset of a pull request's conversation comment the
+// notices read back.
+type issueComment struct {
+	ID      int64  `json:"id"`
+	Body    string `json:"body"`
+	HTMLURL string `json:"html_url"`
+	User    struct {
+		Login string `json:"login"`
+	} `json:"user"`
+}
+
+// fetchIssueComments returns a pull request's conversation comments, oldest
+// first.
+func fetchIssueComments(repo string, prNumber int) ([]issueComment, error) {
+	owner, name, err := parseRepoSlug(repo)
+	if err != nil {
+		return nil, err
+	}
+	out, err := runGH("gh api issue comments", "api", "--paginate",
+		fmt.Sprintf("repos/%s/%s/issues/%d/comments", owner, name, prNumber))
+	if err != nil {
+		return nil, err
+	}
+	all, err := decodePaginated[issueComment](out)
+	if err != nil {
+		return nil, fmt.Errorf("parsing pull request comments: %w", err)
+	}
+	return all, nil
 }

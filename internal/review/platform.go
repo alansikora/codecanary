@@ -43,6 +43,13 @@ type ReviewPlatform interface {
 	// doesn't block the PR. Locally it never skips.
 	SkipReview(cfg *ReviewConfig, replyOnly bool) (bool, error)
 
+	// ReportFailure tells the PR that a run failed (best-effort), so a
+	// failed run never looks like a clean review or leaves a required check
+	// waiting with no explanation. On GitHub it posts a PR notice; the
+	// "error" commit status is set by Run through SetRunStatus. Locally it
+	// does nothing: the error is already printed.
+	ReportFailure(runErr error, replyOnly bool)
+
 	// LoadRules loads the config and locates the other rule sources (project
 	// docs, Claude rules, context_files). On GitHub they come from the PR's
 	// base commit, so a PR cannot change the rules it is reviewed by; locally

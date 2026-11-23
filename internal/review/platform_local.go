@@ -93,6 +93,8 @@ func (l *LocalPlatform) SkipReview(_ *ReviewConfig, _ bool) (bool, error) {
 	return false, nil
 }
 
+func (l *LocalPlatform) ReportFailure(_ error, _ bool) {}
+
 // LoadRules reads the config and the rule sources from the working tree:
 // locally, the rules are whatever is checked out.
 func (l *LocalPlatform) LoadRules(_ *PRData, configPath string) (*RuleSources, error) {

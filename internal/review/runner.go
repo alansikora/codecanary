@@ -299,12 +299,34 @@ func errorStatusDescription(err error) string {
 	return msg
 }
 
-// Run orchestrates the full review flow using the platform adapter.
+// Run orchestrates the full review flow using the platform adapter. A run
+// that fails is reported through the platform, so it never looks like a
+// clean review. A --fail-on threshold hit is a finished review, not a
+// failure.
+func Run(opts RunOptions) error {
+	published := false
+	err := run(opts, &published)
+	// A failure after publishing is not reported: the review is on the PR,
+	// so "not reviewed" would be false; what failed is in the logs.
+	if isRunFailure(err) && !published && !opts.DryRun && opts.Platform != nil {
+		opts.Platform.ReportFailure(err, opts.ReplyOnly)
+	}
+	return err
+}
+
+// isRunFailure reports whether Run's error means the review did not finish.
+func isRunFailure(err error) bool {
+	var failOn *FailOnSeverityError
+	return err != nil && !errors.As(err, &failOn)
+}
+
+// run is the review pipeline behind Run.
 //
 // A review run owns the review's commit status on the head it reviews:
 // pending while it runs, its result once published, error when it fails
-// before publishing. A reply-only run only refreshes the result.
-func Run(opts RunOptions) (err error) {
+// before publishing. A reply-only run only refreshes the result. published
+// is set once the run has published its result.
+func run(opts RunOptions, published *bool) (err error) {
 	startTime := time.Now()
 	platform := opts.Platform
 	pr := opts.PR
@@ -357,10 +379,9 @@ func Run(opts RunOptions) (err error) {
 		return fmt.Errorf("resolving HEAD: %w", err)
 	}
 	ownsStatus := !opts.ReplyOnly && !opts.DryRun
-	published := false
 	defer func() {
 		var failOn *FailOnSeverityError
-		if err != nil && ownsStatus && !published && !errors.As(err, &failOn) {
+		if err != nil && ownsStatus && !*published && !errors.As(err, &failOn) {
 			platform.SetRunStatus(headSHA, "error", errorStatusDescription(err))
 		}
 	}()
@@ -410,7 +431,7 @@ func Run(opts RunOptions) (err error) {
 		if err := platform.PublishGate(headSHA, blockers); err != nil {
 			return err
 		}
-		published = true
+		*published = true
 		return nil
 	}
 
@@ -599,7 +620,7 @@ func Run(opts RunOptions) (err error) {
 	if err := platform.Publish(result, pr, reviewThreads, fixed); err != nil {
 		return err
 	}
-	published = true
+	*published = true
 
 	// 10. Save state for future incremental reviews.
 	// Skip in reply-only mode to avoid overwriting previous findings with an empty slice.
