@@ -29,7 +29,7 @@ type ReviewConfig struct {
 	MaxTotalSize int      `yaml:"max_total_size"`  // total file content limit in bytes (default 500KB)
 	MaxDiffSize  int      `yaml:"max_diff_size"`   // diff size limit in bytes for the review prompt (default 300KB)
 	MaxBudgetUSD float64  `yaml:"max_budget_usd"`  // per-invocation spending limit in USD (default 0 = unlimited)
-	TimeoutMins  int      `yaml:"timeout_minutes"` // per-invocation timeout in minutes (default 5)
+	TimeoutMins  int      `yaml:"timeout_minutes"` // per-invocation timeout in minutes (0 = the provider default: 10 for claude, 5 for the API providers)
 	ReviewModel  string   `yaml:"review_model"`    // model for main review (required)
 	TriageModel  string   `yaml:"triage_model"`    // model for thread re-evaluation (required)
 	AdvisorModel string   `yaml:"advisor_model"`   // optional advisor model for mid-generation strategic guidance (anthropic & claude providers only)

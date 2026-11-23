@@ -364,7 +364,9 @@ func (p *claudeCLIProvider) buildArgs(opts RunOpts) []string {
 	// configured `claude_review_tools` (review-model only), pass that
 	// allowlist through instead so the LLM can verify hypotheses (e.g.
 	// `Read,Grep,Glob`) before emitting findings.
-	args := []string{"--print", "--output-format", "json", "--no-session-persistence", "--tools", p.reviewTools}
+	// stream-json (which --print requires --verbose for) reports the CLI's API
+	// retries as events; see claudeStream.
+	args := []string{"--print", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--tools", p.reviewTools}
 	args = append(args, claudeIsolationArgs...)
 	if p.reviewTools != "" {
 		args = append(args, claudeToolUseArgs...)
@@ -393,50 +395,82 @@ func (p *claudeCLIProvider) buildArgs(opts RunOpts) []string {
 	return args
 }
 
+// claudeDefaultTimeout bounds a Claude CLI call when timeout_minutes is unset.
+const claudeDefaultTimeout = 10 * time.Minute
+
+// claudeStderrTail caps how much of the CLI's stderr is kept for error
+// messages; the end is what explains a failure.
+const claudeStderrTail = 4096
+
 func (p *claudeCLIProvider) Run(ctx context.Context, prompt string, opts RunOpts) (*providerResult, error) {
 	timeout := opts.Timeout
 	if timeout <= 0 {
-		timeout = 10 * time.Minute
+		timeout = claudeDefaultTimeout
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	// abort stops the CLI early, on an API error not worth waiting out.
+	abortCtx, abort := context.WithCancel(ctx)
+	defer abort()
 
 	args := p.buildArgs(opts)
-	cmd := exec.CommandContext(ctx, p.binaryPath, args...)
+	cmd := exec.CommandContext(abortCtx, p.binaryPath, args...)
 	cmd.Env = p.env
 	cmd.Dir = p.workDir // "" inherits codecanary's cwd
 	cmd.Stdin = strings.NewReader(prompt)
-	output, err := cmd.Output()
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("claude timed out after %s", timeout)
+	// Stdout and Stderr are writers, not pipes we read, so exec copies them
+	// inside Wait, and WaitDelay bounds that copy: a child the CLI started
+	// can hold the pipes open after the CLI is killed, and that must not turn
+	// a timeout into a hang.
+	cmd.WaitDelay = 5 * time.Second
+	stream := &claudeStream{model: p.modelLabel(), abort: abort}
+	cmd.Stdout = stream
+	stderr := &tailBuffer{max: claudeStderrTail}
+	cmd.Stderr = stderr
+	err := cmd.Run()
+	stream.flush()
+	if errors.Is(err, exec.ErrWaitDelay) {
+		// The CLI exited 0; only a child it left behind held the pipes open.
+		// What the CLI wrote is complete.
+		err = nil
+	}
+
+	if stream.rejected != nil {
+		return nil, stream.rejectedError(p.modelLabel())
+	}
+	if err != nil && ctx.Err() == context.DeadlineExceeded {
+		return nil, stream.timeoutError(timeout, stderr.String())
+	}
+	if stream.result != nil {
+		if stream.result.IsError {
+			return nil, classifyProviderError("claude", stream.result.APIErrorStatus, stream.result.Result, string(stream.resultRaw))
 		}
+		if err == nil {
+			return claudeProviderResult(stream.result), nil
+		}
+	}
+	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
-			// The CLI may still emit the JSON envelope on stdout when it exits
-			// non-zero (e.g. 429). Try to parse and classify it first so the
-			// user sees a friendly message; fall back to a raw dump only when
-			// we cannot extract structured info.
-			if resp, ok := tryParseClaudeEnvelope(output); ok && resp.IsError {
-				return nil, classifyProviderError("claude", resp.APIErrorStatus, resp.Result, string(output))
-			}
-			return nil, fmt.Errorf("claude failed: %s\n%s", string(exitErr.Stderr), string(output))
+			return nil, fmt.Errorf("claude failed: %s\n%s", stderr.String(), stream.other.String())
 		}
 		return nil, fmt.Errorf("running claude: %w", err)
 	}
+	// No result event: treat the CLI's output as plain text.
+	return &providerResult{Text: stream.other.String()}, nil
+}
 
-	resp, ok := tryParseClaudeEnvelope(output)
-	if !ok {
-		// Fallback: treat entire original output as plain text (e.g. older CLI version).
-		return &providerResult{Text: string(output)}, nil
+// modelLabel names the model in messages; empty means the CLI's default.
+func (p *claudeCLIProvider) modelLabel() string {
+	if p.model == "" {
+		return "the default model"
 	}
+	return p.model
+}
 
-	if resp.IsError {
-		return nil, classifyProviderError("claude", resp.APIErrorStatus, resp.Result, string(output))
-	}
-
-	// Note: the Claude CLI JSON output does not expose stop_reason, so we
-	// cannot detect truncation here. The CLI manages its own output limits.
+func claudeProviderResult(resp *claudeJSONResponse) *providerResult {
+	// Note: the Claude CLI result does not expose stop_reason, so we cannot
+	// detect truncation here. The CLI manages its own output limits.
 	result := &providerResult{
 		Text: resp.Result,
 		Usage: CallUsage{
@@ -460,21 +494,136 @@ func (p *claudeCLIProvider) Run(ctx context.Context, prompt string, opts RunOpts
 			CostUSD:           mu.CostUSD,
 		})
 	}
-	return result, nil
+	return result
 }
 
-// tryParseClaudeEnvelope pulls a claudeJSONResponse out of the CLI's stdout.
-// The Claude CLI may print non-JSON status lines (status-line UI) before or
-// after the JSON envelope, so we seek to the first '{' and let json.Decoder
-// stop after the first complete value — tolerating trailing noise.
-func tryParseClaudeEnvelope(output []byte) (claudeJSONResponse, bool) {
-	var resp claudeJSONResponse
-	jsonOutput := output
-	if i := bytes.IndexByte(output, '{'); i > 0 {
-		jsonOutput = output[i:]
-	}
-	if err := json.NewDecoder(bytes.NewReader(jsonOutput)).Decode(&resp); err != nil {
-		return resp, false
-	}
-	return resp, true
+// claudeStreamEvent is the part of a stream-json line the provider reads:
+// the event type, and for system/api_retry the error the CLI is retrying.
+type claudeStreamEvent struct {
+	Type         string `json:"type"`
+	Subtype      string `json:"subtype"`
+	Attempt      int    `json:"attempt"`
+	MaxRetries   int    `json:"max_retries"`
+	RetryDelayMS int    `json:"retry_delay_ms"`
+	ErrorStatus  *int   `json:"error_status"`
+	Error        string `json:"error"`
 }
+
+// describe renders an api_retry event's error, e.g. "429 rate_limit".
+func (e *claudeStreamEvent) describe() string {
+	what := e.Error
+	if what == "" {
+		what = "connection error"
+	}
+	if e.ErrorStatus != nil {
+		return fmt.Sprintf("%d %s", *e.ErrorStatus, what)
+	}
+	return what
+}
+
+// claudeStream takes the CLI's stream-json output as its stdout and keeps
+// what the provider needs from it. The CLI retries failed API calls on its
+// own and, in --print mode, says nothing about it outside the stream: each
+// retry is a system/api_retry event, which is logged here so a slow call
+// shows why. A 429 stops the CLI through abort. The CLI's backoff on a 429
+// adds up to more than any review timeout, and on a subscription a 429 means
+// the plan's limit for that model is used up — it won't clear by waiting.
+// The API providers fail on a 429 too.
+//
+// exec writes to it from one goroutine; read its fields after Wait returns.
+type claudeStream struct {
+	model string // for messages, see modelLabel
+	abort func() // stops the CLI
+
+	result    *claudeJSONResponse // the final result event, if one arrived
+	resultRaw []byte
+	lastRetry *claudeStreamEvent // the latest api_retry event
+	rejected  *claudeStreamEvent // the 429 that made us stop the CLI
+	other     bytes.Buffer       // lines that aren't stream events
+	partial   []byte             // an incomplete last line
+}
+
+// Write handles each complete line and keeps the rest for the next write.
+func (s *claudeStream) Write(p []byte) (int, error) {
+	s.partial = append(s.partial, p...)
+	for {
+		i := bytes.IndexByte(s.partial, '\n')
+		if i < 0 {
+			break
+		}
+		s.handleLine(bytes.TrimSpace(s.partial[:i]))
+		s.partial = s.partial[i+1:]
+	}
+	return len(p), nil
+}
+
+// flush handles a last line that had no newline.
+func (s *claudeStream) flush() {
+	s.handleLine(bytes.TrimSpace(s.partial))
+	s.partial = nil
+}
+
+func (s *claudeStream) handleLine(line []byte) {
+	if len(line) == 0 {
+		return
+	}
+	var ev claudeStreamEvent
+	if line[0] != '{' || json.Unmarshal(line, &ev) != nil || ev.Type == "" {
+		s.other.Write(line)
+		s.other.WriteByte('\n')
+		return
+	}
+	switch {
+	case ev.Type == "result":
+		var resp claudeJSONResponse
+		if json.Unmarshal(line, &resp) == nil {
+			s.result = &resp
+			s.resultRaw = line
+		}
+	case ev.Type == "system" && ev.Subtype == "api_retry":
+		s.lastRetry = &ev
+		if ev.ErrorStatus != nil && *ev.ErrorStatus == 429 {
+			if s.rejected == nil {
+				s.rejected = &ev
+				Stderrf(ansiYellow, "Claude API returned %s for %s — stopping the CLI instead of waiting out its retries.\n", ev.describe(), s.model)
+				s.abort()
+			}
+			return
+		}
+		Stderrf(ansiYellow, "Claude API error (%s) for %s — CLI retry %d/%d in %s.\n",
+			ev.describe(), s.model, ev.Attempt, ev.MaxRetries, (time.Duration(ev.RetryDelayMS) * time.Millisecond).Round(100*time.Millisecond))
+	}
+}
+
+func (s *claudeStream) rejectedError(model string) error {
+	msg := fmt.Sprintf("the API returned %s for %s; stopped the CLI instead of waiting out its retries", s.rejected.describe(), model)
+	return classifyProviderError("claude", 429, msg, "")
+}
+
+// timeoutError says the call timed out and, when the CLI said why, why.
+func (s *claudeStream) timeoutError(timeout time.Duration, stderr string) error {
+	msg := fmt.Sprintf("claude timed out after %s", timeout)
+	if s.lastRetry != nil {
+		msg += fmt.Sprintf("; the CLI was retrying an API error (%s, retry %d/%d)", s.lastRetry.describe(), s.lastRetry.Attempt, s.lastRetry.MaxRetries)
+	}
+	if stderr = strings.TrimSpace(stderr); stderr != "" {
+		msg += "\nclaude stderr:\n" + stderr
+	}
+	return errors.New(msg)
+}
+
+// tailBuffer is an io.Writer that keeps the last max bytes written to it.
+type tailBuffer struct {
+	max int
+	buf []byte
+}
+
+func (t *tailBuffer) Write(p []byte) (int, error) {
+	t.buf = append(t.buf, p...)
+	if over := len(t.buf) - t.max; over > 0 {
+		t.buf = append(t.buf[:0], t.buf[over:]...)
+	}
+	return len(p), nil
+}
+
+func (t *tailBuffer) String() string { return string(t.buf) }

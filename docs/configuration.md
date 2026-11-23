@@ -37,7 +37,7 @@ review_on: push                 # push (default): review every push; ready: revi
                                 # opens, reopens or turns ready, and skip pushes (see "Reviewing once, at ready")
 
 max_budget_usd: 0.50            # per-review spending limit in USD (default: 0 = unlimited)
-timeout_minutes: 5              # per-invocation timeout
+timeout_minutes: 5              # per-invocation timeout (default: 10 for the claude provider, 5 for API providers)
 max_file_size: 102400           # per-file content limit in bytes (default 100KB)
 max_total_size: 512000          # total file content limit in bytes (default 500KB)
                                 # files over either limit are reviewed from their diff only
