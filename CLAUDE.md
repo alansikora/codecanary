@@ -2,7 +2,7 @@
 
 AI-powered code review for GitHub pull requests.
 
-The project structure map is in `.claude/rules/project-structure.md`, and test guidance is in `.claude/rules/go-tests.md`. Both are loaded with this file. **Keep this file under 16 KB.** CodeCanary truncates each CLAUDE.md at `maxDocBytes` (16384, `internal/review/docs.go`), so anything past that point never reaches the reviewer. Path-scoped guidance belongs in `.claude/rules/*.md`, which has its own budget (8 KB per file).
+The project structure map is in `.claude/rules/project-structure.md`, which is always loaded. Test guidance is in `.claude/rules/go-tests.md`, which loads only when `**/*.go` changes. **Keep this file under 16 KB.** CodeCanary truncates each CLAUDE.md at `maxDocBytes` (16384, `internal/review/docs.go`), so anything past that point never reaches the reviewer. Path-scoped guidance belongs in `.claude/rules/*.md`, which has its own budget (8 KB per file).
 
 ## Binary
 

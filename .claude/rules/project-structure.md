@@ -4,6 +4,8 @@ description: Map of the repository — where each command, pipeline stage, provi
 
 # Project structure
 
+Keep this file under 8 KB (`maxRuleBytes`, `internal/review/rules.go`). CodeCanary truncates rule files past that point. If it grows close to the limit, split it by area into separate rule files.
+
 ```
 cmd/
   review/          # Main binary — review CLI + setup wizard
