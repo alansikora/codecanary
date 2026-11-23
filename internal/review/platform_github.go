@@ -158,6 +158,11 @@ type GithubPlatform struct {
 	ReplyOnly bool
 	// reviewOn is the config's review_on, set by LoadRules.
 	reviewOn string
+	// deferredResolves are the threads this run settled but its token could
+	// not resolve; see resolveOrDefer.
+	deferredResolves []string
+	// resolveThread replaces ResolveThread in tests.
+	resolveThread func(threadID string) error
 }
 
 // statusContext is the name of the commit status the platform posts.
@@ -227,22 +232,14 @@ func (g *GithubPlatform) HandleResolutions(threads []ReviewThread, fixed []fixed
 					fmt.Fprintf(os.Stderr, "  ! %s — failed to post file-removed comment: %v\n", label, err)
 				}
 			}
-			if err := ResolveThread(t.ID); err != nil {
-				if strings.Contains(err.Error(), "Resource not accessible") {
-					fmt.Fprintf(os.Stderr, "  ~ %s (auto-resolve unavailable: token lacks permission)\n", label)
-				} else {
-					fmt.Fprintf(os.Stderr, "  ! %s — resolved, but failed to update thread: %v\n", label, err)
-				}
-			}
+			g.resolveOrDefer(t, "resolved, but failed to update thread")
 		} else if g.ResolveAcceptedReplies {
 			// The reply settles the finding: say so and close the thread.
 			msg := acceptedReplyMessage(f.Reason, f.Rationale)
 			if err := ReplyToThread(t.ID, msg); err != nil {
 				fmt.Fprintf(os.Stderr, "  ! %s — failed to post acknowledgment: %v\n", label, err)
 			}
-			if err := ResolveThread(t.ID); err != nil {
-				fmt.Fprintf(os.Stderr, "  ! %s — accepted, but failed to resolve the thread: %v\n", label, err)
-			}
+			g.resolveOrDefer(t, "accepted, but failed to resolve the thread")
 		} else {
 			if !hasAcknowledgmentReply(t) {
 				msg := acknowledgmentMessage(f.Reason)
@@ -251,6 +248,47 @@ func (g *GithubPlatform) HandleResolutions(threads []ReviewThread, fixed []fixed
 				}
 			}
 		}
+	}
+	g.writeResolveOutput()
+}
+
+// resolveOrDefer resolves t on GitHub. GitHub refuses resolveReviewThread to
+// an app installation token without contents: write, and the action's review
+// token is deliberately contents: read (the model reviews an untrusted diff
+// next to it). Such a thread is deferred instead: its ID goes into the
+// `resolve_threads` step output, and the action's next step resolves it with
+// `codecanary resolve` and a token minted after the model has finished.
+// Outside GitHub Actions there is no next step, so the refusal is reported.
+func (g *GithubPlatform) resolveOrDefer(t ReviewThread, failure string) {
+	resolve := g.resolveThread
+	if resolve == nil {
+		resolve = ResolveThread
+	}
+	err := resolve(t.ID)
+	if err == nil {
+		return
+	}
+	label := threadLabel(t)
+	switch {
+	case !isResolvePermissionError(err):
+		fmt.Fprintf(os.Stderr, "  ! %s — %s: %v\n", label, failure, err)
+	case os.Getenv("GITHUB_OUTPUT") == "":
+		fmt.Fprintf(os.Stderr, "  ! %s — the thread stays open: this token cannot resolve review threads (GitHub requires contents: write); resolve it on the PR\n", label)
+	default:
+		g.deferredResolves = append(g.deferredResolves, t.ID)
+		fmt.Fprintf(os.Stderr, "  ~ %s (this token cannot resolve threads; left for the resolve step)\n", label)
+	}
+}
+
+// writeResolveOutput sets the `resolve_threads` step output to every thread
+// deferred so far. HandleResolutions runs more than once per review and a
+// step output keeps its last value, so each call writes the whole list.
+func (g *GithubPlatform) writeResolveOutput() {
+	if len(g.deferredResolves) == 0 {
+		return
+	}
+	if err := writeGithubOutput(resolveThreadsOutput, strings.Join(g.deferredResolves, ",")); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not write the %s output; %d thread(s) stay open: %v\n", resolveThreadsOutput, len(g.deferredResolves), err)
 	}
 }
 

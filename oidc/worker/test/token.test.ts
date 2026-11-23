@@ -82,6 +82,17 @@ describe("POST /token", () => {
     expect(REVIEW_PERMISSIONS.contents).toBe("read");
   });
 
+  it("resolve mode asks for only what resolving a review thread needs", async () => {
+    const resp = await worker.fetch(tokenRequest('{"mode":"resolve"}'), env);
+    expect(resp.status).toBe(200);
+    expect(tokenRequests).toEqual([
+      {
+        repositories: ["widget"],
+        permissions: { contents: "write", pull_requests: "read" },
+      },
+    ]);
+  });
+
   it.each([
     ["fix mode", '{"mode":"fix"}'],
     ["no body", undefined],

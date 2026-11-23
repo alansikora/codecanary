@@ -152,6 +152,34 @@ runs:
           $POST_FLAG \
           $REPLY_ONLY_FLAG
 
+    # GitHub lets only a token with contents: write resolve a review thread,
+    # and the review's token has contents: read. The review therefore reports
+    # the threads it settled (`resolve_threads`), and they are resolved here,
+    # after the model has finished, with a token minted for this step alone.
+    # `codecanary resolve` takes nothing from the review but the thread IDs
+    # and resolves only CodeCanary finding threads on this PR. It fails the
+    # job when a thread stays open, so the PR never shows a finding as
+    # resolved while its thread still blocks the merge.
+    - name: Generate resolve token
+      id: resolve-token
+      if: inputs.mode != 'fix' && steps.run-review.outputs.resolve_threads != ''
+      shell: bash
+      env:
+        MODE: resolve
+      run: |
+        "${{ github.action_path }}/scripts/app-token.sh"
+
+    - name: Resolve threads
+      if: inputs.mode != 'fix' && steps.run-review.outputs.resolve_threads != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ steps.resolve-token.outputs.token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        REPO: ${{ github.repository }}
+        THREADS: ${{ steps.run-review.outputs.resolve_threads }}
+      run: |
+        codecanary resolve "$PR_NUMBER" --repo "$REPO" --threads "$THREADS"
+
     - name: Run fix
       if: inputs.mode == 'fix'
       shell: bash

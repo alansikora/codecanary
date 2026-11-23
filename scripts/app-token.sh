@@ -2,20 +2,22 @@
 # Exchanges the job's GitHub Actions OIDC token for a CodeCanary app
 # installation token and writes it to $GITHUB_OUTPUT as `token`.
 #
-# MODE is the action's `mode` input. A fix gets the app's full permissions,
-# since it pushes. Anything else (a review, or a reply_only run) asks for a
-# token that cannot write contents, and the step fails if the worker grants
-# more: an older worker ignores the request body and would hand back a token
-# that can push.
+# MODE is the action's `mode` input, or `resolve` for the action's resolve
+# step. A fix gets the app's full permissions, since it pushes. `resolve` gets
+# the token `codecanary resolve` needs to resolve review threads (GitHub
+# requires contents: write for that). Anything else (a review, or a
+# reply_only run) asks for a token that cannot write contents, and the step
+# fails if the worker grants more: an older worker ignores the request body
+# and would hand back a token that can push.
 set -euo pipefail
 
 OIDC_URL=https://oidc.codecanary.sh/token
 
-if [ "${MODE:-review}" = "fix" ]; then
-  TOKEN_MODE=fix
-else
-  TOKEN_MODE=review
-fi
+case "${MODE:-review}" in
+  fix) TOKEN_MODE=fix ;;
+  resolve) TOKEN_MODE=resolve ;;
+  *) TOKEN_MODE=review ;;
+esac
 
 # Request OIDC token from GitHub Actions (requires id-token: write permission).
 if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
