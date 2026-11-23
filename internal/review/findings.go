@@ -24,6 +24,9 @@ type Finding struct {
 	// Such findings are open questions, not threads: see SplitOpenQuestions.
 	NeedsVerification bool   `json:"needs_verification,omitempty"`
 	Status            string `json:"status,omitempty"` // "new", "still open", or "" (first review)
+	// IntentHash is PRIntent.Hash of the intent an intent-* finding was
+	// raised against; "" for other findings. Set by Go, never the model.
+	IntentHash string `json:"intent_hash,omitempty"`
 }
 
 // ReviewResult holds the complete output of a review run.
@@ -46,6 +49,10 @@ type ReviewResult struct {
 	// RulesChanged lists PR files that are rule sources, when the review
 	// read the rules from the base branch instead (see rulesource.go).
 	RulesChanged []string `json:"rules_changed,omitempty"`
+	// RoundLimit is the tier's max_rounds when this run is past it: the
+	// open threads were re-checked and nothing new was reviewed, so the
+	// head gets only a status, marked "review limit reached". 0 otherwise.
+	RoundLimit int `json:"round_limit,omitempty"`
 }
 
 // jsonFenceRe matches a ```json ... ``` code fence.

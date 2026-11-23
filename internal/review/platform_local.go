@@ -93,8 +93,8 @@ func (l *LocalPlatform) SkipReview(_ *ReviewConfig, _ bool) (bool, error) {
 	return false, nil
 }
 
-// StopAtRoundLimit never stops: rounds count reviews posted to a PR.
-func (l *LocalPlatform) StopAtRoundLimit(_ string, _ Tier) (bool, error) {
+// AtRoundLimit is never reached: rounds count reviews posted to a PR.
+func (l *LocalPlatform) AtRoundLimit(_ string, _ Tier) (bool, error) {
 	return false, nil
 }
 

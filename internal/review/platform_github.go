@@ -173,6 +173,8 @@ type GithubPlatform struct {
 	// threads it goes to the action as `resolve_status`, so a resolve step
 	// that fails can say so on that status; see writeResolveOutput.
 	lastStatus *ResolveStatus
+	// postStatus replaces SetReviewStatus in setStatus, in tests.
+	postStatus func(sha, state, desc string) error
 	// resolveThread replaces ResolveThread in tests.
 	resolveThread func(threadID string) error
 	// replyToThread replaces ReplyToThread in tests.
@@ -193,7 +195,11 @@ func (g *GithubPlatform) setStatus(sha, state, desc string) {
 	if sha == "" || g.DryRun {
 		return
 	}
-	if err := g.SetReviewStatus(sha, state, desc); err != nil {
+	post := g.postStatus
+	if post == nil {
+		post = g.SetReviewStatus
+	}
+	if err := post(sha, state, desc); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not post %s commit status: %v\n", g.statusContext(), err)
 		return
 	}
@@ -347,6 +353,10 @@ func (g *GithubPlatform) writeResolveOutput() {
 
 func (g *GithubPlatform) Publish(result *ReviewResult, pr *PRData, threads []ReviewThread, fixed []fixedThread) error {
 	summary := computeReviewSummary(threads, fixed, result.Findings)
+	if result.RoundLimit > 0 {
+		g.publishRoundLimit(result.SHA, summary, result.RoundLimit)
+		return nil
+	}
 	// The workflow's fix job runs only when the repo enabled it and this
 	// review left findings open.
 	g.writeFixOutputs(openFindingCount(threads, fixed, result.Findings))
@@ -447,6 +457,16 @@ func (g *GithubPlatform) Publish(result *ReviewResult, pr *PRData, threads []Rev
 
 	g.postReviewCommitStatus(result.SHA, summary)
 	return nil
+}
+
+// publishRoundLimit publishes a run past the tier's round limit: only the
+// head's status, from the re-checked threads. No review is posted, so the
+// head stays unreviewed (no round is used, and the next run's incremental
+// baseline stays the last reviewed head), and no `findings` output is
+// written, so the fix job does not run.
+func (g *GithubPlatform) publishRoundLimit(sha string, summary ReviewSummary, maxRounds int) {
+	state, desc := roundLimitStatus(summary, maxRounds)
+	g.setStatus(sha, state, desc)
 }
 
 func (g *GithubPlatform) SaveState(_ *ReviewResult, _ []Finding, _ bool) error {
@@ -622,13 +642,13 @@ func (g *GithubPlatform) SkipReview(cfg *ReviewConfig, replyOnly bool) (bool, er
 	return true, nil
 }
 
-// StopAtRoundLimit counts the heads other than sha that carry a CodeCanary
-// review. Below the tier's max_rounds the run reviews. At it, sha gets the
-// status the open threads warrant without a model call, and the PR a notice
-// once per limit. A failure to read the reviews or threads, or to post the
-// status, is an error: guessing would either spend a round or pass a head
-// that has blocking findings.
-func (g *GithubPlatform) StopAtRoundLimit(sha string, tier Tier) (bool, error) {
+// AtRoundLimit counts the heads other than sha that carry a CodeCanary
+// review. Below the tier's max_rounds the run reviews. At it, the run only
+// re-checks the open threads (Publish then posts sha's status, see
+// publishRoundLimit), and the PR gets a notice once per limit. A failure to
+// read the reviews is an error: guessing would either spend a round or skip
+// the re-check.
+func (g *GithubPlatform) AtRoundLimit(sha string, tier Tier) (bool, error) {
 	maxRounds := tier.Config.MaxRounds
 	reviewed, err := FetchReviewedSHAs(g.Repo, g.PRNumber)
 	if err != nil {
@@ -639,22 +659,7 @@ func (g *GithubPlatform) StopAtRoundLimit(sha string, tier Tier) (bool, error) {
 		fmt.Fprintf(os.Stderr, "Tier %s — round %d of %d\n", tier.Name, rounds+1, maxRounds)
 		return false, nil
 	}
-	Stderrf(ansiYellow, "Tier %s — review limit reached (%d rounds); not reviewing %s\n", tier.Name, maxRounds, shortSHA(sha))
-	all, err := FetchReviewThreads(g.Repo, g.PRNumber)
-	if err != nil {
-		return true, fmt.Errorf("review limit reached: fetching review threads: %w", err)
-	}
-	var open []ReviewThread
-	for _, t := range all {
-		if !t.Resolved {
-			open = append(open, t)
-		}
-	}
-	state, desc := roundLimitStatus(open, maxRounds)
-	if err := g.SetReviewStatus(sha, state, desc); err != nil {
-		return true, fmt.Errorf("posting %s status at the review limit: %w", g.statusContext(), err)
-	}
-	Stderrf(ansiGreen, "Posted %s = %s on %s (%s)\n", g.statusContext(), state, shortSHA(sha), desc)
+	Stderrf(ansiYellow, "Tier %s — review limit reached (%d rounds); re-checking the open findings on %s, no new review\n", tier.Name, maxRounds, shortSHA(sha))
 	if err := g.PostNotice(roundLimitNoticeKey(maxRounds), roundLimitNotice(tier, g.statusContext())); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not post the review limit notice: %v\n", err)
 	}
@@ -674,9 +679,9 @@ func roundsBefore(reviewed []string, sha string) int {
 }
 
 // roundLimitStatus is the commit status for a head past the round limit:
-// the open threads' status, marked as not reviewed.
-func roundLimitStatus(threads []ReviewThread, maxRounds int) (state, desc string) {
-	state, desc = openThreadsStatus(threads)
+// the status the re-checked threads warrant, marked as not reviewed.
+func roundLimitStatus(summary ReviewSummary, maxRounds int) (state, desc string) {
+	state, desc = commitStatusFromSummary(summary)
 	return state, fmt.Sprintf("%s; review limit reached (%d rounds)", desc, maxRounds)
 }
 
@@ -696,8 +701,9 @@ func roundLimitNotice(tier Tier, statusContext string) string {
 		plural = ""
 	}
 	return fmt.Sprintf("## \U0001F425 CodeCanary\n\n"+
-		"This PR has been reviewed %d time%s, the limit for tier `%s`, so later pushes are not reviewed. "+
-		"Each new commit gets a `%s` status from the findings still open: they stay open, and blocking ones keep it failing, until they are resolved. "+
+		"This PR has been reviewed %d time%s, the limit for tier `%s`, so later pushes are not reviewed for new findings. "+
+		"Each push and each reply on a thread still re-checks the findings that are open: one a push fixes, or a reply settles, is resolved, as before the limit. "+
+		"Each new commit gets a `%s` status from that check: blocking findings still open keep it failing. "+
 		"A thread resolved by hand is picked up on the next push or reply.\n\n"+
 		"To review this PR again, raise `max_rounds` for `%s` in `.codecanary/config.yml` on the base branch.\n",
 		tier.Config.MaxRounds, plural, name, ctx, name)

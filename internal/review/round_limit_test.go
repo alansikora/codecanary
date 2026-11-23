@@ -80,7 +80,7 @@ func TestRoundLimitStatus(t *testing.T) {
 		{"a bug open", []ReviewThread{nit, bug}, "failure", "blocking: 1, non-blocking: 1; review limit reached (2 rounds)"},
 	}
 	for _, c := range cases {
-		state, desc := roundLimitStatus(c.threads, 2)
+		state, desc := roundLimitStatus(computeReviewSummary(c.threads, nil, nil), 2)
 		if state != c.wantState || desc != c.wantDesc {
 			t.Errorf("%s: got (%q, %q), want (%q, %q)", c.name, state, desc, c.wantState, c.wantDesc)
 		}
@@ -90,8 +90,9 @@ func TestRoundLimitStatus(t *testing.T) {
 func TestRoundLimitNotice(t *testing.T) {
 	tier := Tier{Name: "tier:peer", Config: TierConfig{MaxRounds: 2}}
 	want := "## \U0001F425 CodeCanary\n\n" +
-		"This PR has been reviewed 2 times, the limit for tier `tier:peer`, so later pushes are not reviewed. " +
-		"Each new commit gets a `CodeCanary / review` status from the findings still open: they stay open, and blocking ones keep it failing, until they are resolved. " +
+		"This PR has been reviewed 2 times, the limit for tier `tier:peer`, so later pushes are not reviewed for new findings. " +
+		"Each push and each reply on a thread still re-checks the findings that are open: one a push fixes, or a reply settles, is resolved, as before the limit. " +
+		"Each new commit gets a `CodeCanary / review` status from that check: blocking findings still open keep it failing. " +
 		"A thread resolved by hand is picked up on the next push or reply.\n\n" +
 		"To review this PR again, raise `max_rounds` for `tier:peer` in `.codecanary/config.yml` on the base branch.\n"
 	if got := roundLimitNotice(tier, DefaultStatusContext); got != want {
