@@ -225,3 +225,18 @@ func TestHandleResolutionsRecordsDeferredFixedVerdict(t *testing.T) {
 		t.Errorf("deferred %v, want all three threads", g.deferredResolves)
 	}
 }
+
+// Status helpers must agree with triage and `codecanary findings`: a thread
+// with the bot's fixed verdict is not open.
+func TestStatusHelpersSkipFixedVerdict(t *testing.T) {
+	verdict := ThreadReply{Author: "bot", Body: fixedMarker + "\nFixed by a code change — resolving."}
+	fixedThread := ReviewThread{ID: "PRRT_fixed", Author: "bot", Path: "a.go", Line: 1, Body: "finding", Replies: []ThreadReply{verdict}}
+	forged := ReviewThread{ID: "PRRT_forged", Author: "bot", Path: "b.go", Line: 2, Body: "finding", Replies: []ThreadReply{{Author: "user", Body: fixedMarker}}}
+
+	if n := openFindingCount([]ReviewThread{fixedThread, forged}, nil, nil); n != 1 {
+		t.Errorf("openFindingCount = %d, want 1 (only the forged marker counts as open)", n)
+	}
+	if state, desc := openThreadsStatus([]ReviewThread{fixedThread}); state != "success" {
+		t.Errorf("openThreadsStatus = %s (%s), want success", state, desc)
+	}
+}

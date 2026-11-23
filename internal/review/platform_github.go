@@ -117,6 +117,14 @@ func acceptedReplyMessage(reason, rationale string) string {
 	return msg
 }
 
+// threadSettledByBot reports whether the bot already settled t without
+// resolving it: an ack reply, or a "fixed" verdict the resolve step has yet
+// to act on. Neither counts as open or blocking. The finding's own author,
+// the bot, must have written the fixed reply, as triage requires.
+func threadSettledByBot(t ReviewThread) bool {
+	return hasAcknowledgmentReply(t) || hasFixedReply(t, t.Author)
+}
+
 // hasAcknowledgmentReply reports whether the thread already carries any
 // codecanary ack reply. Dedup is intentionally reason-agnostic: all three
 // ack reasons (dismissed/rebutted/acknowledged) keep the thread open and
@@ -491,7 +499,7 @@ func openFindingCount(threads []ReviewThread, fixed []fixedThread, newFindings [
 	}
 	n := len(newFindings)
 	for i, t := range threads {
-		if !handled[i] && !hasAcknowledgmentReply(t) {
+		if !handled[i] && !threadSettledByBot(t) {
 			n++
 		}
 	}
@@ -628,7 +636,7 @@ func skippedPushStatus(threads []ReviewThread) (state, desc string) {
 func openThreadsStatus(threads []ReviewThread) (state, desc string) {
 	var open []ReviewThread
 	for _, t := range threads {
-		if !hasAcknowledgmentReply(t) {
+		if !threadSettledByBot(t) {
 			open = append(open, t)
 		}
 	}
