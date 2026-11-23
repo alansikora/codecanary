@@ -21,14 +21,16 @@ gets the open findings and file access confined to the checkout: the Claude
 CLI with file tools and no shell, or the Codex CLI with every command and
 edit in its OS sandbox, without network. Per finding it applies the minimal
 edit, refutes the finding with a reason (posted as a reply on its thread),
-or leaves it open. The edits are committed once, authored by the PR author,
+or leaves it open (the reason is posted as a reply on its thread). The
+edits are committed once, authored by the PR author,
 and pushed to the PR branch with the CodeCanary app's token (GH_TOKEN),
 which triggers the next review.
 
 Loop limits come from the PR's commits: at most fix.max_per_push fix
 commits since the last commit that is not a fix, and fix.max_per_pr over
 the PR's life. At a limit no model runs; one comment lists the open
-findings.
+findings. When a cycle commits nothing and findings stay open, one comment
+per head (edited on a re-run) says the loop stopped and lists them.
 
 The command never fails CI: provider, rate-limit and push failures post
 one comment per head pointing at /codecanary-fix, and every error exits 0
