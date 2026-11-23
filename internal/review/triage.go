@@ -555,8 +555,8 @@ func buildReplyPrompt(t TriagedThread, cfg *ReviewConfig) string {
 	b.WriteString("- **Dismissed**: Reply explicitly asks the reviewer to dismiss, ignore, or skip the finding (e.g. \"dismiss this\", \"you can safely dismiss\", \"please ignore\", \"skip this one\"). The author is exercising their authority to close the thread without further justification.\n")
 	b.WriteString("- **Acknowledged**: Reply indicates the finding is intentional, accepted, or tracked elsewhere (e.g. \"intentional\", \"will fix in a future PR\", \"tracked in issue #N\").\n")
 	b.WriteString("- **Rebutted**: Reply provides concrete technical reasoning showing the finding is not applicable. Vague disagreement (\"I don't think so\") does NOT qualify — the reply must cite specific technical details, framework behavior, or project constraints.\n")
-	b.WriteString("- **Not resolved**: Reply is a question, vague disagreement, or does not address the finding.\n\n")
-	writeResolutionFormat(&b, cfg != nil && cfg.ResolveAcceptedReplies)
+	b.WriteString("- **Not resolved**: Reply is a question, vague disagreement, or does not address the finding. A reply that only says the code was fixed (e.g. \"fixed\", \"done\") is also not resolved here: no code change at the finding is shown.\n\n")
+	writeReplyResolutionFormat(&b, cfg != nil && cfg.ResolveAcceptedReplies)
 
 	return b.String()
 }
@@ -705,17 +705,34 @@ func writeReplies(b *strings.Builder, t ReviewThread, botLogin string) {
 }
 
 // writeResolutionFormat writes the expected JSON response format with all reason options.
-// Used for prompts where author replies are present (TriageHasReply, TriageCodeChangedReply).
+// Used for prompts with both a code change and author replies (TriageCodeChangedReply).
 // explainRejection (resolve_accepted_replies) asks for the reason a reply
 // does not settle the finding; it is posted to the author once.
 func writeResolutionFormat(b *strings.Builder, explainRejection bool) {
 	b.WriteString("Return a JSON object inside a ```json code fence:\n")
 	b.WriteString("- If resolved: `{\"resolved\": true, \"reason\": \"<reason>\", \"rationale\": \"<one sentence>\"}` — `reason` is one of `\"code_change\"`, `\"dismissed\"`, `\"acknowledged\"`, `\"rebutted\"`. `rationale` must be a single sentence naming the specific change, reply, or reasoning that resolved the finding (e.g. \"Removed the three `original_error_*` fields from the service logger\").\n")
+	writeNotResolvedFormat(b, explainRejection)
+}
+
+// writeNotResolvedFormat writes the "not resolved" answer shared by the
+// prompts that evaluate an author reply. With explainRejection it asks for
+// the sentence posted to the author.
+func writeNotResolvedFormat(b *strings.Builder, explainRejection bool) {
 	if explainRejection {
 		b.WriteString("- If NOT resolved: `{\"resolved\": false, \"rationale\": \"<one sentence>\"}` — `rationale` tells the author, in one sentence addressed to them, what the reply leaves unanswered. It is posted on the thread.\n")
 		return
 	}
 	b.WriteString("- If NOT resolved: `{\"resolved\": false}`\n")
+}
+
+// writeReplyResolutionFormat writes a restricted JSON response format for
+// reply-only evaluations (TriageHasReply). It leaves out code_change: the
+// prompt shows no code change, and validateResolutionReason rejects that
+// reason for this class. explainRejection is as in writeResolutionFormat.
+func writeReplyResolutionFormat(b *strings.Builder, explainRejection bool) {
+	b.WriteString("Return a JSON object inside a ```json code fence:\n")
+	b.WriteString("- If resolved: `{\"resolved\": true, \"reason\": \"<reason>\", \"rationale\": \"<one sentence>\"}` — `reason` is one of `\"dismissed\"`, `\"acknowledged\"`, `\"rebutted\"`. `rationale` must be a single sentence naming the reply or reasoning that resolved the finding (e.g. \"The author says the retry limit is intentional and documented in the API spec\").\n")
+	writeNotResolvedFormat(b, explainRejection)
 }
 
 // writeCodeChangeResolutionFormat writes a restricted JSON response format
@@ -844,14 +861,32 @@ func parseThreadResolution(output string, index int) ThreadResolution {
 	return ThreadResolution{Index: index, Resolved: false}
 }
 
-// validateResolutionReason enforces that code-change-only classifications
-// (no author reply) can only resolve with reason "code_change". If Claude
-// returns "acknowledged"/"dismissed"/"rebutted", treat it as unresolved.
+// replyOnlyCodeChangeRationale replaces the evaluator's rationale when a
+// reply-only thread is answered "code_change".
+const replyOnlyCodeChangeRationale = "The code at this finding has not changed since the last review, so a reply saying it was fixed does not settle it."
+
+// validateResolutionReason enforces two rules the evaluator cannot override:
+//   - code-change-only classifications (no author reply) resolve only with
+//     reason "code_change"; "acknowledged"/"dismissed"/"rebutted" become
+//     unresolved.
+//   - a reply-only classification (the code at the finding did not change,
+//     and the prompt shows no diff) never resolves with "code_change",
+//     whatever the reply claims.
 func validateResolutionReason(res ThreadResolution, class ThreadClassification) ThreadResolution {
-	if res.Resolved && res.Reason != "code_change" &&
-		(class == TriageCodeChanged || class == TriageCrossFileChange) {
+	if !res.Resolved {
+		return res
+	}
+	switch {
+	case (class == TriageCodeChanged || class == TriageCrossFileChange) && res.Reason != "code_change":
 		res.Resolved = false
 		res.Reason = ""
+	case class == TriageHasReply && res.Reason == "code_change":
+		res.Resolved = false
+		res.Reason = ""
+		// The evaluator's rationale argued for resolving. With
+		// resolve_accepted_replies the rationale of a rejected reply is
+		// posted to the author, so say why the reply was not accepted.
+		res.Rationale = replyOnlyCodeChangeRationale
 	}
 	return res
 }

@@ -243,7 +243,7 @@ func TestBuildCrossFilePrompt_OnlyAllowsCodeChangeReason(t *testing.T) {
 	}
 }
 
-func TestBuildReplyPrompt_AllowsAllReasons(t *testing.T) {
+func TestBuildReplyPrompt_OffersReplyReasonsOnly(t *testing.T) {
 	tt := TriagedThread{
 		Thread: ReviewThread{
 			Path: "main.go",
@@ -257,10 +257,21 @@ func TestBuildReplyPrompt_AllowsAllReasons(t *testing.T) {
 	}
 	prompt := buildReplyPrompt(tt, nil)
 
-	for _, reason := range []string{`"code_change"`, `"acknowledged"`, `"dismissed"`, `"rebutted"`} {
+	for _, reason := range []string{`"acknowledged"`, `"dismissed"`, `"rebutted"`} {
 		if !strings.Contains(prompt, reason) {
 			t.Errorf("buildReplyPrompt must offer %s as a reason", reason)
 		}
+	}
+	// The reply prompt shows no code change, and validateResolutionReason
+	// rejects code_change on TriageHasReply, so the prompt must not offer it.
+	if strings.Contains(prompt, `"code_change"`) {
+		t.Error("buildReplyPrompt must not offer \"code_change\" as a reason")
+	}
+
+	// resolve_accepted_replies still gets its rejection rationale here.
+	explained := buildReplyPrompt(tt, &ReviewConfig{ResolveAcceptedReplies: true})
+	if !strings.Contains(explained, "It is posted on the thread") || strings.Contains(explained, `"code_change"`) {
+		t.Error("buildReplyPrompt with resolve_accepted_replies must ask for the rejection rationale and still not offer code_change")
 	}
 }
 
@@ -587,15 +598,53 @@ func (p *stickyAckPanicProvider) Run(_ context.Context, _ string, _ RunOpts) (*p
 
 func TestResolutionFormat_RequestsRationale(t *testing.T) {
 	for _, fn := range map[string]func(*strings.Builder){
-		"writeResolutionFormat":           func(b *strings.Builder) { writeResolutionFormat(b, false) },
-		"writeResolutionFormat/explain":   func(b *strings.Builder) { writeResolutionFormat(b, true) },
-		"writeCodeChangeResolutionFormat": writeCodeChangeResolutionFormat,
+		"writeResolutionFormat":              func(b *strings.Builder) { writeResolutionFormat(b, false) },
+		"writeResolutionFormat/explain":      func(b *strings.Builder) { writeResolutionFormat(b, true) },
+		"writeCodeChangeResolutionFormat":    writeCodeChangeResolutionFormat,
+		"writeReplyResolutionFormat":         func(b *strings.Builder) { writeReplyResolutionFormat(b, false) },
+		"writeReplyResolutionFormat/explain": func(b *strings.Builder) { writeReplyResolutionFormat(b, true) },
 	} {
 		var b strings.Builder
 		fn(&b)
 		out := b.String()
 		if !strings.Contains(out, `"rationale"`) {
 			t.Errorf("prompt format should request a rationale field, got:\n%s", out)
+		}
+	}
+}
+
+func TestValidateResolutionReason_ReplyOnlyCannotClaimCodeChange(t *testing.T) {
+	// The author replies "fixed" but pushed nothing that touches the finding.
+	// The reply prompt shows no diff, so a code_change verdict rests on the
+	// author's word alone and must not resolve the thread.
+	output := "```json\n{\"resolved\": true, \"reason\": \"code_change\"}\n```"
+	parsed := parseThreadResolution(output, 0)
+
+	res := validateResolutionReason(parsed, TriageHasReply)
+	if res.Resolved || res.Reason != "" {
+		t.Errorf("reply-only code_change should be rejected, got %+v", res)
+	}
+	// With resolve_accepted_replies the rationale of a rejected reply is
+	// posted to the author: it must explain the rejection, not carry the
+	// evaluator's case for resolving.
+	withRationale := parsed
+	withRationale.Rationale = "The author says the query was fixed."
+	if res := validateResolutionReason(withRationale, TriageHasReply); res.Rationale != replyOnlyCodeChangeRationale {
+		t.Errorf("rejected code_change keeps the evaluator's rationale: %q", res.Rationale)
+	}
+
+	// The same verdict stands when the code at the finding did change.
+	for _, class := range []ThreadClassification{TriageCodeChanged, TriageCodeChangedReply, TriageCrossFileChange} {
+		if res := validateResolutionReason(parsed, class); !res.Resolved || res.Reason != "code_change" {
+			t.Errorf("class %d: code_change should be accepted, got %+v", class, res)
+		}
+	}
+
+	// Reply-only threads still resolve by the reply's own reasons.
+	for _, reason := range []string{"dismissed", "acknowledged", "rebutted"} {
+		in := ThreadResolution{Resolved: true, Reason: reason}
+		if res := validateResolutionReason(in, TriageHasReply); !res.Resolved || res.Reason != reason {
+			t.Errorf("reply-only %s should be accepted, got %+v", reason, res)
 		}
 	}
 }
