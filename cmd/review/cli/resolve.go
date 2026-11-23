@@ -38,6 +38,8 @@ ID is refused. Exits non-zero when a thread could not be resolved.`,
 		if len(ids) == 0 {
 			return errors.New("--threads required (comma-separated review thread IDs)")
 		}
+		// A thread left open is not a usage error.
+		cmd.SilenceUsage = true
 		return review.ResolveFindingThreads(repo, prNumber, ids)
 	},
 }
