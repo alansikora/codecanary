@@ -2,6 +2,7 @@ package review
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -56,6 +57,9 @@ const (
 	reviewMarkerSuffix  = " -->"
 	findingMarkerPrefix = "<!-- codecanary:finding "
 	ackMarkerPrefix     = "<!-- codecanary:ack:"
+	// rejectedReplyMarker marks the bot's answer to an author reply triage
+	// did not accept (resolve_accepted_replies).
+	rejectedReplyMarker = "<!-- codecanary:reply-rejected -->"
 	legacyAckPrefix     = "<!-- clanopy:ack:"
 )
 
@@ -67,6 +71,9 @@ type PRData struct {
 	Author       string
 	BaseBranch   string
 	HeadBranch   string
+	BaseSHA      string   // base branch tip the PR targets (GitHub mode)
+	HeadSHA      string   // PR head commit (GitHub mode)
+	Labels       []string // PR labels (GitHub mode)
 	Diff         string
 	FullDiff     string // unfiltered diff for finding validation (set by prepareReview)
 	Files        []string
@@ -92,9 +99,11 @@ type ghPRView struct {
 	} `json:"author"`
 	BaseRefName string `json:"baseRefName"`
 	HeadRefName string `json:"headRefName"`
-	Files       []struct {
-		Path string `json:"path"`
-	} `json:"files"`
+	BaseRefOid  string `json:"baseRefOid"`
+	HeadRefOid  string `json:"headRefOid"`
+	Labels      []struct {
+		Name string `json:"name"`
+	} `json:"labels"`
 }
 
 // FetchPR gets PR metadata and diff using the gh CLI.
@@ -104,7 +113,7 @@ func FetchPR(repo string, number int) (*PRData, error) {
 	// Fetch PR metadata as JSON.
 	viewOut, err := runGH("gh pr view", "pr", "view", numStr,
 		"--repo", repo,
-		"--json", "title,body,author,baseRefName,headRefName,files",
+		"--json", "title,body,author,baseRefName,headRefName,baseRefOid,headRefOid,labels",
 	)
 	if err != nil {
 		return nil, err
@@ -115,16 +124,35 @@ func FetchPR(repo string, number int) (*PRData, error) {
 		return nil, fmt.Errorf("parsing gh pr view output: %w", err)
 	}
 
+	// Fetch the full changed-file list. gh pr view --json files stops at
+	// 100 files; the paginated files API returns up to 3000.
+	filesOut, err := runGH("gh api pulls files", "api", "--paginate",
+		fmt.Sprintf("repos/%s/pulls/%d/files?per_page=100", repo, number),
+		"--jq", ".[].filename",
+	)
+	if err != nil {
+		return nil, err
+	}
+	var files []string
+	for _, line := range strings.Split(string(filesOut), "\n") {
+		if f := strings.TrimSpace(line); f != "" {
+			files = append(files, f)
+		}
+	}
+
 	// Fetch the diff. This hits GitHub's pull request diff API
 	// (GET /repos/{owner}/{repo}/pulls/{n} with Accept: application/vnd.github.v3.diff).
 	diffOut, err := runGH("gh pr diff", "pr", "diff", numStr, "--repo", repo)
 	if err != nil {
+		if isDiffTooLarge(err) {
+			return nil, &DiffTooLargeError{Files: len(files), Err: err}
+		}
 		return nil, fmt.Errorf("%w (GitHub pull request diff API; if this looks like a transient 5xx/timeout, retrying the job may help)", err)
 	}
 
-	files := make([]string, len(view.Files))
-	for i, f := range view.Files {
-		files[i] = f.Path
+	labels := make([]string, len(view.Labels))
+	for i, l := range view.Labels {
+		labels[i] = l.Name
 	}
 
 	return &PRData{
@@ -134,9 +162,36 @@ func FetchPR(repo string, number int) (*PRData, error) {
 		Author:     view.Author.Login,
 		BaseBranch: view.BaseRefName,
 		HeadBranch: view.HeadRefName,
+		BaseSHA:    view.BaseRefOid,
+		HeadSHA:    view.HeadRefOid,
+		Labels:     labels,
 		Diff:       string(diffOut),
 		Files:      files,
 	}, nil
+}
+
+// githubDiffMaxFiles is the file limit of GitHub's pull request diff API.
+const githubDiffMaxFiles = 300
+
+// DiffTooLargeError reports a PR whose diff GitHub refuses to serve
+// (over 300 files or roughly 20,000 lines), so the PR cannot be reviewed.
+type DiffTooLargeError struct {
+	Files int
+	Err   error
+}
+
+func (e *DiffTooLargeError) Error() string {
+	return fmt.Sprintf("PR is too large to review: it changes %d files, and GitHub's diff API serves at most %d files or about 20,000 lines; split it into smaller PRs (%v)",
+		e.Files, githubDiffMaxFiles, e.Err)
+}
+
+func (e *DiffTooLargeError) Unwrap() error { return e.Err }
+
+// isDiffTooLarge reports whether a gh pr diff error is GitHub's 406
+// "diff exceeded the maximum number of files/lines" response.
+func isDiffTooLarge(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "HTTP 406") || strings.Contains(msg, "exceeded the maximum")
 }
 
 // PostComment posts a review comment on a PR.
@@ -351,21 +406,15 @@ func PostReview(repo string, prNumber int, result *ReviewResult, prFiles []strin
 	return nil
 }
 
-// ReviewCommitStatusContext is the commit-status context the review bot
-// writes when a review run completes. Using a stable string lets teams
-// require it in branch protection — "CodeCanary / review must be green
-// before merge." Matches the context used by `codecanary signoff`, so
-// both the bot (on PRs with the workflow) and a local signoff can
-// satisfy the same required check.
-const ReviewCommitStatusContext = "CodeCanary / review"
-
 // PostReviewCommitStatus POSTs a commit status on the given SHA summarising
 // the review outcome. state is "success" when all findings are resolved or
 // handled by the author, "failure" otherwise. Description is shown on the
 // PR checks list, so keep it short and human-readable. Errors are returned
 // so the caller can log them — a failed status post should not abort the
 // larger Publish flow, since the review itself has already been posted.
-func PostReviewCommitStatus(repo, sha, state, description string) error {
+// statusContext names the status (status_context, see
+// ReviewConfig.EffectiveStatusContext); "" means DefaultStatusContext.
+func PostReviewCommitStatus(repo, statusContext, sha, state, description string) error {
 	if sha == "" {
 		return fmt.Errorf("commit status requires a SHA")
 	}
@@ -375,7 +424,7 @@ func PostReviewCommitStatus(repo, sha, state, description string) error {
 	}
 	payload := map[string]string{
 		"state":       state,
-		"context":     ReviewCommitStatusContext,
+		"context":     cmp.Or(statusContext, DefaultStatusContext),
 		"description": description,
 	}
 	payloadJSON, err := json.Marshal(payload)
@@ -585,6 +634,30 @@ type ghReview struct {
 	Body   string `json:"body"`
 }
 
+// fetchPRReviews returns the PR's reviews, oldest first.
+func fetchPRReviews(repo string, prNumber int) ([]ghReview, error) {
+	owner, name, err := parseRepoSlug(repo)
+	if err != nil {
+		return nil, err
+	}
+	apiPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, name, prNumber)
+	out, err := exec.Command("gh", "api", "--paginate", apiPath).Output()
+	if err != nil {
+		return nil, fmt.Errorf("fetching PR reviews: %w", err)
+	}
+	var reviews []ghReview
+	// --paginate concatenates one JSON array per page.
+	dec := json.NewDecoder(bytes.NewReader(out))
+	for dec.More() {
+		var page []ghReview
+		if err := dec.Decode(&page); err != nil {
+			return nil, fmt.Errorf("parsing PR reviews: %w", err)
+		}
+		reviews = append(reviews, page...)
+	}
+	return reviews, nil
+}
+
 // LatestCodecanaryReview captures the identity and body of the most recent
 // CodeCanary top-level review, together with the commit SHA embedded in its
 // hidden marker. Returned by FetchLatestCodecanaryReview for the
@@ -600,20 +673,9 @@ type LatestCodecanaryReview struct {
 // embedded in that marker. Returns (nil, nil) when no matching review
 // exists. A non-nil error is returned only for transport/parsing failures.
 func FetchLatestCodecanaryReview(repo string, prNumber int) (*LatestCodecanaryReview, error) {
-	owner, name, err := parseRepoSlug(repo)
+	reviews, err := fetchPRReviews(repo, prNumber)
 	if err != nil {
 		return nil, err
-	}
-
-	apiPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, name, prNumber)
-	out, err := exec.Command("gh", "api", apiPath).Output()
-	if err != nil {
-		return nil, fmt.Errorf("fetching PR reviews: %w", err)
-	}
-
-	var reviews []ghReview
-	if err := json.Unmarshal(out, &reviews); err != nil {
-		return nil, fmt.Errorf("parsing PR reviews: %w", err)
 	}
 
 	// Walk newest → oldest so we return the latest CodeCanary review.
@@ -700,19 +762,8 @@ func ghAPIRequest(method, apiPath string, payloadJSON []byte) ([]byte, error) {
 
 // FetchPreviousReviewSHA gets the SHA from the last review's hidden data.
 func FetchPreviousReviewSHA(repo string, prNumber int) string {
-	owner, name, err := parseRepoSlug(repo)
+	reviews, err := fetchPRReviews(repo, prNumber)
 	if err != nil {
-		return ""
-	}
-
-	apiPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, name, prNumber)
-	out, err := exec.Command("gh", "api", apiPath).Output()
-	if err != nil {
-		return ""
-	}
-
-	var reviews []ghReview
-	if err := json.Unmarshal(out, &reviews); err != nil {
 		return ""
 	}
 
@@ -1040,20 +1091,9 @@ func ghAPIPOST(apiPath string, payloadJSON []byte) ([]byte, error) {
 
 // FindReviewNodeIDs returns the node_ids of all reviews on a PR.
 func FindReviewNodeIDs(repo string, prNumber int) ([]string, error) {
-	owner, name, err := parseRepoSlug(repo)
+	reviews, err := fetchPRReviews(repo, prNumber)
 	if err != nil {
 		return nil, err
-	}
-
-	apiPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, name, prNumber)
-	out, err := exec.Command("gh", "api", apiPath).Output()
-	if err != nil {
-		return nil, fmt.Errorf("fetching PR reviews: %w", err)
-	}
-
-	var reviews []ghReview
-	if err := json.Unmarshal(out, &reviews); err != nil {
-		return nil, fmt.Errorf("parsing PR reviews: %w", err)
 	}
 
 	prefixes := reviewMarkerPrefixes
@@ -1253,20 +1293,9 @@ type ReviewInfo struct {
 
 // FindReviews returns reviews with their parsed finding IDs.
 func FindReviews(repo string, prNumber int) ([]ReviewInfo, error) {
-	owner, name, err := parseRepoSlug(repo)
+	reviews, err := fetchPRReviews(repo, prNumber)
 	if err != nil {
 		return nil, err
-	}
-
-	apiPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, name, prNumber)
-	out, err := exec.Command("gh", "api", apiPath).Output()
-	if err != nil {
-		return nil, fmt.Errorf("fetching PR reviews: %w", err)
-	}
-
-	var reviews []ghReview
-	if err := json.Unmarshal(out, &reviews); err != nil {
-		return nil, fmt.Errorf("parsing PR reviews: %w", err)
 	}
 
 	prefixes := reviewMarkerPrefixes

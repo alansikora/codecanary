@@ -45,10 +45,32 @@ type ReviewPlatform interface {
 
 	// ReportFailure tells the PR that a run failed (best-effort), so a
 	// failed run never looks like a clean review or leaves a required check
-	// waiting with no explanation. On GitHub it posts a PR notice and, for
-	// full reviews, an "error" commit status on HEAD. Locally it does
-	// nothing: the error is already printed.
+	// waiting with no explanation. On GitHub it posts a PR notice; the
+	// "error" commit status is set by Run through SetRunStatus. Locally it
+	// does nothing: the error is already printed.
 	ReportFailure(runErr error, replyOnly bool)
+
+	// LoadRules loads the config and locates the other rule sources (project
+	// docs, Claude rules, context_files). On GitHub they come from the PR's
+	// base commit, so a PR cannot change the rules it is reviewed by; locally
+	// from the working tree.
+	LoadRules(pr *PRData, configPath string) (*RuleSources, error)
+
+	// SetRunStatus reports the run's state for the commit it reviews:
+	// "pending" while it runs, "error" when it could not finish, "success"
+	// for a review the config skips. On GitHub this is the review's commit
+	// status; locally a no-op. Best-effort: failures are logged.
+	SetRunStatus(sha, state, desc string)
+
+	// PublishGate reports a review that did not run because the PR is not
+	// ready for one (e.g. no intent section): the blockers fail the status.
+	// The head is not marked reviewed, so the next run reviews it in full.
+	PublishGate(sha string, blockers []string) error
+
+	// AnswerRejectedReplies answers, once, each author reply triage did not
+	// accept (resolve_accepted_replies). On GitHub a reply on the thread;
+	// locally a no-op. rejected carries the evaluator's rationale.
+	AnswerRejectedReplies(threads []ReviewThread, rejected []fixedThread)
 }
 
 // combineFindings strips the Status field from stillOpen findings (so persisted

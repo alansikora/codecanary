@@ -79,16 +79,20 @@ This runs the same provider and key selection, then:
 
 Once merged, CodeCanary reviews every PR on open and push. Draft PRs are skipped by default.
 
+The app holds `contents: write` so the optional fix job can push, but a review never gets that: it runs with an app token limited to `contents: read`, pull requests and commit statuses, so nothing in a PR can make the review push code. Only the fix job's token can write contents. See [what the app token can do](docs/configuration.md#what-the-app-token-can-do).
+
 **Keeping the workflow current.** The workflow file is yours to customize, so it doesn't update itself. Its `# codecanary-workflow: v<N>` line records which template it came from; when a newer template ships, the bot adds a one-line note to its reviews. Re-run `codecanary setup github` (it asks before overwriting) or copy the changes from [the template](internal/setup/codecanary.yml), keeping the marker line. The same kind of note appears when the workflow pins an old `codecanary_version`.
 
 ### Gating merges on clean reviews
 
-CodeCanary can block merges until a review comes back clean. After every review, the bot (and the local `codecanary signoff` command) posts a GitHub commit status under the context `CodeCanary / review`:
+CodeCanary can block merges until a review comes back clean. After every review, the bot (and the local `codecanary signoff` command) posts a GitHub commit status under the context `CodeCanary / review` (rename it with `status_context`). Its description always reads `blocking: N, non-blocking: M`:
 
+- `pending` — a review of this commit is running
 - `success` — no unresolved blocking findings (everything is either unraised, fixed by code, handled by the author, or below `warning`)
-- `failure` — one or more findings at `warning` or above remain unresolved, with a description like `"3 unresolved blocking findings"`
+- `failure` — one or more findings at `warning` or above remain unresolved
+- `error` — the review could not run; the description says why (`config error: ...`, `timeout: ...`)
 
-Suggestions and nitpicks are still posted on the PR but don't fail the status (its description reads like `"2 non-blocking findings open"`), so they never force another push.
+Suggestions and nitpicks are still posted on the PR but don't fail the status, so they never force another push. Each finding comment starts with `[blocking]` or `[non-blocking]`. See [Commit status](docs/configuration.md#commit-status), and [Review tiers](docs/configuration.md#review-tiers) for picking the model, or skipping the review, per PR label.
 
 To turn this into a required check, add `CodeCanary / review` to your repo's required status checks via whichever branch protection mechanism you use (rulesets, classic branch protection rules, etc.). GitHub accepts any context name; if a review has already run, it will also show up in autocomplete.
 

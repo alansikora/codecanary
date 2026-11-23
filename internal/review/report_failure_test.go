@@ -24,7 +24,7 @@ func TestBuildReviewFailureNotice(t *testing.T) {
 	const sha = "6971e4164c0a4df9d89aefdb874174a56df420d4"
 	providerErr := fmt.Errorf("review: %w", &ProviderError{Provider: "anthropic", Kind: ErrorKindRateLimit, Message: "secret detail"})
 
-	got := buildReviewFailureNotice(sha, providerErr, false, "https://github.com/o/r/actions/runs/1")
+	got := buildReviewFailureNotice(sha, providerErr, false, "https://github.com/o/r/actions/runs/1", DefaultStatusContext)
 	for _, want := range []string{"`6971e416`", "**not reviewed**", "anthropic rate limit", "[Workflow run](https://github.com/o/r/actions/runs/1)"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("full-review notice lacks %q: %q", want, got)
@@ -34,19 +34,20 @@ func TestBuildReviewFailureNotice(t *testing.T) {
 		t.Errorf("notice must carry the one-line summary, not the provider message: %q", got)
 	}
 
-	got = buildReviewFailureNotice(sha, errors.New("fetching PR: boom\nsecond line"), true, "")
+	got = buildReviewFailureNotice(sha, errors.New("fetching PR: boom\nsecond line"), true, "", DefaultStatusContext)
 	if !strings.Contains(got, "latest replies") || strings.Contains(got, "second line") || strings.Contains(got, "Workflow run") {
 		t.Errorf("reply-only notice without a run URL: %q", got)
 	}
 
 	// The parse error seen on a real PR ends its first line with a colon;
 	// the sentence must not end in ":.".
-	got = buildReviewFailureNotice(sha, errors.New("parsing findings: no ```json code fence found in output:\nNo new findings."), false, "")
+	got = buildReviewFailureNotice(sha, errors.New("parsing findings: no ```json code fence found in output:\nNo new findings."), false, "", "Team / review")
 	if strings.Contains(got, ":.") || !strings.Contains(got, "found in output.") {
 		t.Errorf("trailing punctuation not trimmed: %q", got)
 	}
-	// The notice is never edited, so it must say where the current result is.
-	if !strings.Contains(got, "Later runs do not update this notice") {
+	// The notice is never edited, so it must say where the current result is,
+	// naming the configured status.
+	if !strings.Contains(got, "Later runs do not update this notice") || !strings.Contains(got, "`Team / review` status") {
 		t.Errorf("notice does not say it can be outdated: %q", got)
 	}
 }

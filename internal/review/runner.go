@@ -128,17 +128,24 @@ type reviewContext struct {
 	Coverage    *ReviewCoverage // files the prompt does not show in full
 }
 
-// prepareReview loads config, project docs, file contents, and resolves the
-// Claude environment. It also scopes pr.Diff for the prompt and records in
-// Coverage which files the prompt does not show in full. Both the PR and local paths use this.
-func prepareReview(pr *PRData, configPath string) (*reviewContext, error) {
-	cfg, err := LoadReviewConfig(configPath)
+// prepareReview reads project docs, Claude rules and context_files from
+// rules.Root, loads file contents, and resolves the Claude environment. It
+// also scopes pr.Diff for the prompt and records in Coverage which files the
+// prompt does not show in full. Both the PR and local paths use this.
+func prepareReview(pr *PRData, rules *RuleSources) (*reviewContext, error) {
+	cfg := rules.Config
+	projectDocs := readProjectDocsFrom(rules.Root, pr.Files)
+	ctxFiles, err := readContextFiles(rules.Root, cfg, pr.Files, cfg.EffectiveMaxFileSize())
 	if err != nil {
 		return nil, err
 	}
-
-	projectDocs := ReadProjectDocs(pr.Files)
-	for k, v := range ReadClaudeRules(pr.Files) {
+	for k, v := range ctxFiles {
+		// A context file that is also a loaded CLAUDE.md is already there.
+		if _, exists := projectDocs[k]; !exists {
+			projectDocs[k] = v
+		}
+	}
+	for k, v := range readClaudeRulesFrom(rules.Root, pr.Files) {
 		if _, exists := projectDocs[k]; exists {
 			// Namespaces normally differ (.claude/rules/ vs CLAUDE.md paths);
 			// guard anyway so a rule can never silently clobber a project doc.
@@ -267,6 +274,31 @@ func currentHEAD() (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// errorStatusDescription is the one-line commit-status description for a
+// run that could not finish: what kind of failure, then the message, cut to
+// the 140 characters GitHub keeps.
+func errorStatusDescription(err error) string {
+	msg := strings.Join(strings.Fields(err.Error()), " ")
+	var pe *ProviderError
+	switch {
+	case strings.HasPrefix(msg, "config error") || strings.HasPrefix(msg, "loading config") || strings.HasPrefix(msg, "invalid config"):
+		if !strings.HasPrefix(msg, "config error") {
+			msg = "config error: " + msg
+		}
+	case errors.Is(err, context.DeadlineExceeded) || strings.Contains(msg, "timed out"):
+		msg = "timeout: " + msg
+	case errors.As(err, &pe):
+		msg = "provider error: " + msg
+	default:
+		msg = "review failed: " + msg
+	}
+	const limit = 140
+	if len(msg) > limit {
+		msg = strings.ToValidUTF8(msg[:limit-3], "") + "..."
+	}
+	return msg
+}
+
 // Run orchestrates the full review flow using the platform adapter. A run
 // that fails is reported through the platform, so it never looks like a
 // clean review. A --fail-on threshold hit is a finished review, not a
@@ -285,7 +317,12 @@ func isRunFailure(err error) bool {
 	return err != nil && !errors.As(err, &failOn)
 }
 
-func run(opts RunOptions) error {
+// run is the review pipeline behind Run.
+//
+// A review run owns the review's commit status on the head it reviews:
+// pending while it runs, its result once published, error when it fails
+// before publishing. A reply-only run only refreshes the result.
+func run(opts RunOptions) (err error) {
 	startTime := time.Now()
 	platform := opts.Platform
 	pr := opts.PR
@@ -302,19 +339,6 @@ func run(opts RunOptions) error {
 	// Propagate resolved repo to the platform adapter.
 	if gp, ok := platform.(*GithubPlatform); ok && gp.Repo == "" && opts.Repo != "" {
 		gp.Repo = opts.Repo
-	}
-
-	// 1b. Let the platform skip the run before any PR data is fetched (e.g.
-	// review_on: ready on a push). A config that fails to load is reported
-	// by prepareReview below.
-	if cfg, err := LoadReviewConfig(opts.ConfigPath); err == nil {
-		skip, err := platform.SkipReview(cfg, opts.ReplyOnly)
-		if err != nil {
-			return err
-		}
-		if skip {
-			return nil
-		}
 	}
 
 	// 2. Fetch PR data if not pre-fetched (GitHub mode).
@@ -345,12 +369,78 @@ func run(opts RunOptions) error {
 		}
 	}
 
-	// 3. Prepare shared review context.
-	rctx, err := prepareReview(pr, opts.ConfigPath)
+	// The commit every status of this run goes on.
+	headSHA, err := currentHEAD()
+	if err != nil {
+		return fmt.Errorf("resolving HEAD: %w", err)
+	}
+	ownsStatus := !opts.ReplyOnly && !opts.DryRun
+	published := false
+	defer func() {
+		var failOn *FailOnSeverityError
+		if err != nil && ownsStatus && !published && !errors.As(err, &failOn) {
+			platform.SetRunStatus(headSHA, "error", errorStatusDescription(err))
+		}
+	}()
+
+	// 3. Load the rules: config, docs and context files (from the base
+	// branch on GitHub), then the PR's tier.
+	rules, err := platform.LoadRules(pr, opts.ConfigPath)
 	if err != nil {
 		return err
 	}
-	cfg := rctx.Config
+	if rules.Cleanup != nil {
+		defer rules.Cleanup()
+	}
+	cfg := rules.Config
+	tier := cfg.ResolveTier(pr.Labels)
+	if tier != nil {
+		if !tier.Config.Reviews() {
+			Stderrf(ansiGreen, "Tier %s is not reviewed — skipping\n", tier.Name)
+			if ownsStatus || opts.ReplyOnly {
+				platform.SetRunStatus(headSHA, "success", tier.SkippedDescription())
+			}
+			return nil
+		}
+		if tier.Config.ReviewModel != "" {
+			cfg.ReviewModel = tier.Config.ReviewModel
+		}
+		fmt.Fprintf(os.Stderr, "Tier %s — review model %s\n", tier.Name, cfg.ReviewModel)
+	}
+
+	// 3b. Let the platform skip events that need no review (review_on:
+	// ready on a push, a label or body edit on a reviewed head).
+	skip, err := platform.SkipReview(cfg, opts.ReplyOnly)
+	if err != nil {
+		return err
+	}
+	if skip {
+		return nil
+	}
+
+	// 3c. Intent review: a PR without an intent section is not reviewed
+	// against nothing; it gets one blocker, and its head stays unreviewed.
+	if blockers := ExtractIntent(pr, cfg).Blockers(); len(blockers) > 0 && !opts.ReplyOnly {
+		if opts.DryRun {
+			fmt.Fprintf(os.Stderr, "Intent gate: %s\n", strings.Join(blockers, "; "))
+			return nil
+		}
+		if err := platform.PublishGate(headSHA, blockers); err != nil {
+			return err
+		}
+		published = true
+		return nil
+	}
+
+	if ownsStatus {
+		platform.SetRunStatus(headSHA, "pending", "review running")
+	}
+
+	// 3d. Prepare shared review context.
+	rctx, err := prepareReview(pr, rules)
+	if err != nil {
+		return err
+	}
 	if opts.ClaudePath != "" && cfg.Provider != "claude" {
 		Stderrf(ansiYellow, "Warning: --claude-path is ignored for provider %q\n", cfg.Provider)
 	}
@@ -393,6 +483,10 @@ func run(opts RunOptions) error {
 	// Reply-only mode: bail early if there are no threads to evaluate.
 	if opts.ReplyOnly && (len(reviewThreads) == 0 || previousSHA == "") {
 		fmt.Fprintf(os.Stderr, "No previous review threads to evaluate\n")
+		// Every thread on the reviewed head is resolved: nothing blocks it.
+		if previousSHA != "" && previousSHA == headSHA && !opts.DryRun {
+			platform.SetRunStatus(headSHA, "success", statusCounts(0, 0))
+		}
 		return nil
 	}
 
@@ -475,6 +569,11 @@ func run(opts RunOptions) error {
 				findings = nil
 			}
 		}
+		// Before the filters below, which treat non-blocking findings and
+		// open questions differently: an intent finding is always blocking.
+		if cfg.IntentEnabled() {
+			enforceIntentSeverity(findings)
+		}
 		if isIncremental {
 			findings = FilterLateFindings(findings, incrementalDiff)
 			known := make([]Finding, len(reviewThreads))
@@ -490,10 +589,6 @@ func run(opts RunOptions) error {
 	}
 
 	// 8. Build result.
-	headSHA, err := currentHEAD()
-	if err != nil {
-		return fmt.Errorf("resolving HEAD: %w", err)
-	}
 	result := &ReviewResult{
 		PRNumber:  opts.PRNumber,
 		Repo:      opts.Repo,
@@ -505,6 +600,14 @@ func run(opts RunOptions) error {
 	if !rctx.Coverage.IsEmpty() {
 		result.Coverage = rctx.Coverage
 	}
+	tierName := ""
+	if tier != nil {
+		tierName = tier.Name
+	}
+	result.Cost = tracker.ReviewCost(tierName, cfg.ReviewModel)
+	if rules.BaseSHA != "" {
+		result.RulesChanged = changedRuleFiles(pr.Files, cfg)
+	}
 
 	// 9. Publish results via the platform adapter.
 	// Reply-only runs still publish so the latest top-level review's status
@@ -514,6 +617,7 @@ func run(opts RunOptions) error {
 	if err := platform.Publish(result, pr, reviewThreads, fixed); err != nil {
 		return err
 	}
+	published = true
 
 	// 10. Save state for future incremental reviews.
 	// Skip in reply-only mode to avoid overwriting previous findings with an empty slice.
@@ -663,6 +767,11 @@ func runTriage(
 				platform.HandleResolutions(reviewThreads, llmFixed)
 				fixed = append(fixed, llmFixed...)
 			}
+			if cfg.ResolveAcceptedReplies {
+				if rejected := rejectedReplies(triaged, resolutions); len(rejected) > 0 {
+					platform.AnswerRejectedReplies(reviewThreads, rejected)
+				}
+			}
 		} else if len(fixed) == 0 {
 			fmt.Fprintf(os.Stderr, "No threads need re-evaluation — skipping Claude\n")
 		}
@@ -738,6 +847,7 @@ func runTriage(
 		fmt.Fprintf(os.Stderr, "%d finding(s) resolved by code changes\n", resolved)
 	}
 
+	intent := ExtractIntent(pr, cfg)
 	var prompt string
 	if diffErr != nil {
 		// No incremental diff available — fall back to full PR diff but pass
@@ -747,7 +857,7 @@ func runTriage(
 			fbPlural = ""
 		}
 		Stderrf(ansiBold, "Falling back to full review (%d known issue%s excluded)...\n", len(unresolved), fbPlural)
-		prompt = BuildIncrementalPrompt(pr.Diff, cfg, unresolved, opts.PRNumber, startIndex, pr.FileContents, pr.Files, resolvedCtx, projectDocs)
+		prompt = BuildIncrementalPrompt(pr.Diff, cfg, unresolved, opts.PRNumber, startIndex, pr.FileContents, pr.Files, resolvedCtx, projectDocs, intent)
 	} else if strings.TrimSpace(incrementalDiff) == "" {
 		// No new changes — return previous findings as still-open.
 		Stderrf(ansiGreen, "No new changes since last review\n")
@@ -765,7 +875,7 @@ func runTriage(
 			plural = ""
 		}
 		Stderrf(ansiBold, "Reviewing incremental changes (%d known issue%s excluded)...\n", len(unresolved), plural)
-		prompt = BuildIncrementalPrompt(incrementalDiff, cfg, unresolved, opts.PRNumber, startIndex, incContents, incFiles, resolvedCtx, projectDocs)
+		prompt = BuildIncrementalPrompt(incrementalDiff, cfg, unresolved, opts.PRNumber, startIndex, incContents, incFiles, resolvedCtx, projectDocs, intent)
 	}
 
 	if diffErr != nil {

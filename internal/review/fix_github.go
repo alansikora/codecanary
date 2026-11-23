@@ -136,8 +136,10 @@ func (g *GithubPlatform) OpenThreadsStatus() (state, desc string, err error) {
 	return state, desc, nil
 }
 
+func (g *GithubPlatform) SetStatusContext(name string) { g.StatusContext = name }
+
 func (g *GithubPlatform) SetReviewStatus(sha, state, desc string) error {
-	return PostReviewCommitStatus(g.Repo, sha, state, desc)
+	return PostReviewCommitStatus(g.Repo, g.statusContext(), sha, state, desc)
 }
 
 func (g *GithubPlatform) ReplyToFinding(f PRFinding, body string) error {
@@ -161,9 +163,36 @@ func (g *GithubPlatform) PostNotice(key, body string) error {
 	return PostComment(g.Repo, g.PRNumber, key+"\n"+body)
 }
 
+func (g *GithubPlatform) UpsertNotice(key, body string) error {
+	comments, err := fetchIssueComments(g.Repo, g.PRNumber)
+	if err != nil {
+		return err
+	}
+	for i := len(comments) - 1; i >= 0; i-- {
+		c := comments[i]
+		if !isBotAuthor(c.User.Login) || !strings.Contains(c.Body, key) {
+			continue
+		}
+		owner, name, err := parseRepoSlug(g.Repo)
+		if err != nil {
+			return err
+		}
+		payload, err := json.Marshal(struct {
+			Body string `json:"body"`
+		}{Body: key + "\n" + body})
+		if err != nil {
+			return fmt.Errorf("marshaling comment payload: %w", err)
+		}
+		_, err = ghAPIRequest("PATCH", fmt.Sprintf("repos/%s/%s/issues/comments/%d", owner, name, c.ID), payload)
+		return err
+	}
+	return PostComment(g.Repo, g.PRNumber, key+"\n"+body)
+}
+
 // issueComment is the subset of a pull request's conversation comment the
 // fix reads back.
 type issueComment struct {
+	ID      int64  `json:"id"`
 	Body    string `json:"body"`
 	HTMLURL string `json:"html_url"`
 	User    struct {
@@ -194,8 +223,9 @@ func fetchIssueComments(repo string, prNumber int) ([]issueComment, error) {
 // the open findings to the author: `codecanary findings` surfaces it as
 // `fix_stop`, the signal for the codecanary-fix skill to take over.
 type FixStop struct {
-	// Kind is "limit" (a loop limit was reached) or "failed" (the fix
-	// could not finish: provider error, rate limit, rejected push).
+	// Kind is "limit" (a loop limit was reached), "failed" (the fix
+	// could not finish: provider error, rate limit, rejected push) or
+	// "left-open" (it committed nothing and left findings to the author).
 	Kind string `json:"kind"`
 	// Reason is the human-visible reason, e.g. "stopped after 2 fixes
 	// since your last push".
@@ -205,9 +235,10 @@ type FixStop struct {
 }
 
 var (
-	limitNoticeReasonRe  = regexp.MustCompile(`CodeCanary (stopped after \d+ fix(?:es)? (?:since your last push|on this PR))`)
-	failedNoticeReasonRe = regexp.MustCompile("did not finish on `[0-9a-f]+`: ([^\n]+?)\\.\n")
-	stoppedStatusRe      = regexp.MustCompile(`; (stopped after \d+ fix(?:es)?)$`)
+	limitNoticeReasonRe    = regexp.MustCompile(`CodeCanary (stopped after \d+ fix(?:es)? (?:since your last push|on this PR))`)
+	failedNoticeReasonRe   = regexp.MustCompile("did not finish on `[0-9a-f]+`: ([^\n]+?)\\.\n")
+	leftOpenNoticeReasonRe = regexp.MustCompile(`with nothing to commit: it (left \d+ findings? open)`)
+	stoppedStatusRe        = regexp.MustCompile(`; (stopped after \d+ fix(?:es)?)$`)
 )
 
 // FetchFixStop reports whether the CI fix stopped on headSHA, from the
@@ -251,6 +282,12 @@ func fixStopFromSignals(comments []issueComment, statusDesc, headSHA string) *Fi
 				stop.Reason = m[1]
 			}
 			return stop
+		case strings.Contains(c.Body, fixNoticeKey("left-open", headSHA)):
+			stop := &FixStop{Kind: "left-open", Reason: "findings left open for the author", CommentURL: c.HTMLURL}
+			if m := leftOpenNoticeReasonRe.FindStringSubmatch(c.Body); m != nil {
+				stop.Reason = m[1]
+			}
+			return stop
 		}
 	}
 	if m := stoppedStatusRe.FindStringSubmatch(statusDesc); m != nil {
@@ -279,13 +316,19 @@ func fetchReviewStatusDescription(repo, sha string) (string, error) {
 	if err := json.Unmarshal(out, &combined); err != nil {
 		return "", fmt.Errorf("parsing commit status: %w", err)
 	}
-	// The combined status holds the latest status per context.
+	// The combined status holds the latest status per context. The review
+	// status may be renamed (status_context), so take the one that carries
+	// a fix-limit suffix, else the default-named one.
+	desc := ""
 	for _, st := range combined.Statuses {
-		if st.Context == ReviewCommitStatusContext {
+		if stoppedStatusRe.MatchString(st.Description) {
 			return st.Description, nil
 		}
+		if st.Context == DefaultStatusContext {
+			desc = st.Description
+		}
 	}
-	return "", nil
+	return desc, nil
 }
 
 // Push pushes HEAD to the head branch with the installation token in

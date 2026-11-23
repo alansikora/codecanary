@@ -14,9 +14,9 @@ func TestIsNewer(t *testing.T) {
 		{"v0.9.9", "v1.0.0", true},
 		{"v0.1.0", "v0.1.1", true},
 		{"v0.1.1", "v0.1.0", false},
-		{"0.1.0", "0.2.0", true},     // without v prefix
-		{"v0.1.0", "0.2.0", true},    // mixed prefix
-		{"dev", "v0.1.0", false},      // dev version
+		{"0.1.0", "0.2.0", true},        // without v prefix
+		{"v0.1.0", "0.2.0", true},       // mixed prefix
+		{"dev", "v0.1.0", false},        // dev version
 		{"v1.0.0-rc1", "v1.0.0", false}, // pre-release same version
 		{"v0.9.0", "v1.0.0-rc1", true},  // pre-release newer major
 		{"", "v1.0.0", false},

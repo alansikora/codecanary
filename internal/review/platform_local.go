@@ -94,3 +94,32 @@ func (l *LocalPlatform) SkipReview(_ *ReviewConfig, _ bool) (bool, error) {
 }
 
 func (l *LocalPlatform) ReportFailure(_ error, _ bool) {}
+
+// LoadRules reads the config and the rule sources from the working tree:
+// locally, the rules are whatever is checked out.
+func (l *LocalPlatform) LoadRules(_ *PRData, configPath string) (*RuleSources, error) {
+	cfg, err := LoadReviewConfig(configPath)
+	if err != nil {
+		return nil, err
+	}
+	root, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	return &RuleSources{Config: cfg, Root: root}, nil
+}
+
+// SetRunStatus is a no-op: there is no commit status locally.
+func (l *LocalPlatform) SetRunStatus(_, _, _ string) {}
+
+// PublishGate prints the blockers that stopped the review.
+func (l *LocalPlatform) PublishGate(_ string, blockers []string) error {
+	Stderrf(ansiYellow, "Not reviewed — blocking:\n")
+	for _, b := range blockers {
+		fmt.Fprintf(os.Stderr, "  - %s\n", b)
+	}
+	return nil
+}
+
+// AnswerRejectedReplies is a no-op: local findings have no threads.
+func (l *LocalPlatform) AnswerRejectedReplies(_ []ReviewThread, _ []fixedThread) {}
