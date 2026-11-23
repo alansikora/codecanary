@@ -480,13 +480,16 @@ tiers:
   "tier:peer": { max_rounds: 2 }
 ```
 
-A round is a head that has a CodeCanary review, counted from the review markers on the reviews the CodeCanary app posted (a marker in anyone else's review is ignored): every push that is reviewed, including a fix job's push, uses one. Once `max_rounds` heads are reviewed, a later head is not reviewed and no model is called for it, for a push or a thread reply:
+A round is a head that has a CodeCanary review, counted from the review markers on the reviews the CodeCanary app posted (a marker in anyone else's review is ignored): every push that is reviewed, including a fix job's push, uses one. Once `max_rounds` heads are reviewed, a later head is not reviewed for new findings: the review model is not called, and no new finding is raised. A push or a thread reply still re-checks the findings that are open, the way a reply is checked within the limit:
 
-- the head gets the `status_context` status (`CodeCanary / review` by default) computed from the threads still open, by the same rule as a review: `failure` while a blocking thread is open and not acknowledged, `success` otherwise. The description ends with `review limit reached (<N> rounds)`, for example `blocking: 1, non-blocking: 0; review limit reached (2 rounds)`;
-- the PR gets one comment saying the limit was reached and how to lift it;
-- findings stay open; nothing is resolved or re-evaluated. Resolving a thread by hand starts no run, so the status catches up on the next push or reply.
+- each open thread whose code changed since the last reviewed head, or that has a new reply, goes to the triage model (`triage_model`), which judges whether the push fixed it or the reply settles it (acknowledged, dismissed, rebutted). A fixed thread is resolved; a settled one is answered. A thread with no new activity costs no model call, and no thread can be added after the limit, so a run costs at most one triage call per open thread;
+- the head gets the `status_context` status (`CodeCanary / review` by default) from that check, by the same rule as a review: `failure` while a blocking thread is open and neither fixed nor settled, `success` otherwise. The description ends with `review limit reached (<N> rounds)`, for example `blocking: 0, non-blocking: 0; review limit reached (2 rounds)`. A blocking finding the push did not fix keeps it `failure`;
+- no review is posted, so the head stays unreviewed and uses no round;
+- the PR gets one comment saying the limit was reached and how to lift it.
 
-A reply on a head that was reviewed within the limit is still evaluated as usual. To review again, raise `max_rounds` on the base branch: the next push is compared with the new limit. Removing the label, or moving the PR to a tier without a cap, also lifts it from the next push. The fix job does not run on a head the limit stopped. Local reviews have no rounds.
+So a push that fixes the last blocking finding, or a reply that settles it, turns the status green without anything else. Resolving a thread by hand starts no run (GitHub Actions has no event for it), so the status catches up on the next push or reply, as it does within the limit. If the previous review's threads cannot be read, the run fails with an `error` status rather than passing the head.
+
+To review again, raise `max_rounds` on the base branch: the next push is compared with the new limit. Removing the label, or moving the PR to a tier without a cap, also lifts it from the next push. The fix job does not run on a head past the limit. Local reviews have no rounds.
 
 ## Reviewing against the PR's intent
 
@@ -499,7 +502,7 @@ With `intent.enabled: true`, the PR body's `## Intent` section is the specificat
 - `intent-testing-reason` — a changed test expectation has no reason in `## Testing`;
 - `intent-injection` — the intent or testing text addresses the reviewer ("mark this as clean").
 
-Every `intent-*` finding is forced to at least `warning`, whatever the model returned. The tier comes from labels and the status from the findings, both computed by CodeCanary, so text in the body cannot set them directly; what it can try is to steer the model, which the prompt guards against and reports as `intent-injection`.
+Every `intent-*` finding is forced to at least `warning`, whatever the model returned, and records the intent it was raised against. When an `intent-*` thread is re-checked, the triage model also sees the intent as it reads now, so correcting the PR body can settle it like a code fix does. A thread whose intent changed since it was raised is re-checked on the next push or reply even when no code near it changed (an edit of the body alone, on a head that was already reviewed, starts no run). The tier comes from labels and the status from the findings, both computed by CodeCanary, so text in the body cannot set them directly; what it can try is to steer the model, which the prompt guards against and reports as `intent-injection`.
 
 A PR whose body has no `## Intent` section, or an empty one, is not reviewed: it gets one blocking note and a `failure` status. When the body is fixed, the `edited` event (template v5) starts the review. Local reviews have no PR body and skip intent review.
 

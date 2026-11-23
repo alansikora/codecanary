@@ -32,8 +32,9 @@ type TierConfig struct {
 	// rule sources.
 	ContextFiles []string `yaml:"context_files"`
 	// MaxRounds caps how many heads of a PR in this tier are reviewed. Once
-	// that many have been, a later head gets a status from the open threads
-	// and no model call (see ReviewPlatform.StopAtRoundLimit). 0 = no cap.
+	// that many have been, a later push or reply only re-checks the open
+	// threads on the triage model, with no review call and no new findings
+	// (see ReviewPlatform.AtRoundLimit). 0 = no cap.
 	MaxRounds int `yaml:"max_rounds"`
 }
 

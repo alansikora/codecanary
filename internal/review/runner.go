@@ -422,16 +422,20 @@ func run(opts RunOptions, published *bool) (err error) {
 	}
 
 	// 3c. Round limit: once the tier's max_rounds heads have been reviewed,
-	// a new head gets a status from the open threads and no model call.
-	// Checked before the intent gate: a capped PR is not reviewed again,
-	// whatever its body says.
+	// a push or a reply only re-checks the open threads, as a reply-only run
+	// does: the triage model judges whether each is fixed or settled, the
+	// review model is not called, and no new finding is raised. Checked
+	// before the intent gate: a capped PR is not reviewed again, whatever
+	// its body says.
+	roundLimit := 0
 	if tier != nil && tier.Config.MaxRounds > 0 && !opts.DryRun {
-		stop, err := platform.StopAtRoundLimit(headSHA, *tier)
+		atLimit, err := platform.AtRoundLimit(headSHA, *tier)
 		if err != nil {
 			return err
 		}
-		if stop {
-			return nil
+		if atLimit {
+			roundLimit = tier.Config.MaxRounds
+			opts.ReplyOnly = true
 		}
 	}
 
@@ -450,7 +454,11 @@ func run(opts RunOptions, published *bool) (err error) {
 	}
 
 	if ownsStatus {
-		platform.SetRunStatus(headSHA, "pending", "review running")
+		pending := "review running"
+		if roundLimit > 0 {
+			pending = "re-checking open findings (review limit reached)"
+		}
+		platform.SetRunStatus(headSHA, "pending", pending)
 	}
 
 	// 3e. Prepare shared review context.
@@ -499,6 +507,9 @@ func run(opts RunOptions, published *bool) (err error) {
 
 	// Reply-only mode: bail early if there are no threads to evaluate.
 	if opts.ReplyOnly && (len(reviewThreads) == 0 || previousSHA == "") {
+		if roundLimit > 0 {
+			return publishRoundLimitWithNothingOpen(platform, pr, opts, headSHA, previousSHA, roundLimit, published)
+		}
 		fmt.Fprintf(os.Stderr, "No previous review threads to evaluate\n")
 		// Every thread on the reviewed head is resolved: nothing blocks it.
 		if previousSHA != "" && previousSHA == headSHA && !opts.DryRun {
@@ -589,7 +600,7 @@ func run(opts RunOptions, published *bool) (err error) {
 		// Before the filters below, which treat non-blocking findings and
 		// open questions differently: an intent finding is always blocking.
 		if cfg.IntentEnabled() {
-			enforceIntentSeverity(findings)
+			enforceIntentFindings(findings, ExtractIntent(pr, cfg))
 		}
 		if isIncremental {
 			findings = FilterLateFindings(findings, incrementalDiff)
@@ -607,12 +618,13 @@ func run(opts RunOptions, published *bool) (err error) {
 
 	// 8. Build result.
 	result := &ReviewResult{
-		PRNumber:  opts.PRNumber,
-		Repo:      opts.Repo,
-		Findings:  findings,
-		StillOpen: stillOpenFindings,
-		Questions: questions,
-		SHA:       headSHA,
+		PRNumber:   opts.PRNumber,
+		Repo:       opts.Repo,
+		Findings:   findings,
+		StillOpen:  stillOpenFindings,
+		Questions:  questions,
+		SHA:        headSHA,
+		RoundLimit: roundLimit,
 	}
 	if !rctx.Coverage.IsEmpty() {
 		result.Coverage = rctx.Coverage
@@ -704,6 +716,23 @@ func run(opts RunOptions, published *bool) (err error) {
 	return failOnErr
 }
 
+// publishRoundLimitWithNothingOpen settles a run past the round limit that
+// has no open thread to re-check: the head passes. The previous review's SHA
+// must be known: LoadPreviousFindings returns no threads and no SHA when it
+// cannot read them, and that must not pass a head whose threads are open.
+func publishRoundLimitWithNothingOpen(platform ReviewPlatform, pr *PRData, opts RunOptions, headSHA, previousSHA string, roundLimit int, published *bool) error {
+	if previousSHA == "" {
+		return fmt.Errorf("review limit reached: could not load the previous review and its threads")
+	}
+	fmt.Fprintf(os.Stderr, "No open review threads to re-check\n")
+	result := &ReviewResult{PRNumber: opts.PRNumber, Repo: opts.Repo, SHA: headSHA, RoundLimit: roundLimit}
+	if err := platform.Publish(result, pr, nil, nil); err != nil {
+		return err
+	}
+	*published = true
+	return nil
+}
+
 // runTriage handles the incremental review: classify previous threads, evaluate
 // via LLM, handle resolutions, and build the incremental prompt.
 // Returns the prompt, fixed threads, still-open findings, and the incremental
@@ -748,6 +777,8 @@ func runTriage(
 	}
 	botLogin := platform.ExcludedAuthor(reviewThreads)
 	triaged := ClassifyThreads(reviewThreads, activityDiff, pr.ValidationDiff(), botLogin, pr.Files, pr.FileContents)
+	intent := ExtractIntent(pr, cfg)
+	applyIntent(triaged, intent, pr.ValidationDiff(), pr.FileContents)
 
 	var fixed []fixedThread
 
@@ -868,7 +899,6 @@ func runTriage(
 		fmt.Fprintf(os.Stderr, "%d finding(s) resolved by code changes\n", resolved)
 	}
 
-	intent := ExtractIntent(pr, cfg)
 	var prompt string
 	if diffErr != nil {
 		// No incremental diff available — fall back to full PR diff but pass

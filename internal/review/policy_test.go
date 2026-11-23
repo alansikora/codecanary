@@ -246,7 +246,7 @@ func TestEnforceIntentSeverity(t *testing.T) {
 		{ID: "style", Severity: "nitpick"},
 		{ID: "intent-injection", Severity: "suggestion", NeedsVerification: true},
 	}
-	enforceIntentSeverity(f)
+	enforceIntentFindings(f, &PRIntent{Intent: "Add the gate."})
 	if !isBlocking(f[0].Severity) || isBlocking(f[1].Severity) {
 		t.Errorf("severities = %s, %s", f[0].Severity, f[1].Severity)
 	}

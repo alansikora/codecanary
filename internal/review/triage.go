@@ -30,11 +30,12 @@ type TriagedThread struct {
 	Thread         ReviewThread
 	Index          int // original index in the unresolved slice
 	Class          ThreadClassification
-	FileDiff       string // file-scoped diff (level 1) or full diff (cross-file)
-	FullDiff       string // full PR diff for widened-scope fallback; empty when not applicable
-	FileSnippet    string // windowed file content around finding + diff hunks
-	BotLogin       string // login of the review bot, for filtering replies
-	PriorAckReason string // for TriagePreviouslyAcked: the previously-recorded reason (acknowledged/rebutted/dismissed)
+	FileDiff       string    // file-scoped diff (level 1) or full diff (cross-file)
+	FullDiff       string    // full PR diff for widened-scope fallback; empty when not applicable
+	FileSnippet    string    // windowed file content around finding + diff hunks
+	BotLogin       string    // login of the review bot, for filtering replies
+	PriorAckReason string    // for TriagePreviouslyAcked: the previously-recorded reason (acknowledged/rebutted/dismissed)
+	Intent         *PRIntent // for an intent-* finding under intent review: the PR's intent as it reads now (see applyIntent)
 }
 
 // ThreadResolution is the result of a per-thread Claude evaluation.
@@ -342,23 +343,16 @@ func ClassifyThreads(threads []ReviewThread, activityDiff, contextDiff, botLogin
 		// The full PR diff can drown out the relevant fix with changes from
 		// unrelated files, causing false "not resolved" verdicts. Cross-file
 		// evaluations keep the full diff since the fix is in a different file.
-		var fileDiff, fullDiff string
+		var fileDiff, fullDiff, fileSnippet string
 		switch class {
 		case TriageCodeChanged, TriageCodeChangedReply:
-			fileDiff = ExtractFileDiff(contextDiff, t.Path)
-			fullDiff = contextDiff // retained for widened-scope fallback
+			fileDiff, fullDiff, fileSnippet = codeChangeContext(t, contextDiff, fileContents)
 		case TriageCrossFileChange:
 			fileDiff = contextDiff
 		}
 
-		// Build a windowed file snippet for code-change evaluations.
-		// Reuse fileDiff (already file-scoped) for snippet range calculation
-		// so hunk line numbers from other files don't pull in wrong sections.
-		var fileSnippet string
 		if content, ok := fileContents[t.Path]; ok {
 			switch class {
-			case TriageCodeChanged, TriageCodeChangedReply:
-				fileSnippet = ExtractFileSnippet(content, t.Line, fileDiff, 300)
 			case TriageCrossFileChange:
 				// Show finding's file context even though the diff is in other files.
 				fileSnippet = ExtractFileSnippet(content, t.Line, "", 200)
@@ -382,6 +376,51 @@ func ClassifyThreads(threads []ReviewThread, activityDiff, contextDiff, botLogin
 	}
 
 	return result
+}
+
+// codeChangeContext is what a code-change evaluation of t sees: the
+// file-scoped diff (the full diff is kept for the widened-scope fallback),
+// and a windowed snippet of the file as it is now. The snippet's range comes
+// from the file-scoped diff, so hunk line numbers from other files don't pull
+// in wrong sections.
+func codeChangeContext(t ReviewThread, contextDiff string, fileContents map[string]string) (fileDiff, fullDiff, snippet string) {
+	fileDiff = ExtractFileDiff(contextDiff, t.Path)
+	if content, ok := fileContents[t.Path]; ok {
+		snippet = ExtractFileSnippet(content, t.Line, fileDiff, 300)
+	}
+	return fileDiff, contextDiff, snippet
+}
+
+// applyIntent gives each intent-* thread the PR's intent as it reads now, so
+// its evaluation sees it. When the intent changed since the finding was
+// raised (its IntentHash differs), the thread is re-checked even if no code
+// near it changed or it has only a reply: editing the PR body can settle it,
+// like a code change. intent is nil when intent review is off.
+func applyIntent(triaged []TriagedThread, intent *PRIntent, contextDiff string, fileContents map[string]string) {
+	if intent == nil {
+		return
+	}
+	hash := intent.Hash()
+	for i := range triaged {
+		t := &triaged[i]
+		f := FindingFromThread(t.Thread)
+		if !isIntentFinding(f.ID) {
+			continue
+		}
+		t.Intent = intent
+		if f.IntentHash == hash {
+			continue
+		}
+		switch t.Class {
+		case TriageSkip:
+			t.Class = TriageCodeChanged
+		case TriageHasReply:
+			t.Class = TriageCodeChangedReply
+		default:
+			continue
+		}
+		t.FileDiff, t.FullDiff, t.FileSnippet = codeChangeContext(t.Thread, contextDiff, fileContents)
+	}
 }
 
 // hasFixedReply reports whether the bot replied on t with fixedMarker. Only
@@ -537,7 +576,7 @@ func buildCodeChangePrompt(t TriagedThread, cfg *ReviewConfig) string {
 
 	b.WriteString("You are a code reviewer. You previously raised a finding on a pull request. The author pushed new code.\n\n")
 
-	writeFinding(&b, t.Thread)
+	writeFinding(&b, t)
 
 	writeFileSnippet(&b, t.FileSnippet)
 
@@ -567,7 +606,7 @@ func buildReplyPrompt(t TriagedThread, cfg *ReviewConfig) string {
 
 	b.WriteString("You are a code reviewer. You previously raised a finding on a pull request. The author replied.\n\n")
 
-	writeFinding(&b, t.Thread)
+	writeFinding(&b, t)
 	writeReplies(&b, t.Thread, t.BotLogin)
 	writeFileSnippet(&b, t.FileSnippet)
 
@@ -591,7 +630,7 @@ func buildCodeChangeReplyPrompt(t TriagedThread, cfg *ReviewConfig) string {
 
 	b.WriteString("You are a code reviewer. You previously raised a finding on a pull request. The author pushed new code AND replied.\n\n")
 
-	writeFinding(&b, t.Thread)
+	writeFinding(&b, t)
 	writeReplies(&b, t.Thread, t.BotLogin)
 
 	writeFileSnippet(&b, t.FileSnippet)
@@ -625,7 +664,7 @@ func buildCrossFilePrompt(t TriagedThread, cfg *ReviewConfig) string {
 
 	b.WriteString("You are a code reviewer. You previously raised a finding on a pull request. The author pushed new code, but the changes are in DIFFERENT files from where you left your finding.\n\n")
 
-	writeFinding(&b, t.Thread)
+	writeFinding(&b, t)
 
 	writeFileSnippet(&b, t.FileSnippet)
 
@@ -656,7 +695,7 @@ func buildWidenedScopePrompt(t TriagedThread, cfg *ReviewConfig) string {
 
 	b.WriteString("You are a code reviewer. You previously raised a finding on a pull request. A focused check of the finding's file did not find a fix. Now examine ALL code changes across the PR — the fix may be in a different file.\n\n")
 
-	writeFinding(&b, t.Thread)
+	writeFinding(&b, t)
 
 	writeFileSnippet(&b, t.FileSnippet)
 
@@ -695,12 +734,14 @@ func writeFileSnippet(b *strings.Builder, snippet string) {
 	b.WriteString("~~~\n\n")
 }
 
-// writeFinding writes the finding section to the prompt.
-func writeFinding(b *strings.Builder, t ReviewThread) {
+// writeFinding writes the finding section to the prompt, followed by the
+// PR's intent for an intent-* finding (see applyIntent).
+func writeFinding(b *strings.Builder, t TriagedThread) {
 	b.WriteString("## Finding\n")
-	fmt.Fprintf(b, "File: `%s:%d`\n", t.Path, t.Line)
-	b.WriteString(t.Body)
+	fmt.Fprintf(b, "File: `%s:%d`\n", t.Thread.Path, t.Thread.Line)
+	b.WriteString(t.Thread.Body)
 	b.WriteString("\n\n")
+	writeTriageIntent(b, t.Intent)
 }
 
 // writeReplies writes the author replies section to the prompt.
