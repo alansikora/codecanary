@@ -3,8 +3,8 @@ package review
 import (
 	"fmt"
 	"io"
-	"os"
 	"maps"
+	"os"
 	"slices"
 	"strings"
 )
