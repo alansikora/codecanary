@@ -76,7 +76,7 @@ func TestHandleResolutionsDefersWhatTheTokenCannotResolve(t *testing.T) {
 				return errNotAccessible
 			}
 			return errors.New("unexpected thread " + id)
-		}}
+		}, replyToThread: func(string, string) error { return nil }}
 	}
 	lastOutput := func(path string) string {
 		data, err := os.ReadFile(path)
@@ -179,5 +179,49 @@ func TestUnresolvedStatusDescription(t *testing.T) {
 func TestReportUnresolvedThreadsNeedsTheStatus(t *testing.T) {
 	if err := ReportUnresolvedThreads("o/r", []string{"PRRT_x"}, "", "boom", ""); err == nil {
 		t.Error("want an error without --status")
+	}
+}
+
+// A thread the review judged fixed but could not resolve gets one reply with
+// fixedMarker, so a later run can resolve it (TriagePreviouslyFixed).
+func TestHandleResolutionsRecordsDeferredFixedVerdict(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "output")
+	if err := os.WriteFile(out, nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GITHUB_OUTPUT", out)
+
+	replies := map[string][]string{}
+	g := &GithubPlatform{
+		resolveThread: func(string) error { return errNotAccessible },
+		replyToThread: func(id, body string) error {
+			replies[id] = append(replies[id], body)
+			return nil
+		},
+	}
+	threads := []ReviewThread{
+		{ID: "PRRT_new", Path: "a.go", Line: 1},
+		{ID: "PRRT_recorded", Path: "b.go", Line: 2, Replies: []ThreadReply{{Author: "bot", Body: fixedMarker + "\nFixed by a code change — resolving."}}},
+		{ID: "PRRT_removed", Path: "c.go", Line: 3},
+	}
+	g.HandleResolutions(threads, []fixedThread{
+		{Index: 0, Reason: "code_change"},
+		{Index: 1, Reason: "code_change"},
+		{Index: 2, Reason: "file_removed"},
+	})
+
+	if got := replies["PRRT_new"]; len(got) != 1 || !strings.HasPrefix(got[0], fixedMarker) {
+		t.Errorf("PRRT_new replies = %q, want one fixed-verdict reply", got)
+	}
+	if got := replies["PRRT_recorded"]; len(got) != 0 {
+		t.Errorf("PRRT_recorded already carries the verdict, got replies %q", got)
+	}
+	for _, body := range replies["PRRT_removed"] {
+		if strings.Contains(body, fixedMarker) {
+			t.Errorf("a file_removed thread got the code-change verdict: %q", body)
+		}
+	}
+	if len(g.deferredResolves) != 3 {
+		t.Errorf("deferred %v, want all three threads", g.deferredResolves)
 	}
 }

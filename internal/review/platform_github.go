@@ -167,6 +167,8 @@ type GithubPlatform struct {
 	lastStatus *ResolveStatus
 	// resolveThread replaces ResolveThread in tests.
 	resolveThread func(threadID string) error
+	// replyToThread replaces ReplyToThread in tests.
+	replyToThread func(threadID, body string) error
 }
 
 // statusContext is the name of the commit status the platform posts.
@@ -238,7 +240,9 @@ func (g *GithubPlatform) HandleResolutions(threads []ReviewThread, fixed []fixed
 					fmt.Fprintf(os.Stderr, "  ! %s — failed to post file-removed comment: %v\n", label, err)
 				}
 			}
-			g.resolveOrDefer(t, "resolved, but failed to update thread")
+			if g.resolveOrDefer(t, "resolved, but failed to update thread") && f.Reason == "code_change" {
+				g.recordFixedVerdict(t)
+			}
 		} else if g.ResolveAcceptedReplies {
 			// The reply settles the finding: say so and close the thread.
 			msg := acceptedReplyMessage(f.Reason, f.Rationale)
@@ -265,14 +269,15 @@ func (g *GithubPlatform) HandleResolutions(threads []ReviewThread, fixed []fixed
 // `resolve_threads` step output, and the action's next step resolves it with
 // `codecanary resolve` and a token minted after the model has finished.
 // Outside GitHub Actions there is no next step, so the refusal is reported.
-func (g *GithubPlatform) resolveOrDefer(t ReviewThread, failure string) {
+// It reports whether the thread was deferred.
+func (g *GithubPlatform) resolveOrDefer(t ReviewThread, failure string) bool {
 	resolve := g.resolveThread
 	if resolve == nil {
 		resolve = ResolveThread
 	}
 	err := resolve(t.ID)
 	if err == nil {
-		return
+		return false
 	}
 	label := threadLabel(t)
 	switch {
@@ -283,6 +288,28 @@ func (g *GithubPlatform) resolveOrDefer(t ReviewThread, failure string) {
 	default:
 		g.deferredResolves = append(g.deferredResolves, t.ID)
 		fmt.Fprintf(os.Stderr, "  ~ %s (this token cannot resolve threads; left for the resolve step)\n", label)
+		return true
+	}
+	return false
+}
+
+// recordFixedVerdict replies on a deferred thread that the review judged it
+// fixed, with fixedMarker. The verdict otherwise lives only in this run: if
+// the resolve step then fails, a re-run on the same head sees no new changes
+// and would leave the finding open and blocking. With the reply, triage
+// resolves it on any later run (TriagePreviouslyFixed). One reply per thread.
+func (g *GithubPlatform) recordFixedVerdict(t ReviewThread) {
+	for _, r := range t.Replies {
+		if strings.Contains(r.Body, fixedMarker) {
+			return
+		}
+	}
+	reply := g.replyToThread
+	if reply == nil {
+		reply = ReplyToThread
+	}
+	if err := reply(t.ID, fixedMarker+"\nFixed by a code change — resolving."); err != nil {
+		fmt.Fprintf(os.Stderr, "  ! %s — failed to record the fixed verdict on the thread: %v\n", threadLabel(t), err)
 	}
 }
 

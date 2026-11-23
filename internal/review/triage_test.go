@@ -648,3 +648,34 @@ func TestValidateResolutionReason_ReplyOnlyCannotClaimCodeChange(t *testing.T) {
 		}
 	}
 }
+
+// After a resolve step failed, a re-run on the same head has no new changes.
+// The thread the earlier run judged fixed must be resolved, not skipped and
+// left blocking, and a later reply must not reopen the judgment.
+func TestClassifyThreads_PreviouslyFixedIsResolvedOnRerun(t *testing.T) {
+	verdict := ThreadReply{Author: "bot", Body: fixedMarker + "\nFixed by a code change — resolving."}
+	cases := []struct {
+		name    string
+		replies []ThreadReply
+		want    ThreadClassification
+	}{
+		{"same head, no new changes", []ThreadReply{verdict}, TriagePreviouslyFixed},
+		{"author replied after the verdict", []ThreadReply{verdict, {Author: "user", Body: "Fixed in 1a2b3c, see the test."}}, TriagePreviouslyFixed},
+		{"marker typed by someone else", []ThreadReply{{Author: "user", Body: fixedMarker}}, TriageHasReply},
+	}
+	for _, c := range cases {
+		threads := []ReviewThread{{Path: "a.go", Line: 10, Author: "bot", Replies: c.replies}}
+		triaged := ClassifyThreads(threads, "", "", "bot", []string{"a.go"}, nil)
+		if triaged[0].Class != c.want {
+			t.Errorf("%s: class = %d, want %d", c.name, triaged[0].Class, c.want)
+		}
+	}
+	// Without a known bot login no reply can be trusted.
+	threads := []ReviewThread{{Path: "a.go", Line: 10, Replies: []ThreadReply{verdict}}}
+	if got := ClassifyThreads(threads, "", "", "", []string{"a.go"}, nil)[0].Class; got == TriagePreviouslyFixed {
+		t.Error("an unknown bot login must not trust the marker")
+	}
+	if n := countNonSkipped([]TriagedThread{{Class: TriagePreviouslyFixed}}); n != 0 {
+		t.Errorf("countNonSkipped = %d; a previously fixed thread needs no model call", n)
+	}
+}
