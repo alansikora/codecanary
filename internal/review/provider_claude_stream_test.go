@@ -76,6 +76,35 @@ exec sleep 30`)
 	}
 }
 
+// A child the CLI started can keep stdout open after the CLI is killed.
+// WaitDelay must still end the call shortly after the timeout.
+func TestClaudeRun_TimeoutWithChildHoldingStdout(t *testing.T) {
+	p := fakeClaude(t, `sleep 60 &
+exec sleep 60`)
+	start := time.Now()
+	_, err := p.Run(context.Background(), "prompt", RunOpts{Timeout: time.Second})
+	if elapsed := time.Since(start); elapsed > 15*time.Second {
+		t.Fatalf("Run took %s; a child holding stdout open hung the timeout", elapsed)
+	}
+	if err == nil || !strings.Contains(err.Error(), "claude timed out after 1s") {
+		t.Fatalf("err = %v, want a timeout", err)
+	}
+}
+
+// Events split across writes, and a last line with no newline, still parse.
+func TestClaudeStream_SplitWritesAndUnterminatedLine(t *testing.T) {
+	s := &claudeStream{model: "opus", abort: func() {}}
+	_, _ = s.Write([]byte(`{"type":"system","subtype":"api_retry","attempt":2,"max_ret`))
+	_, _ = s.Write([]byte("ries\":10,\"error_status\":529,\"error\":\"overloaded\"}\n{\"type\":\"result\",\"result\":\"done\"}"))
+	s.flush()
+	if s.lastRetry == nil || s.lastRetry.MaxRetries != 10 || s.lastRetry.describe() != "529 overloaded" {
+		t.Errorf("retry event not parsed: %+v", s.lastRetry)
+	}
+	if s.result == nil || s.result.Result != "done" {
+		t.Errorf("unterminated result line not parsed: %+v", s.result)
+	}
+}
+
 func TestClaudeRun_ErrorResultIsClassified(t *testing.T) {
 	p := fakeClaude(t, `echo '{"type":"result","is_error":true,"api_error_status":529,"result":"API Error: 529 Overloaded."}'
 exit 1`)

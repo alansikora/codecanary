@@ -1,13 +1,11 @@
 package review
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -367,7 +365,7 @@ func (p *claudeCLIProvider) buildArgs(opts RunOpts) []string {
 	// allowlist through instead so the LLM can verify hypotheses (e.g.
 	// `Read,Grep,Glob`) before emitting findings.
 	// stream-json (which --print requires --verbose for) reports the CLI's API
-	// retries as events; see readClaudeStream.
+	// retries as events; see claudeStream.
 	args := []string{"--print", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--tools", p.reviewTools}
 	args = append(args, claudeIsolationArgs...)
 	if p.reviewTools != "" {
@@ -420,20 +418,17 @@ func (p *claudeCLIProvider) Run(ctx context.Context, prompt string, opts RunOpts
 	cmd.Env = p.env
 	cmd.Dir = p.workDir // "" inherits codecanary's cwd
 	cmd.Stdin = strings.NewReader(prompt)
-	// A child the CLI started can hold stdout open after the CLI is killed;
-	// don't let that turn a timeout into a hang.
+	// Stdout and Stderr are writers, not pipes we read, so exec copies them
+	// inside Wait, and WaitDelay bounds that copy: a child the CLI started
+	// can hold the pipes open after the CLI is killed, and that must not turn
+	// a timeout into a hang.
 	cmd.WaitDelay = 5 * time.Second
+	stream := &claudeStream{model: p.modelLabel(), abort: abort}
+	cmd.Stdout = stream
 	stderr := &tailBuffer{max: claudeStderrTail}
 	cmd.Stderr = stderr
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, fmt.Errorf("running claude: %w", err)
-	}
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("running claude: %w", err)
-	}
-	stream := readClaudeStream(stdout, p.modelLabel(), abort)
-	err = cmd.Wait()
+	err := cmd.Run()
+	stream.flush()
 
 	if stream.rejected != nil {
 		return nil, stream.rejectedError(p.modelLabel())
@@ -521,35 +516,49 @@ func (e *claudeStreamEvent) describe() string {
 	return what
 }
 
-// claudeStream is what readClaudeStream collected from the CLI's stdout.
+// claudeStream takes the CLI's stream-json output as its stdout and keeps
+// what the provider needs from it. The CLI retries failed API calls on its
+// own and, in --print mode, says nothing about it outside the stream: each
+// retry is a system/api_retry event, which is logged here so a slow call
+// shows why. A 429 stops the CLI through abort. The CLI's backoff on a 429
+// adds up to more than any review timeout, and on a subscription a 429 means
+// the plan's limit for that model is used up — it won't clear by waiting.
+// The API providers fail on a 429 too.
+//
+// exec writes to it from one goroutine; read its fields after Wait returns.
 type claudeStream struct {
+	model string // for messages, see modelLabel
+	abort func() // stops the CLI
+
 	result    *claudeJSONResponse // the final result event, if one arrived
 	resultRaw []byte
 	lastRetry *claudeStreamEvent // the latest api_retry event
 	rejected  *claudeStreamEvent // the 429 that made us stop the CLI
 	other     bytes.Buffer       // lines that aren't stream events
+	partial   []byte             // an incomplete last line
 }
 
-// readClaudeStream reads the CLI's stream-json output until EOF. The CLI
-// retries failed API calls on its own and, in --print mode, says nothing
-// about it outside the stream: each retry is a system/api_retry event, which
-// is logged here so a slow call shows why. A 429 stops the CLI through abort.
-// The CLI's backoff on a 429 adds up to more than any review timeout, and on
-// a subscription a 429 means the plan's limit for that model is used up — it
-// won't clear by waiting. The API providers fail on a 429 too.
-func readClaudeStream(r io.Reader, model string, abort func()) *claudeStream {
-	s := &claudeStream{}
-	br := bufio.NewReader(r)
+// Write handles each complete line and keeps the rest for the next write.
+func (s *claudeStream) Write(p []byte) (int, error) {
+	s.partial = append(s.partial, p...)
 	for {
-		line, err := br.ReadBytes('\n')
-		s.handleLine(bytes.TrimSpace(line), model, abort)
-		if err != nil {
-			return s
+		i := bytes.IndexByte(s.partial, '\n')
+		if i < 0 {
+			break
 		}
+		s.handleLine(bytes.TrimSpace(s.partial[:i]))
+		s.partial = s.partial[i+1:]
 	}
+	return len(p), nil
 }
 
-func (s *claudeStream) handleLine(line []byte, model string, abort func()) {
+// flush handles a last line that had no newline.
+func (s *claudeStream) flush() {
+	s.handleLine(bytes.TrimSpace(s.partial))
+	s.partial = nil
+}
+
+func (s *claudeStream) handleLine(line []byte) {
 	if len(line) == 0 {
 		return
 	}
@@ -571,13 +580,13 @@ func (s *claudeStream) handleLine(line []byte, model string, abort func()) {
 		if ev.ErrorStatus != nil && *ev.ErrorStatus == 429 {
 			if s.rejected == nil {
 				s.rejected = &ev
-				Stderrf(ansiYellow, "Claude API returned %s for %s — stopping the CLI instead of waiting out its retries.\n", ev.describe(), model)
-				abort()
+				Stderrf(ansiYellow, "Claude API returned %s for %s — stopping the CLI instead of waiting out its retries.\n", ev.describe(), s.model)
+				s.abort()
 			}
 			return
 		}
 		Stderrf(ansiYellow, "Claude API error (%s) for %s — CLI retry %d/%d in %s.\n",
-			ev.describe(), model, ev.Attempt, ev.MaxRetries, (time.Duration(ev.RetryDelayMS) * time.Millisecond).Round(100*time.Millisecond))
+			ev.describe(), s.model, ev.Attempt, ev.MaxRetries, (time.Duration(ev.RetryDelayMS) * time.Millisecond).Round(100*time.Millisecond))
 	}
 }
 
