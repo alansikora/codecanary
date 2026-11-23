@@ -1,6 +1,8 @@
 package review
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -10,6 +12,25 @@ import (
 // threads its token could not resolve to the action's resolve step
 // (GithubPlatform.resolveOrDefer writes it, `codecanary resolve` reads it).
 const resolveThreadsOutput = "resolve_threads"
+
+// resolveStatusOutput carries the review status posted with deferred threads
+// (a ResolveStatus as JSON), for ReportUnresolvedThreads.
+const resolveStatusOutput = "resolve_status"
+
+// resolveErrorOutput is the resolve step's one-line reason, written when a
+// thread stays open, for ReportUnresolvedThreads.
+const resolveErrorOutput = "resolve_error"
+
+// ResolveStatus is the review commit status a run posted.
+type ResolveStatus struct {
+	SHA         string `json:"sha"`
+	Context     string `json:"context"`
+	Description string `json:"description"`
+}
+
+// commitStatusDescriptionLimit is GitHub's cap on a commit status
+// description.
+const commitStatusDescriptionLimit = 140
 
 // isResolvePermissionError reports whether err is GitHub refusing
 // resolveReviewThread for lack of permission, as opposed to the call failing.
@@ -44,7 +65,64 @@ func ResolveFindingThreads(repo string, prNumber int, ids []string) error {
 	if err != nil {
 		return fmt.Errorf("fetching review threads: %w", err)
 	}
-	return resolveFindingThreads(threads, ids, ResolveThread)
+	err = resolveFindingThreads(threads, ids, ResolveThread)
+	if err != nil {
+		if werr := writeGithubOutput(resolveErrorOutput, err.Error()); werr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not write the %s output: %v\n", resolveErrorOutput, werr)
+		}
+	}
+	return err
+}
+
+// ReportUnresolvedThreads runs when the action's resolve step could not
+// resolve the threads a review settled: the resolve token was refused, or
+// the resolve itself failed. The review already posted its status, often
+// success, and the job is about to end red for a reason that status doesn't
+// show. This sets the status to error, keeping the review's counts and
+// adding why the threads stay open. It runs with the review's token, which
+// can post statuses; the resolve token can't.
+//
+// statusJSON is the review's `resolve_status` output. tokenErr is what the
+// token service said, resolveErr the resolve step's `resolve_error`; either
+// may be empty.
+func ReportUnresolvedThreads(repo string, ids []string, statusJSON, tokenErr, resolveErr string) error {
+	var st ResolveStatus
+	if err := json.Unmarshal([]byte(statusJSON), &st); err != nil || st.SHA == "" {
+		return errors.New("--status must be the review step's resolve_status output")
+	}
+	desc := unresolvedStatusDescription(st.Description, len(ids), tokenErr, resolveErr)
+	if err := PostReviewCommitStatus(repo, st.Context, st.SHA, "error", desc); err != nil {
+		return fmt.Errorf("posting the %s status: %w", st.Context, err)
+	}
+	Stderrf(ansiYellow, "Posted %s = error on %s (%s)\n", st.Context, shortSHA(st.SHA), desc)
+	return nil
+}
+
+// unresolvedStatusDescription keeps the review's own description and adds
+// why its resolved threads are still open, within GitHub's length cap.
+func unresolvedStatusDescription(reviewDesc string, n int, tokenErr, resolveErr string) string {
+	var why string
+	switch {
+	case strings.TrimSpace(tokenErr) != "":
+		why = "resolve token refused: " + strings.TrimSpace(tokenErr)
+	case strings.TrimSpace(resolveErr) != "":
+		why = strings.TrimSpace(resolveErr)
+	default:
+		why = "the resolve step failed; see the workflow log"
+	}
+	threads := "thread"
+	if n != 1 {
+		threads = "threads"
+	}
+	msg := fmt.Sprintf("%d resolved %s still open (%s)", n, threads, why)
+	if reviewDesc != "" {
+		msg = reviewDesc + "; " + msg
+	}
+	msg = strings.Join(strings.Fields(msg), " ")
+	if len(msg) > commitStatusDescriptionLimit {
+		msg = truncateUTF8(msg, commitStatusDescriptionLimit-len("…"))
+	}
+	return msg
 }
 
 func resolveFindingThreads(threads []ReviewThread, ids []string, resolve func(threadID string) error) error {

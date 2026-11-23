@@ -159,7 +159,8 @@ runs:
     # `codecanary resolve` takes nothing from the review but the thread IDs
     # and resolves only CodeCanary finding threads on this PR. It fails the
     # job when a thread stays open, so the PR never shows a finding as
-    # resolved while its thread still blocks the merge.
+    # resolved while its thread still blocks the merge; the report step then
+    # says so on the review's commit status.
     - name: Generate resolve token
       id: resolve-token
       if: inputs.mode != 'fix' && steps.run-review.outputs.resolve_threads != ''
@@ -170,6 +171,7 @@ runs:
         "${{ github.action_path }}/scripts/app-token.sh"
 
     - name: Resolve threads
+      id: resolve
       if: inputs.mode != 'fix' && steps.run-review.outputs.resolve_threads != ''
       shell: bash
       env:
@@ -179,6 +181,28 @@ runs:
         THREADS: ${{ steps.run-review.outputs.resolve_threads }}
       run: |
         codecanary resolve "$PR_NUMBER" --repo "$REPO" --threads "$THREADS"
+
+    # The review posted its status (often success) before the resolve step
+    # failed, so the job would end red with nothing on the commit saying why.
+    # This sets that status to error with the reason, using the review's
+    # token: the resolve token can't post statuses, and may not exist.
+    - name: Report unresolved threads
+      if: >-
+        failure() && inputs.mode != 'fix' && steps.run-review.outcome == 'success' &&
+        steps.run-review.outputs.resolve_status != '' &&
+        (steps.resolve-token.outcome == 'failure' || steps.resolve.outcome == 'failure')
+      shell: bash
+      env:
+        GH_TOKEN: ${{ steps.review-token.outputs.token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        REPO: ${{ github.repository }}
+        THREADS: ${{ steps.run-review.outputs.resolve_threads }}
+        STATUS: ${{ steps.run-review.outputs.resolve_status }}
+        TOKEN_ERROR: ${{ steps.resolve-token.outputs.error }}
+        RESOLVE_ERROR: ${{ steps.resolve.outputs.resolve_error }}
+      run: |
+        codecanary resolve "$PR_NUMBER" --repo "$REPO" --threads "$THREADS" --report-failure \
+          --status "$STATUS" --token-error "$TOKEN_ERROR" --resolve-error "$RESOLVE_ERROR"
 
     - name: Run fix
       if: inputs.mode == 'fix'
