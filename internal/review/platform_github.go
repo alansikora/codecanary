@@ -117,6 +117,14 @@ func acceptedReplyMessage(reason, rationale string) string {
 	return msg
 }
 
+// threadSettledByBot reports whether the bot already settled t without
+// resolving it: an ack reply, or a "fixed" verdict the resolve step has yet
+// to act on. Neither counts as open or blocking. The finding's own author,
+// the bot, must have written the fixed reply, as triage requires.
+func threadSettledByBot(t ReviewThread) bool {
+	return hasAcknowledgmentReply(t) || hasFixedReply(t, t.Author)
+}
+
 // hasAcknowledgmentReply reports whether the thread already carries any
 // codecanary ack reply. Dedup is intentionally reason-agnostic: all three
 // ack reasons (dismissed/rebutted/acknowledged) keep the thread open and
@@ -167,6 +175,8 @@ type GithubPlatform struct {
 	lastStatus *ResolveStatus
 	// resolveThread replaces ResolveThread in tests.
 	resolveThread func(threadID string) error
+	// replyToThread replaces ReplyToThread in tests.
+	replyToThread func(threadID, body string) error
 }
 
 // statusContext is the name of the commit status the platform posts.
@@ -238,7 +248,9 @@ func (g *GithubPlatform) HandleResolutions(threads []ReviewThread, fixed []fixed
 					fmt.Fprintf(os.Stderr, "  ! %s — failed to post file-removed comment: %v\n", label, err)
 				}
 			}
-			g.resolveOrDefer(t, "resolved, but failed to update thread")
+			if g.resolveOrDefer(t, "resolved, but failed to update thread") && f.Reason == "code_change" {
+				g.recordFixedVerdict(t)
+			}
 		} else if g.ResolveAcceptedReplies {
 			// The reply settles the finding: say so and close the thread.
 			msg := acceptedReplyMessage(f.Reason, f.Rationale)
@@ -265,14 +277,15 @@ func (g *GithubPlatform) HandleResolutions(threads []ReviewThread, fixed []fixed
 // `resolve_threads` step output, and the action's next step resolves it with
 // `codecanary resolve` and a token minted after the model has finished.
 // Outside GitHub Actions there is no next step, so the refusal is reported.
-func (g *GithubPlatform) resolveOrDefer(t ReviewThread, failure string) {
+// It reports whether the thread was deferred.
+func (g *GithubPlatform) resolveOrDefer(t ReviewThread, failure string) bool {
 	resolve := g.resolveThread
 	if resolve == nil {
 		resolve = ResolveThread
 	}
 	err := resolve(t.ID)
 	if err == nil {
-		return
+		return false
 	}
 	label := threadLabel(t)
 	switch {
@@ -283,6 +296,28 @@ func (g *GithubPlatform) resolveOrDefer(t ReviewThread, failure string) {
 	default:
 		g.deferredResolves = append(g.deferredResolves, t.ID)
 		fmt.Fprintf(os.Stderr, "  ~ %s (this token cannot resolve threads; left for the resolve step)\n", label)
+		return true
+	}
+	return false
+}
+
+// recordFixedVerdict replies on a deferred thread that the review judged it
+// fixed, with fixedMarker. The verdict otherwise lives only in this run: if
+// the resolve step then fails, a re-run on the same head sees no new changes
+// and would leave the finding open and blocking. With the reply, triage
+// resolves it on any later run (TriagePreviouslyFixed). One reply per thread.
+func (g *GithubPlatform) recordFixedVerdict(t ReviewThread) {
+	for _, r := range t.Replies {
+		if strings.Contains(r.Body, fixedMarker) {
+			return
+		}
+	}
+	reply := g.replyToThread
+	if reply == nil {
+		reply = ReplyToThread
+	}
+	if err := reply(t.ID, fixedMarker+"\nFixed by a code change — resolving."); err != nil {
+		fmt.Fprintf(os.Stderr, "  ! %s — failed to record the fixed verdict on the thread: %v\n", threadLabel(t), err)
 	}
 }
 
@@ -464,7 +499,7 @@ func openFindingCount(threads []ReviewThread, fixed []fixedThread, newFindings [
 	}
 	n := len(newFindings)
 	for i, t := range threads {
-		if !handled[i] && !hasAcknowledgmentReply(t) {
+		if !handled[i] && !threadSettledByBot(t) {
 			n++
 		}
 	}
@@ -601,7 +636,7 @@ func skippedPushStatus(threads []ReviewThread) (state, desc string) {
 func openThreadsStatus(threads []ReviewThread) (state, desc string) {
 	var open []ReviewThread
 	for _, t := range threads {
-		if !hasAcknowledgmentReply(t) {
+		if !threadSettledByBot(t) {
 			open = append(open, t)
 		}
 	}

@@ -22,6 +22,7 @@ const (
 	TriageCrossFileChange                               // diff has changes but NOT in this thread's file
 	TriageFileRemovedFromPR                             // file no longer in the PR
 	TriagePreviouslyAcked                               // bot already ack'd a deferral; no new human reply since
+	TriagePreviouslyFixed                               // an earlier run judged it fixed by a code change; resolve it
 )
 
 // TriagedThread pairs a ReviewThread with its classification and context.
@@ -282,6 +283,16 @@ func ClassifyThreads(threads []ReviewThread, activityDiff, contextDiff, botLogin
 			continue
 		}
 
+		// An earlier run judged the finding fixed by a code change but
+		// could not resolve the thread (the action's resolve step failed).
+		// Its verdict stands: resolve it now instead of judging it again,
+		// which on the same head would skip it (no new changes) and leave it
+		// blocking, or, after a reply, judge only the reply.
+		if hasFixedReply(t, botLogin) {
+			result[i] = TriagedThread{Thread: t, Index: i, Class: TriagePreviouslyFixed, BotLogin: botLogin}
+			continue
+		}
+
 		hasReply := hasNewHumanReply(t, botLogin)
 		outdated := t.Outdated
 		deleted := fileDeletedInDiff(contextDiff, t.Path)
@@ -371,6 +382,20 @@ func ClassifyThreads(threads []ReviewThread, activityDiff, contextDiff, botLogin
 	}
 
 	return result
+}
+
+// hasFixedReply reports whether the bot replied on t with fixedMarker. Only
+// the bot's own replies count: anyone else could type the marker.
+func hasFixedReply(t ReviewThread, botLogin string) bool {
+	if botLogin == "" {
+		return false
+	}
+	for _, r := range t.Replies {
+		if r.Author == botLogin && strings.Contains(r.Body, fixedMarker) {
+			return true
+		}
+	}
+	return false
 }
 
 // parsePriorAckReason returns the reason recorded in the most recent
@@ -768,7 +793,7 @@ func EvaluateThreadsParallel(triaged []TriagedThread, provider ModelProvider, cf
 	var wg sync.WaitGroup
 
 	for i, t := range triaged {
-		if t.Class == TriageSkip || t.Class == TriageFileRemovedFromPR {
+		if t.Class == TriageSkip || t.Class == TriageFileRemovedFromPR || t.Class == TriagePreviouslyFixed {
 			results[i] = ThreadResolution{Index: t.Index, Resolved: false}
 			continue
 		}
@@ -912,6 +937,8 @@ func LogTriage(triaged []TriagedThread) {
 			fmt.Fprintf(os.Stderr, "  [resolve]  %s — file removed from PR\n", label)
 		case TriagePreviouslyAcked:
 			fmt.Fprintf(os.Stderr, "  [sticky]   %s — prior ack (%s) carried forward\n", label, t.PriorAckReason)
+		case TriagePreviouslyFixed:
+			fmt.Fprintf(os.Stderr, "  [resolve]  %s — judged fixed by an earlier run; the thread was not resolved then\n", label)
 		}
 	}
 
@@ -922,7 +949,7 @@ func LogTriage(triaged []TriagedThread) {
 		switch t.Class {
 		case TriageSkip:
 			skipped++
-		case TriageFileRemovedFromPR, TriagePreviouslyAcked:
+		case TriageFileRemovedFromPR, TriagePreviouslyAcked, TriagePreviouslyFixed:
 			autoResolved++
 		default:
 			needsEval++
@@ -936,7 +963,7 @@ func LogResolutions(triaged []TriagedThread, resolutions []ThreadResolution) {
 	fmt.Fprintf(os.Stderr, "\n")
 	for i, r := range resolutions {
 		switch triaged[i].Class {
-		case TriageSkip, TriageFileRemovedFromPR, TriagePreviouslyAcked:
+		case TriageSkip, TriageFileRemovedFromPR, TriagePreviouslyAcked, TriagePreviouslyFixed:
 			continue
 		}
 		label := threadLabel(triaged[i].Thread)
@@ -975,7 +1002,7 @@ func countNonSkipped(triaged []TriagedThread) int {
 	n := 0
 	for _, t := range triaged {
 		switch t.Class {
-		case TriageSkip, TriageFileRemovedFromPR:
+		case TriageSkip, TriageFileRemovedFromPR, TriagePreviouslyFixed:
 			continue
 		default:
 			n++

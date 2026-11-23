@@ -740,7 +740,7 @@ func runTriage(
 	if opts.DryRun {
 		LogTriage(triaged)
 		for _, t := range triaged {
-			if t.Class == TriageSkip || t.Class == TriageFileRemovedFromPR {
+			if t.Class == TriageSkip || t.Class == TriageFileRemovedFromPR || t.Class == TriagePreviouslyFixed {
 				continue
 			}
 			fmt.Print("\n---\n\n")
@@ -750,10 +750,14 @@ func runTriage(
 	} else {
 		LogTriage(triaged)
 
-		// Pre-evaluation: auto-resolve file-removed threads (Go-only, no LLM).
+		// Pre-evaluation: auto-resolve file-removed threads, and threads an
+		// earlier run judged fixed (Go-only, no LLM).
 		for _, t := range triaged {
-			if t.Class == TriageFileRemovedFromPR {
+			switch t.Class {
+			case TriageFileRemovedFromPR:
 				fixed = append(fixed, fixedThread{Index: t.Index, Reason: "file_removed"})
+			case TriagePreviouslyFixed:
+				fixed = append(fixed, fixedThread{Index: t.Index, Reason: "code_change"})
 			}
 		}
 		if len(fixed) > 0 {

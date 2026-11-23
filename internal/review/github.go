@@ -60,7 +60,12 @@ const (
 	// rejectedReplyMarker marks the bot's answer to an author reply triage
 	// did not accept (resolve_accepted_replies).
 	rejectedReplyMarker = "<!-- codecanary:reply-rejected -->"
-	legacyAckPrefix     = "<!-- clanopy:ack:"
+	// fixedMarker marks the bot's reply on a thread a review judged fixed by
+	// a code change but could not resolve itself (the action's review token
+	// cannot). Later runs read it and resolve the thread without judging it
+	// again; see TriagePreviouslyFixed.
+	fixedMarker     = "<!-- codecanary:fixed -->"
+	legacyAckPrefix = "<!-- clanopy:ack:"
 )
 
 // PRData holds PR metadata and diff.

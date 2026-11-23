@@ -287,6 +287,16 @@ func threadHasAckReply(replies []findingsCommentNode) bool {
 	return false
 }
 
+// threadHasFixedReply reports whether the bot replied with fixedMarker.
+func threadHasFixedReply(replies []findingsCommentNode) bool {
+	for _, r := range replies {
+		if isBotAuthor(r.Author.Login) && strings.Contains(r.Body, fixedMarker) {
+			return true
+		}
+	}
+	return false
+}
+
 // leftOpenSHAs returns the head SHAs of the bot's fix-left-open replies.
 func leftOpenSHAs(replies []findingsCommentNode) []string {
 	var shas []string
@@ -392,6 +402,11 @@ func FetchPRFindings(repo string, prNumber int, includeResolved bool) ([]PRFindi
 		// so re-surfacing them every cycle is noise. Callers that want
 		// the full history can pass includeResolved=true.
 		if !includeResolved && threadHasAckReply(thread.Comments.Nodes[1:]) {
+			continue
+		}
+		// Likewise a thread the bot judged fixed but could not resolve: it
+		// is waiting to be resolved, not to be fixed again.
+		if !includeResolved && threadHasFixedReply(thread.Comments.Nodes[1:]) {
 			continue
 		}
 		// Extract the finding marker from the body.

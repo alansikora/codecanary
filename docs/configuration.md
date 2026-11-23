@@ -485,7 +485,7 @@ The files are added to the project documentation the reviewer reads, each cut to
 
 ## Replies on findings
 
-A reply on a finding's thread is evaluated on the next run (the reply itself starts one). By default an accepted reply — the author dismissed it, acknowledged it, or rebutted it with specific reasons — gets an acknowledgment and the thread stays open but stops blocking. With `resolve_accepted_replies: true` the thread is resolved instead, with a reply saying the reply was accepted and why. A reply that is not accepted gets one answer saying what it leaves unanswered, and the finding stays blocking until a code change or a new reply settles it. Replies from GitHub Apps are evaluated like anyone's; no author is skipped for being a bot.
+A reply on a finding's thread is evaluated on the next run (the reply itself starts one). By default an accepted reply — the author dismissed it, acknowledged it, or rebutted it with specific reasons — gets an acknowledgment and the thread stays open but stops blocking. With `resolve_accepted_replies: true` the thread is resolved instead, with a reply saying the reply was accepted and why, and a reply that is not accepted gets one answer saying what it leaves unanswered. Without that option a reply that is not accepted gets no answer. Either way the finding stays blocking until a code change or a new reply settles it. Replies from GitHub Apps are evaluated like anyone's; no author is skipped for being a bot.
 
 ## Review-only repositories
 
