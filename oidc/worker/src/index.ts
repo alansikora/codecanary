@@ -135,21 +135,36 @@ export default {
 //                        with this token (ensureCommit, github_rules.go)
 //   pull_requests: write gh pr view / gh pr diff, the PR's reviews, review
 //                        comments and threads (read, post, edit the review
-//                        body, reply, resolve, minimize), gh pr comment
+//                        body, reply, minimize), gh pr comment
 //   statuses: write      the CodeCanary / review commit status
 //                        (POST repos/{o}/{r}/statuses/{sha})
 // metadata: read is always included by GitHub. The review reads no check
-// runs, issues or Actions data with this token.
+// runs, issues or Actions data with this token. It cannot resolve a review
+// thread: see RESOLVE_PERMISSIONS.
 export const REVIEW_PERMISSIONS: Readonly<Record<string, string>> = Object.freeze({
   contents: "read",
   pull_requests: "write",
   statuses: "write",
 });
 
-export type TokenMode = "review" | "fix" | "legacy";
+// RESOLVE_PERMISSIONS is what `codecanary resolve` needs: the action step
+// that, after a review, resolves the threads the review settled. GitHub
+// refuses the resolveReviewThread mutation to an installation token without
+// contents: write (pull_requests: write alone gets "Resource not accessible
+// by integration"), which is why the review cannot do it with its own token.
+// This token is minted after the model has finished and goes only to that
+// step, which takes nothing from the review but thread IDs.
+//   contents: write      resolveReviewThread
+//   pull_requests: write reading the PR's review threads, resolveReviewThread
+export const RESOLVE_PERMISSIONS: Readonly<Record<string, string>> = Object.freeze({
+  contents: "write",
+  pull_requests: "write",
+});
+
+export type TokenMode = "review" | "resolve" | "fix" | "legacy";
 
 // parseTokenRequest reads the optional body of POST /token:
-// { "mode": "review" | "fix" }. No body, or a body without `mode`, is
+// { "mode": "review" | "resolve" | "fix" }. No body, or a body without `mode`, is
 // "legacy" and gets the App's full installation permissions, as before the
 // body existed: action versions already pinned by users (v0.8.0 and older)
 // send no body and must keep working. Any other mode is an error rather than
@@ -178,18 +193,24 @@ export async function parseTokenRequest(
     return { mode: "legacy" };
   }
   if (typeof mode !== "string") {
-    return { error: '"mode" must be a string ("review" or "fix")' };
+    return { error: '"mode" must be a string ("review", "resolve" or "fix")' };
   }
-  if (mode === "review" || mode === "fix") {
+  if (mode === "review" || mode === "resolve" || mode === "fix") {
     return { mode };
   }
-  return { error: `Unknown mode ${JSON.stringify(mode)}: expected "review" or "fix"` };
+  return { error: `Unknown mode ${JSON.stringify(mode)}: expected "review", "resolve" or "fix"` };
 }
 
 // tokenPermissions is the `permissions` to request for mode, or undefined to
 // inherit the installation's (fix must push; legacy is today's behaviour).
 export function tokenPermissions(mode: TokenMode): Record<string, string> | undefined {
-  return mode === "review" ? { ...REVIEW_PERMISSIONS } : undefined;
+  if (mode === "review") {
+    return { ...REVIEW_PERMISSIONS };
+  }
+  if (mode === "resolve") {
+    return { ...RESOLVE_PERMISSIONS };
+  }
+  return undefined;
 }
 
 async function handleCheckInstall(request: Request, url: URL, env: Env): Promise<Response> {

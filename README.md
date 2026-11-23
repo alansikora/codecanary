@@ -79,7 +79,7 @@ This runs the same provider and key selection, then:
 
 Once merged, CodeCanary reviews every PR on open and push. Draft PRs are skipped by default.
 
-The app holds `contents: write` so the optional fix job can push, but a review never gets that: it runs with an app token limited to `contents: read`, pull requests and commit statuses, so nothing in a PR can make the review push code. Only the fix job's token can write contents. See [what the app token can do](docs/configuration.md#what-the-app-token-can-do).
+The app holds `contents: write` so the optional fix job can push, but a review never gets that: it runs with an app token limited to `contents: read`, pull requests and commit statuses, so nothing in a PR can make the review push code. Two other tokens can write contents, and neither is ever held by the reviewing model: the fix job's, and the one a later step uses to resolve the threads the review settled (GitHub requires `contents: write` for that). See [what the app token can do](docs/configuration.md#what-the-app-token-can-do).
 
 **Keeping the workflow current.** The workflow file is yours to customize, so it doesn't update itself. Its `# codecanary-workflow: v<N>` line records which template it came from; when a newer template ships, the bot adds a one-line note to its reviews. Re-run `codecanary setup github` (it asks before overwriting) or copy the changes from [the template](internal/setup/codecanary.yml), keeping the marker line. The same kind of note appears when the workflow pins an old `codecanary_version`.
 

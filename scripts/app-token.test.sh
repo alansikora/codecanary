@@ -53,6 +53,7 @@ check() { # name condition...
 REDUCED='{"token":"ghs_r","permissions":{"contents":"read","pull_requests":"write","statuses":"write","metadata":"read"}}'
 FULL='{"token":"ghs_f","permissions":{"contents":"write","pull_requests":"write","statuses":"write","metadata":"read"}}'
 OLD_WORKER='{"token":"ghs_old"}'
+RESOLVE='{"token":"ghs_t","permissions":{"contents":"write","pull_requests":"write","metadata":"read"}}'
 
 run review "$REDUCED"
 check "review sends mode review and outputs the token" \
@@ -64,6 +65,14 @@ check "an empty mode is a review" test "$status" = 0 -a "$body" = '{"mode":"revi
 run fix "$FULL"
 check "fix sends mode fix and accepts contents: write" \
   test "$status" = 0 -a "$body" = '{"mode":"fix"}' -a "$token" = ghs_f
+
+run resolve "$RESOLVE"
+check "resolve sends mode resolve and accepts contents: write" \
+  test "$status" = 0 -a "$body" = '{"mode":"resolve"}' -a "$token" = ghs_t
+
+run resolve '{"error":"Unknown mode \"resolve\": expected \"review\" or \"fix\""}'
+check "resolve fails against a worker that predates the mode" \
+  bash -c '[ "$0" != 0 ] && [ -z "$2" ] && grep -q "Unknown mode" <<<"$1"' "$status" "$out" "$token"
 
 run review "$FULL"
 check "review fails on a token that can write contents" \
