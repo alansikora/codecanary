@@ -164,9 +164,9 @@ type ReviewEvent struct {
 	FilesChanged int `json:"files_changed"`
 
 	// Aggregate finding counts.
-	NewFindings      int            `json:"new_findings"`
-	StillOpenFindings int           `json:"still_open_findings"`
-	BySeverity       map[string]int `json:"by_severity"`
+	NewFindings       int            `json:"new_findings"`
+	StillOpenFindings int            `json:"still_open_findings"`
+	BySeverity        map[string]int `json:"by_severity"`
 
 	// Aggregate token usage.
 	InputTokens     int     `json:"input_tokens"`
