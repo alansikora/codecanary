@@ -22,7 +22,12 @@ contents: write for that), so the review reports the threads it settled
 and this command resolves them with a token minted for this step.
 
 Only CodeCanary finding threads on the given PR are resolved; any other
-ID is refused. Exits non-zero when a thread could not be resolved.`,
+ID is refused. Exits non-zero when a thread could not be resolved.
+
+With --report-failure, resolves nothing: it sets the review's commit status
+(--status, the review step's resolve_status output) to error, saying why
+the threads stay open. The action runs it with the review's token when the
+resolve token or the resolve step failed.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		repo, _ := cmd.Flags().GetString("repo")
@@ -40,6 +45,12 @@ ID is refused. Exits non-zero when a thread could not be resolved.`,
 		}
 		// A thread left open is not a usage error.
 		cmd.SilenceUsage = true
+		if report, _ := cmd.Flags().GetBool("report-failure"); report {
+			status, _ := cmd.Flags().GetString("status")
+			tokenErr, _ := cmd.Flags().GetString("token-error")
+			resolveErr, _ := cmd.Flags().GetString("resolve-error")
+			return review.ReportUnresolvedThreads(repo, ids, status, tokenErr, resolveErr)
+		}
 		return review.ResolveFindingThreads(repo, prNumber, ids)
 	},
 }
@@ -47,5 +58,9 @@ ID is refused. Exits non-zero when a thread could not be resolved.`,
 func init() {
 	resolveCmd.Flags().StringP("repo", "r", "", "Repository in owner/name format")
 	resolveCmd.Flags().String("threads", "", "Comma-separated review thread IDs (the review step's resolve_threads output)")
+	resolveCmd.Flags().Bool("report-failure", false, "Set the review status to error instead of resolving (the action's report step)")
+	resolveCmd.Flags().String("status", "", "With --report-failure: the review step's resolve_status output")
+	resolveCmd.Flags().String("token-error", "", "With --report-failure: why the resolve token was refused")
+	resolveCmd.Flags().String("resolve-error", "", "With --report-failure: the resolve step's resolve_error output")
 	rootCmd.AddCommand(resolveCmd)
 }

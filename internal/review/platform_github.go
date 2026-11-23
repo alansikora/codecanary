@@ -161,6 +161,10 @@ type GithubPlatform struct {
 	// deferredResolves are the threads this run settled but its token could
 	// not resolve; see resolveOrDefer.
 	deferredResolves []string
+	// lastStatus is the review status this run last posted. With deferred
+	// threads it goes to the action as `resolve_status`, so a resolve step
+	// that fails can say so on that status; see writeResolveOutput.
+	lastStatus *ResolveStatus
 	// resolveThread replaces ResolveThread in tests.
 	resolveThread func(threadID string) error
 }
@@ -184,6 +188,8 @@ func (g *GithubPlatform) setStatus(sha, state, desc string) {
 		return
 	}
 	Stderrf(ansiGreen, "Posted %s = %s on %s (%s)\n", g.statusContext(), state, shortSHA(sha), desc)
+	g.lastStatus = &ResolveStatus{SHA: sha, Context: g.statusContext(), Description: desc}
+	g.writeResolveOutput()
 }
 
 func (g *GithubPlatform) SetRunStatus(sha, state, desc string) {
@@ -283,12 +289,24 @@ func (g *GithubPlatform) resolveOrDefer(t ReviewThread, failure string) {
 // writeResolveOutput sets the `resolve_threads` step output to every thread
 // deferred so far. HandleResolutions runs more than once per review and a
 // step output keeps its last value, so each call writes the whole list.
+// With them goes the review status last posted (`resolve_status`), which
+// the action's report step amends when the threads can't be resolved.
 func (g *GithubPlatform) writeResolveOutput() {
 	if len(g.deferredResolves) == 0 {
 		return
 	}
 	if err := writeGithubOutput(resolveThreadsOutput, strings.Join(g.deferredResolves, ",")); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not write the %s output; %d thread(s) stay open: %v\n", resolveThreadsOutput, len(g.deferredResolves), err)
+	}
+	if g.lastStatus == nil {
+		return
+	}
+	data, err := json.Marshal(g.lastStatus)
+	if err == nil {
+		err = writeGithubOutput(resolveStatusOutput, string(data))
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not write the %s output: %v\n", resolveStatusOutput, err)
 	}
 }
 

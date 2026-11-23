@@ -40,6 +40,8 @@ TOKEN=$(echo "$RESPONSE" | jq -r '.token // empty' 2>/dev/null || true)
 if [ -z "$TOKEN" ]; then
   ERROR=$(echo "$RESPONSE" | jq -r '.error // "unknown error"' 2>/dev/null || echo "unexpected response")
   echo "::error::Failed to get CodeCanary Review app token: $ERROR. Install the app at https://github.com/apps/codecanary-bot"
+  # For the action's report step (one line: step outputs end at a newline).
+  echo "error=$(printf '%s' "$ERROR" | tr '\r\n' '  ')" >> "$GITHUB_OUTPUT"
   exit 1
 fi
 echo "::add-mask::$TOKEN"
