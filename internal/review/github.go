@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -771,34 +772,50 @@ func FetchPreviousReviewSHA(repo string, prNumber int) string {
 	if err != nil {
 		return ""
 	}
-
-	prefixes := reviewMarkerPrefixes
-	const suffix = " -->"
-
 	// Search from most recent to oldest.
 	for i := len(reviews) - 1; i >= 0; i-- {
-		body := reviews[i].Body
-		for _, prefix := range prefixes {
-			idx := strings.Index(body, prefix)
-			if idx < 0 {
-				continue
-			}
-			start := idx + len(prefix)
-			endIdx := strings.Index(body[start:], suffix)
-			if endIdx < 0 {
-				continue
-			}
-			jsonData := body[start : start+endIdx]
-			var result ReviewResult
-			if err := json.Unmarshal([]byte(jsonData), &result); err != nil {
-				continue
-			}
-			if result.SHA != "" {
-				return result.SHA
-			}
+		if sha := reviewMarkerSHA(reviews[i].Body); sha != "" {
+			return sha
 		}
 	}
+	return ""
+}
 
+// FetchReviewedSHAs returns the heads the PR's CodeCanary reviews were
+// posted for, oldest first, each once.
+func FetchReviewedSHAs(repo string, prNumber int) ([]string, error) {
+	reviews, err := fetchPRReviews(repo, prNumber)
+	if err != nil {
+		return nil, err
+	}
+	var shas []string
+	for _, r := range reviews {
+		shas = appendNew(shas, reviewMarkerSHA(r.Body))
+	}
+	return slices.DeleteFunc(shas, func(s string) bool { return s == "" }), nil
+}
+
+// reviewMarkerSHA returns the head SHA in a review body's baseline marker,
+// "" when it has none (a gate, or another bot's review).
+func reviewMarkerSHA(body string) string {
+	for _, prefix := range reviewMarkerPrefixes {
+		idx := strings.Index(body, prefix)
+		if idx < 0 {
+			continue
+		}
+		start := idx + len(prefix)
+		endIdx := strings.Index(body[start:], reviewMarkerSuffix)
+		if endIdx < 0 {
+			continue
+		}
+		var result ReviewResult
+		if err := json.Unmarshal([]byte(body[start:start+endIdx]), &result); err != nil {
+			continue
+		}
+		if result.SHA != "" {
+			return result.SHA
+		}
+	}
 	return ""
 }
 

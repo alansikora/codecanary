@@ -43,6 +43,15 @@ type ReviewPlatform interface {
 	// doesn't block the PR. Locally it never skips.
 	SkipReview(cfg *ReviewConfig, replyOnly bool) (bool, error)
 
+	// StopAtRoundLimit reports whether the tier's max_rounds is used up for
+	// the head sha: that many other heads already carry a review. When it
+	// is, it settles the run without a model call. On GitHub the head gets
+	// the status the open threads warrant, marked "review limit reached",
+	// and the PR gets a one-time notice; a head that is itself reviewed
+	// stays in its round (thread replies on it are still evaluated).
+	// Locally there are no rounds and it never stops.
+	StopAtRoundLimit(sha string, tier Tier) (bool, error)
+
 	// ReportFailure tells the PR that a run failed (best-effort), so a
 	// failed run never looks like a clean review or leaves a required check
 	// waiting with no explanation. On GitHub it posts a PR notice; the

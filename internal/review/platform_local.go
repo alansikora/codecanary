@@ -93,6 +93,11 @@ func (l *LocalPlatform) SkipReview(_ *ReviewConfig, _ bool) (bool, error) {
 	return false, nil
 }
 
+// StopAtRoundLimit never stops: rounds count reviews posted to a PR.
+func (l *LocalPlatform) StopAtRoundLimit(_ string, _ Tier) (bool, error) {
+	return false, nil
+}
+
 func (l *LocalPlatform) ReportFailure(_ error, _ bool) {}
 
 // LoadRules reads the config and the rule sources from the working tree:

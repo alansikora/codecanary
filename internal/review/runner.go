@@ -128,14 +128,14 @@ type reviewContext struct {
 	Coverage    *ReviewCoverage // files the prompt does not show in full
 }
 
-// prepareReview reads project docs, Claude rules and context_files from
-// rules.Root, loads file contents, and resolves the Claude environment. It
-// also scopes pr.Diff for the prompt and records in Coverage which files the
-// prompt does not show in full. Both the PR and local paths use this.
-func prepareReview(pr *PRData, rules *RuleSources) (*reviewContext, error) {
+// prepareReview reads project docs, Claude rules and context files (by path
+// and by tier; tier may be nil) from rules.Root, loads file contents, and
+// resolves the Claude environment. It also scopes pr.Diff for the prompt and
+// records in Coverage which files the prompt does not show in full. Both the PR and local paths use this.
+func prepareReview(pr *PRData, rules *RuleSources, tier *Tier) (*reviewContext, error) {
 	cfg := rules.Config
 	projectDocs := readProjectDocsFrom(rules.Root, pr.Files)
-	ctxFiles, err := readContextFiles(rules.Root, cfg, pr.Files, cfg.EffectiveMaxFileSize())
+	ctxFiles, err := readContextFiles(rules.Root, cfg, pr.Files, tier, cfg.EffectiveMaxFileSize())
 	if err != nil {
 		return nil, err
 	}
@@ -421,7 +421,21 @@ func run(opts RunOptions, published *bool) (err error) {
 		return nil
 	}
 
-	// 3c. Intent review: a PR without an intent section is not reviewed
+	// 3c. Round limit: once the tier's max_rounds heads have been reviewed,
+	// a new head gets a status from the open threads and no model call.
+	// Checked before the intent gate: a capped PR is not reviewed again,
+	// whatever its body says.
+	if tier != nil && tier.Config.MaxRounds > 0 && !opts.DryRun {
+		stop, err := platform.StopAtRoundLimit(headSHA, *tier)
+		if err != nil {
+			return err
+		}
+		if stop {
+			return nil
+		}
+	}
+
+	// 3d. Intent review: a PR without an intent section is not reviewed
 	// against nothing; it gets one blocker, and its head stays unreviewed.
 	if blockers := ExtractIntent(pr, cfg).Blockers(); len(blockers) > 0 && !opts.ReplyOnly {
 		if opts.DryRun {
@@ -439,8 +453,8 @@ func run(opts RunOptions, published *bool) (err error) {
 		platform.SetRunStatus(headSHA, "pending", "review running")
 	}
 
-	// 3d. Prepare shared review context.
-	rctx, err := prepareReview(pr, rules)
+	// 3e. Prepare shared review context.
+	rctx, err := prepareReview(pr, rules, tier)
 	if err != nil {
 		return err
 	}

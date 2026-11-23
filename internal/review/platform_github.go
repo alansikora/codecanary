@@ -622,6 +622,87 @@ func (g *GithubPlatform) SkipReview(cfg *ReviewConfig, replyOnly bool) (bool, er
 	return true, nil
 }
 
+// StopAtRoundLimit counts the heads other than sha that carry a CodeCanary
+// review. Below the tier's max_rounds the run reviews. At it, sha gets the
+// status the open threads warrant without a model call, and the PR a notice
+// once per limit. A failure to read the reviews or threads, or to post the
+// status, is an error: guessing would either spend a round or pass a head
+// that has blocking findings.
+func (g *GithubPlatform) StopAtRoundLimit(sha string, tier Tier) (bool, error) {
+	maxRounds := tier.Config.MaxRounds
+	reviewed, err := FetchReviewedSHAs(g.Repo, g.PRNumber)
+	if err != nil {
+		return false, fmt.Errorf("counting review rounds: %w", err)
+	}
+	rounds := roundsBefore(reviewed, sha)
+	if rounds < maxRounds {
+		fmt.Fprintf(os.Stderr, "Tier %s — round %d of %d\n", tier.Name, rounds+1, maxRounds)
+		return false, nil
+	}
+	Stderrf(ansiYellow, "Tier %s — review limit reached (%d rounds); not reviewing %s\n", tier.Name, maxRounds, shortSHA(sha))
+	all, err := FetchReviewThreads(g.Repo, g.PRNumber)
+	if err != nil {
+		return true, fmt.Errorf("review limit reached: fetching review threads: %w", err)
+	}
+	var open []ReviewThread
+	for _, t := range all {
+		if !t.Resolved {
+			open = append(open, t)
+		}
+	}
+	state, desc := roundLimitStatus(open, maxRounds)
+	if err := g.SetReviewStatus(sha, state, desc); err != nil {
+		return true, fmt.Errorf("posting %s status at the review limit: %w", g.statusContext(), err)
+	}
+	Stderrf(ansiGreen, "Posted %s = %s on %s (%s)\n", g.statusContext(), state, shortSHA(sha), desc)
+	if err := g.PostNotice(roundLimitNoticeKey(maxRounds), roundLimitNotice(tier, g.statusContext())); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not post the review limit notice: %v\n", err)
+	}
+	return true, nil
+}
+
+// roundsBefore is how many review rounds a head has behind it: the reviewed
+// heads other than itself. A head that is itself reviewed is in its round.
+func roundsBefore(reviewed []string, sha string) int {
+	n := 0
+	for _, s := range reviewed {
+		if s != sha {
+			n++
+		}
+	}
+	return n
+}
+
+// roundLimitStatus is the commit status for a head past the round limit:
+// the open threads' status, marked as not reviewed.
+func roundLimitStatus(threads []ReviewThread, maxRounds int) (state, desc string) {
+	state, desc = openThreadsStatus(threads)
+	return state, fmt.Sprintf("%s; review limit reached (%d rounds)", desc, maxRounds)
+}
+
+// roundLimitNoticeKey makes the limit notice once per PR and limit, so a
+// raised limit that is reached again gets a fresh notice.
+func roundLimitNoticeKey(maxRounds int) string {
+	return fmt.Sprintf("<!-- codecanary:round-limit %d -->", maxRounds)
+}
+
+// roundLimitNotice is the PR comment posted when a tier's round limit stops
+// the review.
+func roundLimitNotice(tier Tier, statusContext string) string {
+	name := strings.ReplaceAll(tier.Name, "`", "'")
+	ctx := strings.ReplaceAll(statusContext, "`", "'")
+	plural := "s"
+	if tier.Config.MaxRounds == 1 {
+		plural = ""
+	}
+	return fmt.Sprintf("## \U0001F425 CodeCanary\n\n"+
+		"This PR has been reviewed %d time%s, the limit for tier `%s`, so later pushes are not reviewed. "+
+		"Each new commit gets a `%s` status from the findings still open: they stay open, and blocking ones keep it failing, until they are resolved. "+
+		"A thread resolved by hand is picked up on the next push or reply.\n\n"+
+		"To review this PR again, raise `max_rounds` for `%s` in `.codecanary/config.yml` on the base branch.\n",
+		tier.Config.MaxRounds, plural, name, ctx, name)
+}
+
 // skippedPushStatus is the commit status for a push review_on: ready didn't
 // review: the open threads' status, marked as not reviewed.
 func skippedPushStatus(threads []ReviewThread) (state, desc string) {
