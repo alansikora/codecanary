@@ -53,7 +53,7 @@ check() { # name condition...
 REDUCED='{"token":"ghs_r","permissions":{"contents":"read","pull_requests":"write","statuses":"write","metadata":"read"}}'
 FULL='{"token":"ghs_f","permissions":{"contents":"write","pull_requests":"write","statuses":"write","metadata":"read"}}'
 OLD_WORKER='{"token":"ghs_old"}'
-RESOLVE='{"token":"ghs_t","permissions":{"contents":"write","pull_requests":"write","metadata":"read"}}'
+RESOLVE='{"token":"ghs_t","permissions":{"contents":"write","pull_requests":"read","metadata":"read"}}'
 
 run review "$REDUCED"
 check "review sends mode review and outputs the token" \

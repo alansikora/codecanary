@@ -150,15 +150,17 @@ export const REVIEW_PERMISSIONS: Readonly<Record<string, string>> = Object.freez
 // RESOLVE_PERMISSIONS is what `codecanary resolve` needs: the action step
 // that, after a review, resolves the threads the review settled. GitHub
 // refuses the resolveReviewThread mutation to an installation token without
-// contents: write (pull_requests: write alone gets "Resource not accessible
-// by integration"), which is why the review cannot do it with its own token.
+// contents: write: pull_requests: write gets "Resource not accessible by
+// integration" and is not needed for it either (probed in #219), which is
+// why the review cannot do it with its own token.
 // This token is minted after the model has finished and goes only to that
 // step, which takes nothing from the review but thread IDs.
 //   contents: write      resolveReviewThread
-//   pull_requests: write reading the PR's review threads, resolveReviewThread
+//   pull_requests: read  reading the PR's review threads, to resolve only
+//                        CodeCanary's own (a private repo needs it)
 export const RESOLVE_PERMISSIONS: Readonly<Record<string, string>> = Object.freeze({
   contents: "write",
-  pull_requests: "write",
+  pull_requests: "read",
 });
 
 export type TokenMode = "review" | "resolve" | "fix" | "legacy";

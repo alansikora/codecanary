@@ -88,7 +88,7 @@ describe("POST /token", () => {
     expect(tokenRequests).toEqual([
       {
         repositories: ["widget"],
-        permissions: { contents: "write", pull_requests: "write" },
+        permissions: { contents: "write", pull_requests: "read" },
       },
     ]);
   });
