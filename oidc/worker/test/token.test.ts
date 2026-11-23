@@ -87,7 +87,6 @@ describe("POST /token", () => {
     ["no body", undefined],
     ["empty body", ""],
     ["an object without mode", "{}"],
-    ["an unknown mode", '{"mode":"deploy"}'],
   ])("%s requests no permissions, so the installation's apply", async (_name, body) => {
     const resp = await worker.fetch(tokenRequest(body), env);
     expect(resp.status).toBe(200);
@@ -102,6 +101,9 @@ describe("POST /token", () => {
     ["a JSON string", '"review"'],
     ["null", "null"],
     ["a non-string mode", '{"mode":1}'],
+    ["an unknown mode", '{"mode":"deploy"}'],
+    ["a miscased mode", '{"mode":"Review"}'],
+    ["an empty mode", '{"mode":""}'],
   ])("%s is a 400 and mints nothing", async (_name, body) => {
     const resp = await worker.fetch(tokenRequest(body), env);
     expect(resp.status).toBe(400);

@@ -149,11 +149,14 @@ export const REVIEW_PERMISSIONS: Readonly<Record<string, string>> = Object.freez
 export type TokenMode = "review" | "fix" | "legacy";
 
 // parseTokenRequest reads the optional body of POST /token:
-// { "mode": "review" | "fix" }. No body, or a mode this worker doesn't know,
-// is "legacy" and gets the App's full installation permissions, as before
-// the body existed: action versions already pinned by users (v0.8.0 and
-// older) send no body and must keep working. Anything that isn't a JSON
-// object with an optional string `mode` is an error.
+// { "mode": "review" | "fix" }. No body, or a body without `mode`, is
+// "legacy" and gets the App's full installation permissions, as before the
+// body existed: action versions already pinned by users (v0.8.0 and older)
+// send no body and must keep working. Any other mode is an error rather than
+// a fall-back to the full token, so a typo ("Review") or a mode this worker
+// predates fails loudly instead of quietly minting a token that can push.
+// Anything that isn't a JSON object with an optional string `mode` is an
+// error too.
 export async function parseTokenRequest(
   request: Request
 ): Promise<{ mode: TokenMode } | { error: string }> {
@@ -180,7 +183,7 @@ export async function parseTokenRequest(
   if (mode === "review" || mode === "fix") {
     return { mode };
   }
-  return { mode: "legacy" };
+  return { error: `Unknown mode ${JSON.stringify(mode)}: expected "review" or "fix"` };
 }
 
 // tokenPermissions is the `permissions` to request for mode, or undefined to
