@@ -104,9 +104,6 @@ type ghPRView struct {
 	Labels      []struct {
 		Name string `json:"name"`
 	} `json:"labels"`
-	Files []struct {
-		Path string `json:"path"`
-	} `json:"files"`
 }
 
 // FetchPR gets PR metadata and diff using the gh CLI.
@@ -116,7 +113,7 @@ func FetchPR(repo string, number int) (*PRData, error) {
 	// Fetch PR metadata as JSON.
 	viewOut, err := runGH("gh pr view", "pr", "view", numStr,
 		"--repo", repo,
-		"--json", "title,body,author,baseRefName,headRefName,baseRefOid,headRefOid,labels,files",
+		"--json", "title,body,author,baseRefName,headRefName,baseRefOid,headRefOid,labels",
 	)
 	if err != nil {
 		return nil, err
@@ -127,16 +124,30 @@ func FetchPR(repo string, number int) (*PRData, error) {
 		return nil, fmt.Errorf("parsing gh pr view output: %w", err)
 	}
 
+	// Fetch the full changed-file list. gh pr view --json files stops at
+	// 100 files; the paginated files API returns up to 3000.
+	filesOut, err := runGH("gh api pulls files", "api", "--paginate",
+		fmt.Sprintf("repos/%s/pulls/%d/files?per_page=100", repo, number),
+		"--jq", ".[].filename",
+	)
+	if err != nil {
+		return nil, err
+	}
+	var files []string
+	for _, line := range strings.Split(string(filesOut), "\n") {
+		if f := strings.TrimSpace(line); f != "" {
+			files = append(files, f)
+		}
+	}
+
 	// Fetch the diff. This hits GitHub's pull request diff API
 	// (GET /repos/{owner}/{repo}/pulls/{n} with Accept: application/vnd.github.v3.diff).
 	diffOut, err := runGH("gh pr diff", "pr", "diff", numStr, "--repo", repo)
 	if err != nil {
+		if isDiffTooLarge(err) {
+			return nil, &DiffTooLargeError{Files: len(files), Err: err}
+		}
 		return nil, fmt.Errorf("%w (GitHub pull request diff API; if this looks like a transient 5xx/timeout, retrying the job may help)", err)
-	}
-
-	files := make([]string, len(view.Files))
-	for i, f := range view.Files {
-		files[i] = f.Path
 	}
 
 	labels := make([]string, len(view.Labels))
@@ -157,6 +168,30 @@ func FetchPR(repo string, number int) (*PRData, error) {
 		Diff:       string(diffOut),
 		Files:      files,
 	}, nil
+}
+
+// githubDiffMaxFiles is the file limit of GitHub's pull request diff API.
+const githubDiffMaxFiles = 300
+
+// DiffTooLargeError reports a PR whose diff GitHub refuses to serve
+// (over 300 files or roughly 20,000 lines), so the PR cannot be reviewed.
+type DiffTooLargeError struct {
+	Files int
+	Err   error
+}
+
+func (e *DiffTooLargeError) Error() string {
+	return fmt.Sprintf("PR is too large to review: it changes %d files, and GitHub's diff API serves at most %d files or about 20,000 lines; split it into smaller PRs (%v)",
+		e.Files, githubDiffMaxFiles, e.Err)
+}
+
+func (e *DiffTooLargeError) Unwrap() error { return e.Err }
+
+// isDiffTooLarge reports whether a gh pr diff error is GitHub's 406
+// "diff exceeded the maximum number of files/lines" response.
+func isDiffTooLarge(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "HTTP 406") || strings.Contains(msg, "exceeded the maximum")
 }
 
 // PostComment posts a review comment on a PR.
