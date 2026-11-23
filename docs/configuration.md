@@ -456,6 +456,8 @@ default_tier: "tier:high"
 
 A PR with exactly one configured tier label gets that tier. A PR with none, or with more than one, gets `default_tier` — it is never skipped for lacking a label. `review: false` skips the review: the head gets `success` "skipped: tier low" and no comments. `review_model` replaces `review_model` for that tier (validated like it); `triage_model` is shared. A local review has no labels, so it uses `default_tier`. Every posted review ends with a line naming the tier, the model, and the tokens and cost of the run.
 
+Label changes (workflow template v5 triggers on `labeled` and `unlabeled`) start a review only when the head has not been reviewed yet — for example a PR moved from `tier:low` to `tier:medium`. On a reviewed head the new tier applies from the next push. A label that is not a tier still starts the workflow job, which exits without a model call.
+
 ### Tier context files
 
 `context_files` under a tier loads those files as project documentation for every PR in the tier, whatever it changes, after any files the top-level `context_files` rules select:
@@ -478,15 +480,13 @@ tiers:
   "tier:peer": { max_rounds: 2 }
 ```
 
-A round is a head that has a CodeCanary review, counted from the review markers on the PR: every push that is reviewed, including a fix job's push, uses one. Once `max_rounds` heads are reviewed, a later head is not reviewed and no model is called for it, for a push or a thread reply:
+A round is a head that has a CodeCanary review, counted from the review markers on the reviews the CodeCanary app posted (a marker in anyone else's review is ignored): every push that is reviewed, including a fix job's push, uses one. Once `max_rounds` heads are reviewed, a later head is not reviewed and no model is called for it, for a push or a thread reply:
 
 - the head gets the `status_context` status (`CodeCanary / review` by default) computed from the threads still open, by the same rule as a review: `failure` while a blocking thread is open and not acknowledged, `success` otherwise. The description ends with `review limit reached (<N> rounds)`, for example `blocking: 1, non-blocking: 0; review limit reached (2 rounds)`;
 - the PR gets one comment saying the limit was reached and how to lift it;
 - findings stay open; nothing is resolved or re-evaluated. Resolving a thread by hand starts no run, so the status catches up on the next push or reply.
 
 A reply on a head that was reviewed within the limit is still evaluated as usual. To review again, raise `max_rounds` on the base branch: the next push is compared with the new limit. Removing the label, or moving the PR to a tier without a cap, also lifts it from the next push. The fix job does not run on a head the limit stopped. Local reviews have no rounds.
-
-Label changes (workflow template v5 triggers on `labeled` and `unlabeled`) start a review only when the head has not been reviewed yet — for example a PR moved from `tier:low` to `tier:medium`. On a reviewed head the new tier applies from the next push. A label that is not a tier still starts the workflow job, which exits without a model call.
 
 ## Reviewing against the PR's intent
 

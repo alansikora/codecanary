@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -638,6 +637,9 @@ type ghReview struct {
 	ID     int64  `json:"id"`
 	NodeID string `json:"node_id"`
 	Body   string `json:"body"`
+	User   struct {
+		Login string `json:"login"`
+	} `json:"user"`
 }
 
 // fetchPRReviews returns the PR's reviews, oldest first.
@@ -782,17 +784,29 @@ func FetchPreviousReviewSHA(repo string, prNumber int) string {
 }
 
 // FetchReviewedSHAs returns the heads the PR's CodeCanary reviews were
-// posted for, oldest first, each once.
+// posted for, oldest first, each once (see botReviewedSHAs).
 func FetchReviewedSHAs(repo string, prNumber int) ([]string, error) {
 	reviews, err := fetchPRReviews(repo, prNumber)
 	if err != nil {
 		return nil, err
 	}
+	return botReviewedSHAs(reviews), nil
+}
+
+// botReviewedSHAs returns the head SHAs in the baseline markers of reviews
+// the bot wrote. Anyone can post a review whose body carries a marker; only
+// the bot's count, so a PR author cannot use up a tier's max_rounds.
+func botReviewedSHAs(reviews []ghReview) []string {
 	var shas []string
 	for _, r := range reviews {
-		shas = appendNew(shas, reviewMarkerSHA(r.Body))
+		if !isBotAuthor(r.User.Login) {
+			continue
+		}
+		if sha := reviewMarkerSHA(r.Body); sha != "" {
+			shas = appendNew(shas, sha)
+		}
 	}
-	return slices.DeleteFunc(shas, func(s string) bool { return s == "" }), nil
+	return shas
 }
 
 // reviewMarkerSHA returns the head SHA in a review body's baseline marker,

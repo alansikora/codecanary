@@ -41,6 +41,25 @@ func TestReviewMarkerSHA(t *testing.T) {
 	}
 }
 
+func TestBotReviewedSHAs(t *testing.T) {
+	review := func(login, sha string) ghReview {
+		r := ghReview{Body: "## CodeCanary\n\n<!-- codecanary:review {\"sha\":\"" + sha + "\"} -->"}
+		r.User.Login = login
+		return r
+	}
+	reviews := []ghReview{
+		review(BotLogin, "aaa"),
+		review("pr-author", "forged1"), // a marker anyone can paste into a review
+		review(BotLogin, "aaa"),        // an in-place refresh of the same head
+		review("pr-author", "forged2"),
+		review(BotLogin, "bbb"),
+		{Body: "a human review"},
+	}
+	if got := botReviewedSHAs(reviews); !slices.Equal(got, []string{"aaa", "bbb"}) {
+		t.Errorf("botReviewedSHAs = %v, want [aaa bbb]", got)
+	}
+}
+
 func TestRoundLimitStatus(t *testing.T) {
 	bug := ReviewThread{Body: "🐛 **bug** — `b`\n\nOpen bug."}
 	nit := ReviewThread{Body: "⚪ **nitpick** — `n`\n\nOpen nitpick."}
