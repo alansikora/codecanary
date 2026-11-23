@@ -108,7 +108,7 @@ func TestApplyIntentLeavesOtherThreadsAlone(t *testing.T) {
 	if off[0].Class != TriageSkip || off[0].Intent != nil {
 		t.Errorf("intent review off: class %v, intent %v", off[0].Class, off[0].Intent)
 	}
-	if strings.Contains(BuildPerThreadPrompt(triaged[1], &ReviewConfig{}), "Pull Request Intent") == false {
+	if !strings.Contains(BuildPerThreadPrompt(triaged[1], &ReviewConfig{}), "Pull Request Intent") {
 		t.Error("intent thread prompt has no intent section")
 	}
 }
