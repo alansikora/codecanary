@@ -267,6 +267,12 @@ func TestBuildReplyPrompt_OffersReplyReasonsOnly(t *testing.T) {
 	if strings.Contains(prompt, `"code_change"`) {
 		t.Error("buildReplyPrompt must not offer \"code_change\" as a reason")
 	}
+
+	// resolve_accepted_replies still gets its rejection rationale here.
+	explained := buildReplyPrompt(tt, &ReviewConfig{ResolveAcceptedReplies: true})
+	if !strings.Contains(explained, "It is posted on the thread") || strings.Contains(explained, `"code_change"`) {
+		t.Error("buildReplyPrompt with resolve_accepted_replies must ask for the rejection rationale and still not offer code_change")
+	}
 }
 
 func TestBuildCodeChangeReplyPrompt_AllowsAllReasons(t *testing.T) {
@@ -592,10 +598,11 @@ func (p *stickyAckPanicProvider) Run(_ context.Context, _ string, _ RunOpts) (*p
 
 func TestResolutionFormat_RequestsRationale(t *testing.T) {
 	for _, fn := range map[string]func(*strings.Builder){
-		"writeResolutionFormat":           func(b *strings.Builder) { writeResolutionFormat(b, false) },
-		"writeResolutionFormat/explain":   func(b *strings.Builder) { writeResolutionFormat(b, true) },
-		"writeCodeChangeResolutionFormat": writeCodeChangeResolutionFormat,
-		"writeReplyResolutionFormat":      writeReplyResolutionFormat,
+		"writeResolutionFormat":              func(b *strings.Builder) { writeResolutionFormat(b, false) },
+		"writeResolutionFormat/explain":      func(b *strings.Builder) { writeResolutionFormat(b, true) },
+		"writeCodeChangeResolutionFormat":    writeCodeChangeResolutionFormat,
+		"writeReplyResolutionFormat":         func(b *strings.Builder) { writeReplyResolutionFormat(b, false) },
+		"writeReplyResolutionFormat/explain": func(b *strings.Builder) { writeReplyResolutionFormat(b, true) },
 	} {
 		var b strings.Builder
 		fn(&b)
@@ -616,6 +623,14 @@ func TestValidateResolutionReason_ReplyOnlyCannotClaimCodeChange(t *testing.T) {
 	res := validateResolutionReason(parsed, TriageHasReply)
 	if res.Resolved || res.Reason != "" {
 		t.Errorf("reply-only code_change should be rejected, got %+v", res)
+	}
+	// With resolve_accepted_replies the rationale of a rejected reply is
+	// posted to the author: it must explain the rejection, not carry the
+	// evaluator's case for resolving.
+	withRationale := parsed
+	withRationale.Rationale = "The author says the query was fixed."
+	if res := validateResolutionReason(withRationale, TriageHasReply); res.Rationale != replyOnlyCodeChangeRationale {
+		t.Errorf("rejected code_change keeps the evaluator's rationale: %q", res.Rationale)
 	}
 
 	// The same verdict stands when the code at the finding did change.
