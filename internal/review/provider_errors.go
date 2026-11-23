@@ -106,7 +106,7 @@ var providerHints = map[string]map[ErrorKind]string{
 		ErrorKindServer:    "Anthropic API reported a server error. This is usually transient — retry in a minute.",
 	},
 	"claude": {
-		ErrorKindRateLimit: "Your Claude subscription quota is exhausted (the reset time above is in your plan's timezone). Options: wait for reset, switch `provider:` in .codecanary/config.yml to `anthropic`/`openai`/`openrouter`/`grok`, or swap accounts with `codecanary auth delete` followed by `codecanary setup local`.",
+		ErrorKindRateLimit: "Your Claude subscription hit a usage limit (a reset time, when shown above, is in your plan's timezone). Options: wait for reset, try another `review_model`, switch `provider:` in .codecanary/config.yml to `anthropic`/`openai`/`openrouter`/`grok`, or swap accounts with `codecanary auth delete` followed by `codecanary setup local`.",
 		ErrorKindAuth:      "Claude CLI rejected the OAuth token. Run `codecanary auth delete` then `codecanary setup local` to re-authenticate.",
 		ErrorKindServer:    "Claude CLI reported a server error. This is usually transient — retry in a minute.",
 	},

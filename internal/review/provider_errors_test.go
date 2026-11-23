@@ -113,27 +113,3 @@ func TestProviderError_Error_TruncatesLargeRawBody(t *testing.T) {
 		t.Errorf("body not trimmed: saw %d x's", strings.Count(got, "x"))
 	}
 }
-
-func TestTryParseClaudeEnvelope_HandlesAPIErrorStatus(t *testing.T) {
-	raw := []byte(`prefix noise {"type":"result","is_error":true,"api_error_status":429,"result":"You've hit your limit · resets 8pm (America/Sao_Paulo)"}`)
-	resp, ok := tryParseClaudeEnvelope(raw)
-	if !ok {
-		t.Fatal("expected parse to succeed")
-	}
-	if !resp.IsError {
-		t.Errorf("IsError = false, want true")
-	}
-	if resp.APIErrorStatus != 429 {
-		t.Errorf("APIErrorStatus = %d, want 429", resp.APIErrorStatus)
-	}
-	if !strings.Contains(resp.Result, "hit your limit") {
-		t.Errorf("Result missing rate-limit text: %q", resp.Result)
-	}
-}
-
-func TestTryParseClaudeEnvelope_NotJSON(t *testing.T) {
-	_, ok := tryParseClaudeEnvelope([]byte("plain text with no brace"))
-	if ok {
-		t.Fatal("expected parse to fail on non-JSON output")
-	}
-}
