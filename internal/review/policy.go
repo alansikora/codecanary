@@ -11,7 +11,8 @@ import (
 
 // Pull-request policy: the config.yml keys that decide how a given pull
 // request is reviewed, as opposed to how the provider is called. Tiers pick
-// whether and with which model; intent turns on review against the PR's own
+// whether, with which model, with which extra context files and for how many
+// rounds; intent turns on review against the PR's own
 // stated intent; context_files adds rule files by path; status_context names
 // the commit status.
 
@@ -26,6 +27,14 @@ type TierConfig struct {
 	Review *bool `yaml:"review"`
 	// ReviewModel overrides review_model for PRs in this tier.
 	ReviewModel string `yaml:"review_model"`
+	// ContextFiles are loaded as project documentation for every PR in this
+	// tier, whatever it changes. Read from the base branch like the other
+	// rule sources.
+	ContextFiles []string `yaml:"context_files"`
+	// MaxRounds caps how many heads of a PR in this tier are reviewed. Once
+	// that many have been, a later head gets a status from the open threads
+	// and no model call (see ReviewPlatform.StopAtRoundLimit). 0 = no cap.
+	MaxRounds int `yaml:"max_rounds"`
 }
 
 // Reviews reports whether PRs in this tier are reviewed.
@@ -147,8 +156,8 @@ type ContextFilesRule struct {
 }
 
 // ContextFilesFor returns the context files the rules select for the changed
-// files, deduplicated in config order.
-func (c *ReviewConfig) ContextFilesFor(changed []string) []string {
+// files, then the tier's (tier may be nil), deduplicated in config order.
+func (c *ReviewConfig) ContextFilesFor(changed []string, tier *Tier) []string {
 	if c == nil {
 		return nil
 	}
@@ -157,29 +166,42 @@ func (c *ReviewConfig) ContextFilesFor(changed []string) []string {
 		if !slices.ContainsFunc(changed, func(f string) bool { return matchesAny(f, r.Paths) }) {
 			continue
 		}
-		for _, f := range r.Files {
-			if !slices.Contains(out, f) {
-				out = append(out, f)
-			}
-		}
+		out = appendNew(out, r.Files...)
+	}
+	if tier != nil {
+		out = appendNew(out, tier.Config.ContextFiles...)
 	}
 	return out
 }
 
-// AllContextFiles returns every file any context_files rule lists.
+// AllContextFiles returns every file any context_files rule or tier lists.
 func (c *ReviewConfig) AllContextFiles() []string {
 	if c == nil {
 		return nil
 	}
 	var out []string
 	for _, r := range c.ContextFiles {
-		for _, f := range r.Files {
-			if !slices.Contains(out, f) {
-				out = append(out, f)
-			}
-		}
+		out = appendNew(out, r.Files...)
+	}
+	for _, name := range slices.Sorted(maps.Keys(c.Tiers)) {
+		out = appendNew(out, c.Tiers[name].ContextFiles...)
 	}
 	return out
+}
+
+// appendNew appends the items not already in list.
+func appendNew(list []string, items ...string) []string {
+	for _, it := range items {
+		if !slices.Contains(list, it) {
+			list = append(list, it)
+		}
+	}
+	return list
+}
+
+// isRepoRelativePath reports whether p names a file inside the repository.
+func isRepoRelativePath(p string) bool {
+	return p != "" && !strings.HasPrefix(p, "/") && !slices.Contains(strings.Split(p, "/"), "..")
 }
 
 // validatePolicy checks tiers, intent and context_files.
@@ -203,6 +225,17 @@ func (c *ReviewConfig) validatePolicy() error {
 			if strings.TrimSpace(name) == "" {
 				return fmt.Errorf("tiers: empty tier label")
 			}
+			if t.MaxRounds < 0 {
+				return fmt.Errorf("tiers.%s.max_rounds must be 0 (no limit) or more", name)
+			}
+			if !t.Reviews() && (t.MaxRounds > 0 || len(t.ContextFiles) > 0) {
+				return fmt.Errorf("tiers.%s: max_rounds and context_files need review: true", name)
+			}
+			for _, f := range t.ContextFiles {
+				if !isRepoRelativePath(f) {
+					return fmt.Errorf("tiers.%s.context_files: %q must be a repository-relative path", name, f)
+				}
+			}
 			if t.ReviewModel == "" {
 				continue
 			}
@@ -222,7 +255,7 @@ func (c *ReviewConfig) validatePolicy() error {
 			return fmt.Errorf("context_files[%d]: both paths and files are required", i)
 		}
 		for _, f := range r.Files {
-			if f == "" || strings.HasPrefix(f, "/") || slices.Contains(strings.Split(f, "/"), "..") {
+			if !isRepoRelativePath(f) {
 				return fmt.Errorf("context_files[%d]: %q must be a repository-relative path", i, f)
 			}
 		}

@@ -77,13 +77,14 @@ func renderRulesChangedNote(files []string) string {
 	return b.String()
 }
 
-// readContextFiles reads the context_files the changed files select, from
-// root. A listed file that does not exist (or links outside the repository)
-// is a config error: the rules it holds would otherwise go silently missing.
+// readContextFiles reads the context files the changed files and the tier
+// select (tier may be nil), from root. A listed file that does not exist (or
+// links outside the repository) is a config error: the rules it holds would
+// otherwise go silently missing.
 // Each file is cut to maxFileSize.
-func readContextFiles(root string, cfg *ReviewConfig, changed []string, maxFileSize int) (map[string]string, error) {
+func readContextFiles(root string, cfg *ReviewConfig, changed []string, tier *Tier, maxFileSize int) (map[string]string, error) {
 	out := make(map[string]string)
-	for _, rel := range cfg.ContextFilesFor(changed) {
+	for _, rel := range cfg.ContextFilesFor(changed, tier) {
 		data, err := readRepoFile(root, rel)
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {

@@ -90,11 +90,11 @@ func TestContextFilesFor(t *testing.T) {
 		{Paths: []string{"**"}, Files: []string{"principles.md", "decisions/README.md"}},
 		{Paths: []string{"backoffice/**"}, Files: []string{"backoffice/decisions/README.md", "principles.md"}},
 	}}
-	got := cfg.ContextFilesFor([]string{"api/main.go"})
+	got := cfg.ContextFilesFor([]string{"api/main.go"}, nil)
 	if !slices.Equal(got, []string{"principles.md", "decisions/README.md"}) {
 		t.Errorf("api change: %v", got)
 	}
-	got = cfg.ContextFilesFor([]string{"backoffice/app.ts"})
+	got = cfg.ContextFilesFor([]string{"backoffice/app.ts"}, nil)
 	if !slices.Equal(got, []string{"principles.md", "decisions/README.md", "backoffice/decisions/README.md"}) {
 		t.Errorf("backoffice change: %v", got)
 	}
@@ -106,12 +106,12 @@ func TestReadContextFilesMissingIsConfigError(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := &ReviewConfig{ContextFiles: []ContextFilesRule{{Paths: []string{"**"}, Files: []string{"principles.md"}}}}
-	got, err := readContextFiles(root, cfg, []string{"x.go"}, 0)
+	got, err := readContextFiles(root, cfg, []string{"x.go"}, nil, 0)
 	if err != nil || got["principles.md"] != "be kind" {
 		t.Fatalf("readContextFiles = %v, %v", got, err)
 	}
 	cfg.ContextFiles[0].Files = append(cfg.ContextFiles[0].Files, "decisions/README.md")
-	_, err = readContextFiles(root, cfg, []string{"x.go"}, 0)
+	_, err = readContextFiles(root, cfg, []string{"x.go"}, nil, 0)
 	if err == nil || !strings.HasPrefix(err.Error(), "config error") {
 		t.Fatalf("missing context file: err = %v, want a config error", err)
 	}
@@ -374,7 +374,7 @@ func TestBaseRulesComeFromBaseCommit(t *testing.T) {
 	if _, ok := docs[filepath.Join("pkg", "CLAUDE.md")]; ok {
 		t.Error("a symlink leaving the tree must not be read")
 	}
-	ctx, err := readContextFiles(root, cfg, []string{"pkg/a.go"}, 0)
+	ctx, err := readContextFiles(root, cfg, []string{"pkg/a.go"}, nil, 0)
 	if err != nil || ctx["principles.md"] != "base principles" {
 		t.Errorf("context file = %v, %v; want the base copy", ctx, err)
 	}
