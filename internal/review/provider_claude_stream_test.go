@@ -91,6 +91,18 @@ exec sleep 60`)
 	}
 }
 
+// A CLI that exits 0 but leaves a child holding stdout open still succeeds
+// once WaitDelay closes the pipes.
+func TestClaudeRun_ResultKeptWhenChildOutlivesCLI(t *testing.T) {
+	p := fakeClaude(t, `echo '{"type":"result","is_error":false,"result":"no findings"}'
+sleep 60 &
+exit 0`)
+	res, err := p.Run(context.Background(), "prompt", RunOpts{Timeout: 30 * time.Second})
+	if err != nil || res.Text != "no findings" {
+		t.Fatalf("res = %+v, err = %v; want the result kept", res, err)
+	}
+}
+
 // Events split across writes, and a last line with no newline, still parse.
 func TestClaudeStream_SplitWritesAndUnterminatedLine(t *testing.T) {
 	s := &claudeStream{model: "opus", abort: func() {}}

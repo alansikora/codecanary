@@ -429,6 +429,11 @@ func (p *claudeCLIProvider) Run(ctx context.Context, prompt string, opts RunOpts
 	cmd.Stderr = stderr
 	err := cmd.Run()
 	stream.flush()
+	if errors.Is(err, exec.ErrWaitDelay) {
+		// The CLI exited 0; only a child it left behind held the pipes open.
+		// What the CLI wrote is complete.
+		err = nil
+	}
 
 	if stream.rejected != nil {
 		return nil, stream.rejectedError(p.modelLabel())
