@@ -795,7 +795,7 @@ func gateMarker(sha string) string {
 func (g *GithubPlatform) PublishGate(sha string, blockers []string) error {
 	g.setStatus(sha, "failure", statusCounts(len(blockers), 0))
 	key := gateMarker(sha)
-	if reviews, err := fetchPRReviews(g.Repo, g.PRNumber); err == nil {
+	if reviews, err := fetchBotReviews(g.Repo, g.PRNumber); err == nil {
 		for _, r := range reviews {
 			if strings.Contains(r.Body, key) {
 				Stderrf(ansiGreen, "Gate already reported for %s\n", shortSHA(sha))

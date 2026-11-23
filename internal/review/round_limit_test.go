@@ -41,7 +41,7 @@ func TestReviewMarkerSHA(t *testing.T) {
 	}
 }
 
-func TestBotReviewedSHAs(t *testing.T) {
+func TestBotReviewsIgnoreForgedMarkers(t *testing.T) {
 	review := func(login, sha string) ghReview {
 		r := ghReview{Body: "## CodeCanary\n\n<!-- codecanary:review {\"sha\":\"" + sha + "\"} -->"}
 		r.User.Login = login
@@ -55,8 +55,14 @@ func TestBotReviewedSHAs(t *testing.T) {
 		review(BotLogin, "bbb"),
 		{Body: "a human review"},
 	}
-	if got := botReviewedSHAs(reviews); !slices.Equal(got, []string{"aaa", "bbb"}) {
-		t.Errorf("botReviewedSHAs = %v, want [aaa bbb]", got)
+	// Every marker reader goes through botReviews (fetchBotReviews), so a
+	// forged baseline can neither use up rounds nor mark a head reviewed.
+	if got := reviewedSHAs(botReviews(reviews)); !slices.Equal(got, []string{"aaa", "bbb"}) {
+		t.Errorf("reviewedSHAs(botReviews) = %v, want [aaa bbb]", got)
+	}
+	legacy := review(botLoginPrefix, "ccc") // the login GraphQL reports
+	if got := botReviews([]ghReview{legacy}); len(got) != 1 {
+		t.Errorf("a review by %q should count as the bot's", botLoginPrefix)
 	}
 }
 

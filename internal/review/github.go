@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -642,8 +643,13 @@ type ghReview struct {
 	} `json:"user"`
 }
 
-// fetchPRReviews returns the PR's reviews, oldest first.
-func fetchPRReviews(repo string, prNumber int) ([]ghReview, error) {
+// fetchBotReviews returns the reviews the CodeCanary bot posted on the PR,
+// oldest first. Every marker CodeCanary reads back from a review (the
+// baseline SHA, finding IDs, gate keys) is trusted only from these: anyone
+// who can comment on the PR, its author included, can post a review whose
+// body carries a marker, and a forged baseline naming an unreviewed head
+// would make the next run skip it.
+func fetchBotReviews(repo string, prNumber int) ([]ghReview, error) {
 	owner, name, err := parseRepoSlug(repo)
 	if err != nil {
 		return nil, err
@@ -663,7 +669,7 @@ func fetchPRReviews(repo string, prNumber int) ([]ghReview, error) {
 		}
 		reviews = append(reviews, page...)
 	}
-	return reviews, nil
+	return botReviews(reviews), nil
 }
 
 // LatestCodecanaryReview captures the identity and body of the most recent
@@ -681,7 +687,7 @@ type LatestCodecanaryReview struct {
 // embedded in that marker. Returns (nil, nil) when no matching review
 // exists. A non-nil error is returned only for transport/parsing failures.
 func FetchLatestCodecanaryReview(repo string, prNumber int) (*LatestCodecanaryReview, error) {
-	reviews, err := fetchPRReviews(repo, prNumber)
+	reviews, err := fetchBotReviews(repo, prNumber)
 	if err != nil {
 		return nil, err
 	}
@@ -770,7 +776,7 @@ func ghAPIRequest(method, apiPath string, payloadJSON []byte) ([]byte, error) {
 
 // FetchPreviousReviewSHA gets the SHA from the last review's hidden data.
 func FetchPreviousReviewSHA(repo string, prNumber int) string {
-	reviews, err := fetchPRReviews(repo, prNumber)
+	reviews, err := fetchBotReviews(repo, prNumber)
 	if err != nil {
 		return ""
 	}
@@ -783,25 +789,26 @@ func FetchPreviousReviewSHA(repo string, prNumber int) string {
 	return ""
 }
 
+// botReviews keeps the reviews the CodeCanary bot wrote.
+func botReviews(reviews []ghReview) []ghReview {
+	return slices.DeleteFunc(reviews, func(r ghReview) bool { return !isBotAuthor(r.User.Login) })
+}
+
 // FetchReviewedSHAs returns the heads the PR's CodeCanary reviews were
-// posted for, oldest first, each once (see botReviewedSHAs).
+// posted for, oldest first, each once.
 func FetchReviewedSHAs(repo string, prNumber int) ([]string, error) {
-	reviews, err := fetchPRReviews(repo, prNumber)
+	reviews, err := fetchBotReviews(repo, prNumber)
 	if err != nil {
 		return nil, err
 	}
-	return botReviewedSHAs(reviews), nil
+	return reviewedSHAs(reviews), nil
 }
 
-// botReviewedSHAs returns the head SHAs in the baseline markers of reviews
-// the bot wrote. Anyone can post a review whose body carries a marker; only
-// the bot's count, so a PR author cannot use up a tier's max_rounds.
-func botReviewedSHAs(reviews []ghReview) []string {
+// reviewedSHAs returns the head SHAs in the reviews' baseline markers, each
+// once, in order.
+func reviewedSHAs(reviews []ghReview) []string {
 	var shas []string
 	for _, r := range reviews {
-		if !isBotAuthor(r.User.Login) {
-			continue
-		}
 		if sha := reviewMarkerSHA(r.Body); sha != "" {
 			shas = appendNew(shas, sha)
 		}
@@ -1127,7 +1134,7 @@ func ghAPIPOST(apiPath string, payloadJSON []byte) ([]byte, error) {
 
 // FindReviewNodeIDs returns the node_ids of all reviews on a PR.
 func FindReviewNodeIDs(repo string, prNumber int) ([]string, error) {
-	reviews, err := fetchPRReviews(repo, prNumber)
+	reviews, err := fetchBotReviews(repo, prNumber)
 	if err != nil {
 		return nil, err
 	}
@@ -1329,7 +1336,7 @@ type ReviewInfo struct {
 
 // FindReviews returns reviews with their parsed finding IDs.
 func FindReviews(repo string, prNumber int) ([]ReviewInfo, error) {
-	reviews, err := fetchPRReviews(repo, prNumber)
+	reviews, err := fetchBotReviews(repo, prNumber)
 	if err != nil {
 		return nil, err
 	}
