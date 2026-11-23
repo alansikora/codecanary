@@ -562,8 +562,9 @@ func reviewNoticeKey(kind, sha string) string {
 // buildReviewFailureNotice is the comment posted when a run did not finish.
 // The cause is failureSummary's one line, as in the fix's failure notice,
 // with trailing punctuation trimmed so the sentence ends cleanly; the full
-// error stays in the workflow logs. The notice is posted once per head and
-// never edited, so it points to where the current result is shown.
+// error stays in the workflow logs. A later failure on the same head edits
+// the notice, but a later success does not remove it, so it points to where
+// the current result is shown.
 func buildReviewFailureNotice(sha string, runErr error, replyOnly bool, runURL, statusContext string) string {
 	what := fmt.Sprintf("The review did not finish on `%s`, so this commit was **not reviewed**", shortSHA(sha))
 	if replyOnly {
@@ -574,12 +575,13 @@ func buildReviewFailureNotice(sha string, runErr error, replyOnly bool, runURL, 
 	if runURL != "" {
 		body += fmt.Sprintf(" [Workflow run](%s)", runURL)
 	}
-	body += "\n\nLater runs do not update this notice: the latest review and the `" + statusContext + "` status show the current result."
+	body += "\n\nThis notice is not removed when a later run succeeds: the latest review and the `" + statusContext + "` status show the current result."
 	return body + "\n"
 }
 
-// ReportFailure posts a PR notice, once per head, so a failed run never
-// looks like a clean review. The "error" commit status is Run's
+// ReportFailure posts a PR notice, one per head, so a failed run never
+// looks like a clean review. A re-run that fails again on the head edits
+// it, so it shows the latest cause. The "error" commit status is Run's
 // (SetRunStatus), not posted here.
 func (g *GithubPlatform) ReportFailure(runErr error, replyOnly bool) {
 	if g.Repo == "" || g.PRNumber == 0 {
@@ -595,7 +597,7 @@ func (g *GithubPlatform) ReportFailure(runErr error, replyOnly bool) {
 		kind = "replies-failed"
 	}
 	body := buildReviewFailureNotice(sha, runErr, replyOnly, workflowRunURL(), g.statusContext())
-	if err := g.PostNotice(reviewNoticeKey(kind, sha), body); err != nil {
+	if err := g.UpsertNotice(reviewNoticeKey(kind, sha), body); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not post failure notice: %v\n", err)
 	}
 }
@@ -676,4 +678,78 @@ func rejectedReplyMessage(rationale string) string {
 		msg += "."
 	}
 	return msg + "\n\nFix the code, or reply with the specific reason it does not apply."
+}
+
+// PostNotice posts body as a pull request comment unless the bot already
+// posted one carrying key.
+func (g *GithubPlatform) PostNotice(key, body string) error {
+	comments, err := fetchIssueComments(g.Repo, g.PRNumber)
+	if err != nil {
+		return err
+	}
+	for _, c := range comments {
+		if isBotAuthor(c.User.Login) && strings.Contains(c.Body, key) {
+			fmt.Fprintf(os.Stderr, "Notice already posted on pull request #%d — not posting it again\n", g.PRNumber)
+			return nil
+		}
+	}
+	return PostComment(g.Repo, g.PRNumber, key+"\n"+body)
+}
+
+// UpsertNotice posts body as a pull request comment carrying key, or edits
+// the bot's latest comment that carries it.
+func (g *GithubPlatform) UpsertNotice(key, body string) error {
+	comments, err := fetchIssueComments(g.Repo, g.PRNumber)
+	if err != nil {
+		return err
+	}
+	for i := len(comments) - 1; i >= 0; i-- {
+		c := comments[i]
+		if !isBotAuthor(c.User.Login) || !strings.Contains(c.Body, key) {
+			continue
+		}
+		owner, name, err := parseRepoSlug(g.Repo)
+		if err != nil {
+			return err
+		}
+		payload, err := json.Marshal(struct {
+			Body string `json:"body"`
+		}{Body: key + "\n" + body})
+		if err != nil {
+			return fmt.Errorf("marshaling comment payload: %w", err)
+		}
+		_, err = ghAPIRequest("PATCH", fmt.Sprintf("repos/%s/%s/issues/comments/%d", owner, name, c.ID), payload)
+		return err
+	}
+	return PostComment(g.Repo, g.PRNumber, key+"\n"+body)
+}
+
+// issueComment is the subset of a pull request's conversation comment the
+// notices read back.
+type issueComment struct {
+	ID      int64  `json:"id"`
+	Body    string `json:"body"`
+	HTMLURL string `json:"html_url"`
+	User    struct {
+		Login string `json:"login"`
+	} `json:"user"`
+}
+
+// fetchIssueComments returns a pull request's conversation comments, oldest
+// first.
+func fetchIssueComments(repo string, prNumber int) ([]issueComment, error) {
+	owner, name, err := parseRepoSlug(repo)
+	if err != nil {
+		return nil, err
+	}
+	out, err := runGH("gh api issue comments", "api", "--paginate",
+		fmt.Sprintf("repos/%s/%s/issues/%d/comments", owner, name, prNumber))
+	if err != nil {
+		return nil, err
+	}
+	all, err := decodePaginated[issueComment](out)
+	if err != nil {
+		return nil, fmt.Errorf("parsing pull request comments: %w", err)
+	}
+	return all, nil
 }

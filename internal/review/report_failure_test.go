@@ -45,9 +45,9 @@ func TestBuildReviewFailureNotice(t *testing.T) {
 	if strings.Contains(got, ":.") || !strings.Contains(got, "found in output.") {
 		t.Errorf("trailing punctuation not trimmed: %q", got)
 	}
-	// The notice is never edited, so it must say where the current result is,
-	// naming the configured status.
-	if !strings.Contains(got, "Later runs do not update this notice") || !strings.Contains(got, "`Team / review` status") {
+	// A later success leaves the notice, so it must say where the current
+	// result is, naming the configured status.
+	if !strings.Contains(got, "not removed when a later run succeeds") || !strings.Contains(got, "`Team / review` status") {
 		t.Errorf("notice does not say it can be outdated: %q", got)
 	}
 }
