@@ -4,7 +4,7 @@
 # Template version. CodeCanary compares it with the template it ships and
 # adds a note to its reviews when this file is older. Keep this line when
 # customizing; update it only when you take the changes from a newer template.
-# codecanary-workflow: v5
+# codecanary-workflow: v6
 name: CodeCanary
 on:
   pull_request_target:
@@ -144,6 +144,8 @@ jobs:
           done
           rm -f .claude/settings.json .claude/settings.local.json .mcp.json
 
+      # The review gets a CodeCanary app token that can read the repository's
+      # contents but not write them; only the fix job's token can push.
       - uses: alansikora/codecanary@canary
         id: codecanary
         if: env.skip != 'true'
@@ -161,7 +163,8 @@ jobs:
   # Fixes what the review left open, when .codecanary/config.yml sets
   # fix.enabled (the review reports it as `fix`): applies or refutes each
   # finding, commits once and pushes to the PR branch with the CodeCanary
-  # app's token, which triggers the next review. Never on fork PRs, where it
+  # app's token (the only CodeCanary token with contents: write), which
+  # triggers the next review. Never on fork PRs, where it
   # would push code to someone else's branch, and never for thread replies.
   # Loop limits (fix.max_per_push, fix.max_per_pr) are counted from the PR's
   # commits.

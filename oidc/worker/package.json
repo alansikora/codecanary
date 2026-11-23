@@ -3,13 +3,15 @@
   "private": true,
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "test": "vitest run"
   },
   "dependencies": {
     "jose": "^5.0.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.0.0",
+    "vitest": "^3.2.7",
     "wrangler": "^3.0.0"
   }
 }

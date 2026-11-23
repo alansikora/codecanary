@@ -411,6 +411,7 @@ The workflow runs on `pull_request_target`, so a PR from a fork is reviewed with
 | CodeCanary config (`.codecanary/config.yml`, `review.yml`, `review.local.yml`, legacy `.codecanary.yml`), `CLAUDE.md` files, `.claude/rules`, `context_files` | Read from the base commit, for every PR ([rules come from the base branch](#rules-come-from-the-base-branch)). A file the base branch doesn't have is not read, so a fork can't add one, for example a `config.yml` with its own `claude_args` or `claude_review_tools`. The workflow also pins the config files on fork PRs. |
 | Claude Code project settings (`.claude/settings*.json`: hooks, `env`, `apiKeyHelper`) and `.mcp.json` | Every Claude CLI call ignores them ([project config isolation](#project-config-isolation)), and the workflow also deletes them on fork PRs, so the protection doesn't rest on a single CLI flag. |
 | Git credentials | On fork PRs the checkout doesn't persist the token in `.git/config` (`persist-credentials` is false for forks). |
+| The CodeCanary app token | A review's token has `contents: read`, so nothing the review does can push to the fork or the base repository ([what the app token can do](#what-the-app-token-can-do)). |
 | Reviewer tools | Off unless the base branch's config enables `claude_review_tools`. A fork can't turn them on. |
 | Symbolic links | A PR file that is a symlink is reviewed from its diff only; its target is never read. Project docs and `.claude/rules` files are never read through a symlink that leaves the repository or points into `.git` (`readRepoFile`); such a file is skipped with a log line. Links inside the repository, like `CLAUDE.md -> AGENTS.md`, still load as project docs. Otherwise a fork could commit `notes.md -> /proc/self/environ` and get the process environment, provider secret included, into the prompt. The workflow also removes `.codecanary` / `.claude` symlinks before pinning config, so pinning can't write or delete outside the checkout. |
 
@@ -489,4 +490,10 @@ A reply on a finding's thread is evaluated on the next run (the reply itself sta
 ## Review-only repositories
 
 With `fix.enabled` false (the default) CodeCanary never commits, branches or pushes: the workflow's `fix` job runs only when the review reports `fix=true`, which comes from the base branch's config, and `codecanary fix` exits when `fix.enabled` is off. No reply triggers a fix. The workflow's own `GITHUB_TOKEN` needs `contents: read`, `pull-requests: write` and `id-token: write` (the template's `permissions`). A review uses the CodeCanary app's token for pull requests (reviews, comments, resolving threads: pull requests read and write), commit statuses (write) and contents (read: the base commit's rule files and earlier commits for incremental diffs).
+
+### What the app token can do
+
+The CodeCanary app holds `contents: write` because the fix job pushes. A review never gets that: the action asks the token service (`oidc.codecanary.sh`) for a token with exactly `contents: read`, `pull_requests: write` and `statuses: write` (plus `metadata: read`, which GitHub always adds), scoped to the one repository. The model reviewing an untrusted diff therefore runs next to a token that cannot push, open a branch or change files through the API. The action checks the permissions GitHub granted and fails the step if the token could write contents. A `reply_only` run is a review. Only the fix job (`mode: fix`) gets the app's full permissions.
+
+This needs the action from the release after v0.8.0. Workflows pinned to v0.8.0 or older send no mode, and the token service still gives them the full installation token, as before.
 
