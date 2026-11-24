@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -150,5 +151,164 @@ func TestTailBuffer_KeepsEnd(t *testing.T) {
 	_, _ = b.Write([]byte("defgh"))
 	if b.String() != "defgh" {
 		t.Errorf("got %q", b.String())
+	}
+}
+
+// countedFakeClaude is fakeClaude with a stall watchdog of one second, and a
+// counter: the script sees its invocation number as $n, and calls reports
+// how many times it ran.
+func countedFakeClaude(t *testing.T, body string) (p *claudeCLIProvider, calls func() int) {
+	t.Helper()
+	p = fakeClaude(t, `d=$(dirname "$0"); n=$(( $(cat "$d/n" 2>/dev/null || echo 0) + 1 )); echo $n > "$d/n"
+`+body)
+	p.stallAfter = time.Second
+	return p, func() int {
+		b, _ := os.ReadFile(filepath.Join(filepath.Dir(p.binaryPath), "n"))
+		n := 0
+		for _, c := range strings.TrimSpace(string(b)) {
+			n = n*10 + int(c-'0')
+		}
+		return n
+	}
+}
+
+const (
+	evRequesting = `echo '{"type":"system","subtype":"status","status":"requesting"}'`
+	evResult     = `echo '{"type":"result","is_error":false,"result":"no findings"}'`
+)
+
+// The PR this was written for: the CLI sent its request, then nothing, until
+// the 10-minute timeout. A silent CLI is stopped after stallAfter and the
+// call is run again.
+func TestClaudeRun_StallIsRetried(t *testing.T) {
+	p, calls := countedFakeClaude(t, `if [ $n -eq 1 ]; then `+evRequesting+`; exec sleep 30; fi
+`+evResult)
+	start := time.Now()
+	res, err := p.Run(context.Background(), "prompt", RunOpts{Timeout: 20 * time.Second})
+	if err != nil || res.Text != "no findings" {
+		t.Fatalf("res = %+v, err = %v; want the retry's result", res, err)
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Errorf("Run took %s; want the stall caught after ~1s", elapsed)
+	}
+	if calls() != 2 {
+		t.Errorf("CLI ran %d times, want 2", calls())
+	}
+}
+
+func TestClaudeRun_SecondStallIsReported(t *testing.T) {
+	p, calls := countedFakeClaude(t, evRequesting+`
+echo 'still connecting' >&2
+exec sleep 30`)
+	_, err := p.Run(context.Background(), "prompt", RunOpts{Timeout: 20 * time.Second})
+	if err == nil {
+		t.Fatal("want a stall error")
+	}
+	want := "claude timed out: the CLI sent nothing for 1s (last event: system/status requesting, Ns into the call), on the retry too\n" +
+		"claude stderr:\nstill connecting"
+	if got := normalizeElapsed(err.Error()); got != want {
+		t.Errorf("error =\n%s\nwant\n%s", got, want)
+	}
+	if !strings.HasPrefix(errorStatusDescription(err), "timeout: ") {
+		t.Errorf("status description should be a timeout: %q", errorStatusDescription(err))
+	}
+	if calls() != 2 {
+		t.Errorf("CLI ran %d times, want 2", calls())
+	}
+}
+
+// normalizeElapsed replaces the time into the call in a stall message,
+// which depends on how fast the fake CLI started.
+func normalizeElapsed(s string) string {
+	return regexp.MustCompile(`\d+s into the call`).ReplaceAllString(s, "Ns into the call")
+}
+
+// Events keep the call alive however long it runs.
+func TestClaudeRun_SteadyEventsAreNotAStall(t *testing.T) {
+	p, calls := countedFakeClaude(t, `for i in 1 2 3 4 5 6 7 8; do echo '{"type":"stream_event","event":{"type":"content_block_delta"}}'; sleep 0.3; done
+`+evResult)
+	res, err := p.Run(context.Background(), "prompt", RunOpts{Timeout: 20 * time.Second})
+	if err != nil || res.Text != "no findings" || calls() != 1 {
+		t.Fatalf("res = %+v, err = %v, calls = %d; want one uninterrupted run", res, err, calls())
+	}
+}
+
+// A retry's backoff is not a stall.
+func TestClaudeRun_RetryBackoffExtendsWait(t *testing.T) {
+	p, calls := countedFakeClaude(t, `echo '{"type":"system","subtype":"api_retry","attempt":5,"max_retries":10,"retry_delay_ms":2000,"error_status":529,"error":"overloaded"}'
+sleep 2
+`+evResult)
+	res, err := p.Run(context.Background(), "prompt", RunOpts{Timeout: 20 * time.Second})
+	if err != nil || res.Text != "no findings" || calls() != 1 {
+		t.Fatalf("res = %+v, err = %v, calls = %d; want the backoff waited out", res, err, calls())
+	}
+}
+
+// A tool can run for minutes without events; that is not a stall.
+func TestClaudeRun_ToolRunIsNotAStall(t *testing.T) {
+	p, calls := countedFakeClaude(t, `echo '{"type":"assistant","message":{"content":[{"type":"tool_use"}]}}'
+sleep 2
+echo '{"type":"user","message":{"content":[{"type":"tool_result"}]}}'
+`+evResult)
+	res, err := p.Run(context.Background(), "prompt", RunOpts{Timeout: 20 * time.Second})
+	if err != nil || res.Text != "no findings" || calls() != 1 {
+		t.Fatalf("res = %+v, err = %v, calls = %d; want the tool waited out", res, err, calls())
+	}
+}
+
+// Once a tool ran (the fix may have edited files), a stall is reported, not
+// rerun.
+func TestClaudeRun_StallAfterToolIsNotRetried(t *testing.T) {
+	p, calls := countedFakeClaude(t, `echo '{"type":"assistant","message":{"content":[{"type":"tool_use"}]}}'
+echo '{"type":"user","message":{"content":[{"type":"tool_result"}]}}'
+exec sleep 30`)
+	_, err := p.Run(context.Background(), "prompt", RunOpts{Timeout: 20 * time.Second})
+	if err == nil {
+		t.Fatal("want a stall error")
+	}
+	want := "claude timed out: the CLI sent nothing for 1s (last event: user, Ns into the call)"
+	if got := normalizeElapsed(err.Error()); got != want {
+		t.Errorf("error =\n%s\nwant\n%s", got, want)
+	}
+	if calls() != 1 {
+		t.Errorf("CLI ran %d times, want 1", calls())
+	}
+}
+
+// Parallel tool calls: the timer stays off until every call has its result,
+// not just the first.
+func TestClaudeRun_ParallelToolsWaitForAllResults(t *testing.T) {
+	p, calls := countedFakeClaude(t, `echo '{"type":"assistant","message":{"content":[{"type":"tool_use"},{"type":"tool_use"}]}}'
+echo '{"type":"user","message":{"content":[{"type":"tool_result"}]}}'
+sleep 2
+echo '{"type":"user","message":{"content":[{"type":"tool_result"}]}}'
+`+evResult)
+	res, err := p.Run(context.Background(), "prompt", RunOpts{Timeout: 20 * time.Second})
+	if err != nil || res.Text != "no findings" || calls() != 1 {
+		t.Fatalf("res = %+v, err = %v, calls = %d; want the slower tool waited out", res, err, calls())
+	}
+}
+
+// A message whose content is a plain string still counts as an event.
+func TestClaudeStream_StringContentIsAnEvent(t *testing.T) {
+	s := &claudeStream{model: "opus", abort: func() {}}
+	_, _ = s.Write([]byte(`{"type":"user","message":{"content":"hello"}}` + "\n"))
+	if s.lastEvent != "user" || s.toolsRunning != 0 {
+		t.Errorf("lastEvent = %q, toolsRunning = %d; want the user event seen", s.lastEvent, s.toolsRunning)
+	}
+}
+
+// A CLI that sends its result and then hangs on exit is stopped, and the
+// result is kept.
+func TestClaudeRun_HangAfterResultKeepsResult(t *testing.T) {
+	p, calls := countedFakeClaude(t, evResult+`
+exec sleep 30`)
+	start := time.Now()
+	res, err := p.Run(context.Background(), "prompt", RunOpts{Timeout: 20 * time.Second})
+	if err != nil || res.Text != "no findings" || calls() != 1 {
+		t.Fatalf("res = %+v, err = %v, calls = %d; want the result kept", res, err, calls())
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Errorf("Run took %s; want the hang cut at the stall", elapsed)
 	}
 }
