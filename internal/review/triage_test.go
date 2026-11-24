@@ -711,10 +711,13 @@ func TestClassifyThreads_ReplyWithCrossFilePushSeesFullDiff(t *testing.T) {
 	}
 }
 
-func TestClassifyThreads_ReplyWithSameFilePushIsFileScoped(t *testing.T) {
+// A push that also touches the finding's file (elsewhere in it) must not
+// narrow the evaluator to that file: the fix the reply names may be in
+// another file.
+func TestClassifyThreads_ReplyWithSameFilePushSeesFullDiff(t *testing.T) {
 	threads := []ReviewThread{{
 		Path: "a.go", Line: 10, Body: "Issue",
-		Replies: []ThreadReply{{Author: "user", Body: "fixed"}},
+		Replies: []ThreadReply{{Author: "user", Body: "fixed in b.go"}},
 	}}
 	diff := "diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -40,1 +40,1 @@\n-x\n+y\n" +
 		"diff --git a/b.go b/b.go\n--- a/b.go\n+++ b/b.go\n@@ -1,1 +1,1 @@\n-p\n+q\n"
@@ -723,7 +726,7 @@ func TestClassifyThreads_ReplyWithSameFilePushIsFileScoped(t *testing.T) {
 	if tt.Class != TriageCodeChangedReply {
 		t.Fatalf("expected TriageCodeChangedReply, got %d", tt.Class)
 	}
-	if strings.Contains(tt.FileDiff, "b.go") || !strings.Contains(tt.FileDiff, "a.go") {
-		t.Errorf("same-file push should give the file-scoped diff, got:\n%s", tt.FileDiff)
+	if !strings.Contains(tt.FileDiff, "b.go") || !strings.Contains(tt.FileDiff, "a.go") {
+		t.Errorf("reply+push should give the full PR diff, got:\n%s", tt.FileDiff)
 	}
 }

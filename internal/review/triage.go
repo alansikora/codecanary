@@ -309,9 +309,10 @@ func ClassifyThreads(threads []ReviewThread, activityDiff, contextDiff, botLogin
 		}
 
 		var class ThreadClassification
-		// replyCrossFile: the author replied and pushed, but not to this
-		// file. The evaluator needs the whole PR diff to see the fix.
-		replyCrossFile := false
+		// replyPushed: the author replied and pushed, but the finding's lines
+		// did not change (not outdated), so the fix, if any, is elsewhere —
+		// possibly in another file. The evaluator needs the whole PR diff.
+		replyPushed := false
 		switch {
 		case priorAck != "":
 			class = TriagePreviouslyAcked
@@ -329,7 +330,7 @@ func ClassifyThreads(threads []ReviewThread, activityDiff, contextDiff, botLogin
 			// diff, even when the fix is in another file than the finding;
 			// judged as reply-only, a real fix could never resolve it.
 			class = TriageCodeChangedReply
-			replyCrossFile = !fileInDiff(activityDiff, t.Path)
+			replyPushed = true
 		case hasReply:
 			class = TriageHasReply
 		default:
@@ -355,7 +356,7 @@ func ClassifyThreads(threads []ReviewThread, activityDiff, contextDiff, botLogin
 		// evaluations keep the full diff since the fix is in a different file.
 		var fileDiff, fullDiff, fileSnippet string
 		switch {
-		case replyCrossFile, class == TriageCrossFileChange:
+		case replyPushed, class == TriageCrossFileChange:
 			fileDiff = contextDiff
 		case class == TriageCodeChanged, class == TriageCodeChangedReply:
 			fileDiff, fullDiff, fileSnippet = codeChangeContext(t, contextDiff, fileContents)
@@ -363,7 +364,7 @@ func ClassifyThreads(threads []ReviewThread, activityDiff, contextDiff, botLogin
 
 		if content, ok := fileContents[t.Path]; ok {
 			switch {
-			case replyCrossFile, class == TriageCrossFileChange:
+			case replyPushed, class == TriageCrossFileChange:
 				// Show finding's file context even though the diff is in other files.
 				fileSnippet = ExtractFileSnippet(content, t.Line, "", 200)
 			case class == TriageHasReply:
