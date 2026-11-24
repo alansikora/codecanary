@@ -152,3 +152,129 @@ func TestTailBuffer_KeepsEnd(t *testing.T) {
 		t.Errorf("got %q", b.String())
 	}
 }
+
+// countedFakeClaude is fakeClaude with a stall watchdog of one second, and a
+// counter: the script sees its invocation number as $n, and calls reports
+// how many times it ran.
+func countedFakeClaude(t *testing.T, body string) (p *claudeCLIProvider, calls func() int) {
+	t.Helper()
+	p = fakeClaude(t, `d=$(dirname "$0"); n=$(( $(cat "$d/n" 2>/dev/null || echo 0) + 1 )); echo $n > "$d/n"
+`+body)
+	p.stallAfter = time.Second
+	return p, func() int {
+		b, _ := os.ReadFile(filepath.Join(filepath.Dir(p.binaryPath), "n"))
+		n := 0
+		for _, c := range strings.TrimSpace(string(b)) {
+			n = n*10 + int(c-'0')
+		}
+		return n
+	}
+}
+
+const (
+	evRequesting = `echo '{"type":"system","subtype":"status","status":"requesting"}'`
+	evResult     = `echo '{"type":"result","is_error":false,"result":"no findings"}'`
+)
+
+// The PR this was written for: the CLI sent its request, then nothing, until
+// the 10-minute timeout. A silent CLI is stopped after stallAfter and the
+// call is run again.
+func TestClaudeRun_StallIsRetried(t *testing.T) {
+	p, calls := countedFakeClaude(t, `if [ $n -eq 1 ]; then `+evRequesting+`; exec sleep 30; fi
+`+evResult)
+	start := time.Now()
+	res, err := p.Run(context.Background(), "prompt", RunOpts{Timeout: 20 * time.Second})
+	if err != nil || res.Text != "no findings" {
+		t.Fatalf("res = %+v, err = %v; want the retry's result", res, err)
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Errorf("Run took %s; want the stall caught after ~1s", elapsed)
+	}
+	if calls() != 2 {
+		t.Errorf("CLI ran %d times, want 2", calls())
+	}
+}
+
+func TestClaudeRun_SecondStallIsReported(t *testing.T) {
+	p, calls := countedFakeClaude(t, evRequesting+`
+echo 'still connecting' >&2
+exec sleep 30`)
+	_, err := p.Run(context.Background(), "prompt", RunOpts{Timeout: 20 * time.Second})
+	if err == nil {
+		t.Fatal("want a stall error")
+	}
+	for _, want := range []string{"sent nothing for 1s", "last event: system/status requesting", "on the retry too", "still connecting"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error missing %q: %q", want, err)
+		}
+	}
+	if !strings.HasPrefix(errorStatusDescription(err), "timeout: ") {
+		t.Errorf("status description should be a timeout: %q", errorStatusDescription(err))
+	}
+	if calls() != 2 {
+		t.Errorf("CLI ran %d times, want 2", calls())
+	}
+}
+
+// Events keep the call alive however long it runs.
+func TestClaudeRun_SteadyEventsAreNotAStall(t *testing.T) {
+	p, calls := countedFakeClaude(t, `for i in 1 2 3 4 5 6 7 8; do echo '{"type":"stream_event","event":{"type":"content_block_delta"}}'; sleep 0.3; done
+`+evResult)
+	res, err := p.Run(context.Background(), "prompt", RunOpts{Timeout: 20 * time.Second})
+	if err != nil || res.Text != "no findings" || calls() != 1 {
+		t.Fatalf("res = %+v, err = %v, calls = %d; want one uninterrupted run", res, err, calls())
+	}
+}
+
+// A retry's backoff is not a stall.
+func TestClaudeRun_RetryBackoffExtendsWait(t *testing.T) {
+	p, calls := countedFakeClaude(t, `echo '{"type":"system","subtype":"api_retry","attempt":5,"max_retries":10,"retry_delay_ms":2000,"error_status":529,"error":"overloaded"}'
+sleep 2
+`+evResult)
+	res, err := p.Run(context.Background(), "prompt", RunOpts{Timeout: 20 * time.Second})
+	if err != nil || res.Text != "no findings" || calls() != 1 {
+		t.Fatalf("res = %+v, err = %v, calls = %d; want the backoff waited out", res, err, calls())
+	}
+}
+
+// A tool can run for minutes without events; that is not a stall.
+func TestClaudeRun_ToolRunIsNotAStall(t *testing.T) {
+	p, calls := countedFakeClaude(t, `echo '{"type":"assistant","message":{"content":[{"type":"tool_use"}]}}'
+sleep 2
+echo '{"type":"user","message":{"content":[{"type":"tool_result"}]}}'
+`+evResult)
+	res, err := p.Run(context.Background(), "prompt", RunOpts{Timeout: 20 * time.Second})
+	if err != nil || res.Text != "no findings" || calls() != 1 {
+		t.Fatalf("res = %+v, err = %v, calls = %d; want the tool waited out", res, err, calls())
+	}
+}
+
+// Once a tool ran (the fix may have edited files), a stall is reported, not
+// rerun.
+func TestClaudeRun_StallAfterToolIsNotRetried(t *testing.T) {
+	p, calls := countedFakeClaude(t, `echo '{"type":"assistant","message":{"content":[{"type":"tool_use"}]}}'
+echo '{"type":"user","message":{"content":[{"type":"tool_result"}]}}'
+exec sleep 30`)
+	_, err := p.Run(context.Background(), "prompt", RunOpts{Timeout: 20 * time.Second})
+	if err == nil || !strings.Contains(err.Error(), "sent nothing for 1s") || strings.Contains(err.Error(), "retry too") {
+		t.Fatalf("err = %v; want a stall reported without a retry", err)
+	}
+	if calls() != 1 {
+		t.Errorf("CLI ran %d times, want 1", calls())
+	}
+}
+
+// A CLI that sends its result and then hangs on exit is stopped, and the
+// result is kept.
+func TestClaudeRun_HangAfterResultKeepsResult(t *testing.T) {
+	p, calls := countedFakeClaude(t, evResult+`
+exec sleep 30`)
+	start := time.Now()
+	res, err := p.Run(context.Background(), "prompt", RunOpts{Timeout: 20 * time.Second})
+	if err != nil || res.Text != "no findings" || calls() != 1 {
+		t.Fatalf("res = %+v, err = %v, calls = %d; want the result kept", res, err, calls())
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Errorf("Run took %s; want the hang cut at the stall", elapsed)
+	}
+}

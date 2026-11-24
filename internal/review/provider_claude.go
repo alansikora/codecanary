@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/alansikora/codecanary/internal/credentials"
@@ -95,6 +96,8 @@ type claudeCLIProvider struct {
 	writable bool
 	// effort is the CLI's --effort level; empty leaves the CLI default.
 	effort string
+	// stallAfter overrides claudeStallAfter; tests shorten it.
+	stallAfter time.Duration
 }
 
 // claudeAdvisorEnableEnvVar is the Claude CLI env var that opts into the
@@ -365,8 +368,9 @@ func (p *claudeCLIProvider) buildArgs(opts RunOpts) []string {
 	// allowlist through instead so the LLM can verify hypotheses (e.g.
 	// `Read,Grep,Glob`) before emitting findings.
 	// stream-json (which --print requires --verbose for) reports the CLI's API
-	// retries as events; see claudeStream.
-	args := []string{"--print", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--tools", p.reviewTools}
+	// retries as events, and --include-partial-messages adds an event per
+	// streamed chunk, so a silent CLI is a stalled one; see claudeStream.
+	args := []string{"--print", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--no-session-persistence", "--tools", p.reviewTools}
 	args = append(args, claudeIsolationArgs...)
 	if p.reviewTools != "" {
 		args = append(args, claudeToolUseArgs...)
@@ -402,6 +406,12 @@ const claudeDefaultTimeout = 10 * time.Minute
 // messages; the end is what explains a failure.
 const claudeStderrTail = 4096
 
+// claudeStallAfter is how long the CLI may go without a stream event before
+// the call counts as stalled. While the model writes, events arrive several
+// times a second; the longest normal silence is the wait for the first one.
+// A stalled call is otherwise only ended by the timeout, minutes later.
+const claudeStallAfter = 2 * time.Minute
+
 func (p *claudeCLIProvider) Run(ctx context.Context, prompt string, opts RunOpts) (*providerResult, error) {
 	timeout := opts.Timeout
 	if timeout <= 0 {
@@ -409,7 +419,29 @@ func (p *claudeCLIProvider) Run(ctx context.Context, prompt string, opts RunOpts
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	// abort stops the CLI early, on an API error not worth waiting out.
+	stallAfter := p.stallAfter
+	if stallAfter <= 0 {
+		stallAfter = claudeStallAfter
+	}
+
+	// A stall before any tool ran left nothing behind, so the call is run
+	// again, once. A second stall in a row is reported.
+	res, stream, err := p.runOnce(ctx, prompt, opts, timeout, stallAfter)
+	if stream.stalledOut && !stream.toolUsed && ctx.Err() == nil {
+		Stderrf(ansiYellow, "Claude CLI sent nothing for %s %s — stopped it, retrying once.\n", stallAfter, stream.stallPoint())
+		res, stream, err = p.runOnce(ctx, prompt, opts, timeout, stallAfter)
+		if stream.stalledOut {
+			err = stream.stalledError(stallAfter, true)
+		}
+	}
+	return res, err
+}
+
+// runOnce runs the CLI once. ctx carries the call's overall timeout, which
+// spans the retry; timeout is only for the message.
+func (p *claudeCLIProvider) runOnce(ctx context.Context, prompt string, opts RunOpts, timeout, stallAfter time.Duration) (*providerResult, *claudeStream, error) {
+	// abort stops the CLI early: on an API error not worth waiting out, or
+	// when it stalls.
 	abortCtx, abort := context.WithCancel(ctx)
 	defer abort()
 
@@ -424,11 +456,24 @@ func (p *claudeCLIProvider) Run(ctx context.Context, prompt string, opts RunOpts
 	// a timeout into a hang.
 	cmd.WaitDelay = 5 * time.Second
 	stream := &claudeStream{model: p.modelLabel(), abort: abort}
+	stream.watch(stallAfter)
 	cmd.Stdout = stream
 	stderr := &tailBuffer{max: claudeStderrTail}
 	cmd.Stderr = stderr
 	err := cmd.Run()
 	stream.flush()
+	stream.idle.Stop()
+	if stream.stalled.Load() {
+		if stream.result != nil && !stream.result.IsError {
+			// The CLI finished the call, then hung on its way out.
+			return claudeProviderResult(stream.result), stream, nil
+		}
+		if stream.result == nil {
+			stream.stalledOut = true
+			stream.stderr = stderr.String()
+			return nil, stream, stream.stalledError(stallAfter, false)
+		}
+	}
 	if errors.Is(err, exec.ErrWaitDelay) {
 		// The CLI exited 0; only a child it left behind held the pipes open.
 		// What the CLI wrote is complete.
@@ -436,28 +481,28 @@ func (p *claudeCLIProvider) Run(ctx context.Context, prompt string, opts RunOpts
 	}
 
 	if stream.rejected != nil {
-		return nil, stream.rejectedError(p.modelLabel())
+		return nil, stream, stream.rejectedError(p.modelLabel())
 	}
 	if err != nil && ctx.Err() == context.DeadlineExceeded {
-		return nil, stream.timeoutError(timeout, stderr.String())
+		return nil, stream, stream.timeoutError(timeout, stderr.String())
 	}
 	if stream.result != nil {
 		if stream.result.IsError {
-			return nil, classifyProviderError("claude", stream.result.APIErrorStatus, stream.result.Result, string(stream.resultRaw))
+			return nil, stream, classifyProviderError("claude", stream.result.APIErrorStatus, stream.result.Result, string(stream.resultRaw))
 		}
 		if err == nil {
-			return claudeProviderResult(stream.result), nil
+			return claudeProviderResult(stream.result), stream, nil
 		}
 	}
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
-			return nil, fmt.Errorf("claude failed: %s\n%s", stderr.String(), stream.other.String())
+			return nil, stream, fmt.Errorf("claude failed: %s\n%s", stderr.String(), stream.other.String())
 		}
-		return nil, fmt.Errorf("running claude: %w", err)
+		return nil, stream, fmt.Errorf("running claude: %w", err)
 	}
 	// No result event: treat the CLI's output as plain text.
-	return &providerResult{Text: stream.other.String()}, nil
+	return &providerResult{Text: stream.other.String()}, stream, nil
 }
 
 // modelLabel names the model in messages; empty means the CLI's default.
@@ -507,6 +552,43 @@ type claudeStreamEvent struct {
 	RetryDelayMS int    `json:"retry_delay_ms"`
 	ErrorStatus  *int   `json:"error_status"`
 	Error        string `json:"error"`
+	Status       string `json:"status"` // system/status: what the CLI is doing
+	Event        *struct {
+		Type string `json:"type"`
+	} `json:"event"` // stream_event: the API's streaming event
+	Message *struct {
+		Content []struct {
+			Type string `json:"type"`
+		} `json:"content"`
+	} `json:"message"` // assistant: the finished message
+}
+
+// label names the event for messages, e.g. "system/status requesting".
+func (e *claudeStreamEvent) label() string {
+	l := e.Type
+	if e.Subtype != "" {
+		l += "/" + e.Subtype
+	}
+	if e.Event != nil && e.Event.Type != "" {
+		l += "/" + e.Event.Type
+	}
+	if e.Status != "" {
+		l += " " + e.Status
+	}
+	return l
+}
+
+// callsTool reports whether an assistant message asks to run a tool.
+func (e *claudeStreamEvent) callsTool() bool {
+	if e.Message == nil {
+		return false
+	}
+	for _, c := range e.Message.Content {
+		if c.Type == "tool_use" {
+			return true
+		}
+	}
+	return false
 }
 
 // describe renders an api_retry event's error, e.g. "429 rate_limit".
@@ -530,10 +612,26 @@ func (e *claudeStreamEvent) describe() string {
 // the plan's limit for that model is used up — it won't clear by waiting.
 // The API providers fail on a 429 too.
 //
+// It also watches for a stall (see claudeStallAfter): every event restarts
+// the idle timer, and when it runs out the CLI is stopped. A retry event
+// adds its backoff to the wait. A tool the model runs can take minutes with
+// no events, so the timer is off from a tool call to its result.
+//
 // exec writes to it from one goroutine; read its fields after Wait returns.
 type claudeStream struct {
 	model string // for messages, see modelLabel
 	abort func() // stops the CLI
+
+	stallAfter  time.Duration
+	idle        *time.Timer // nil when not watching
+	stalled     atomic.Bool // set by idle when it runs out
+	started     time.Time
+	lastEvent   string    // label of the latest event
+	lastEventAt time.Time // when it arrived
+	toolRunning bool      // between a tool call and its result
+	toolUsed    bool      // a tool was called, so the call can't just be rerun
+	stalledOut  bool      // the CLI was stopped for a stall, with no result
+	stderr      string    // the CLI's stderr tail, kept on a stall
 
 	result    *claudeJSONResponse // the final result event, if one arrived
 	resultRaw []byte
@@ -557,6 +655,62 @@ func (s *claudeStream) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// watch starts the idle timer.
+func (s *claudeStream) watch(after time.Duration) {
+	s.stallAfter = after
+	s.started = time.Now()
+	s.idle = time.AfterFunc(after, func() {
+		s.stalled.Store(true)
+		s.abort()
+	})
+}
+
+// sawEvent restarts the idle timer, or stops it while a tool runs. extra
+// lengthens the wait, for a retry's backoff.
+func (s *claudeStream) sawEvent(ev *claudeStreamEvent, extra time.Duration) {
+	s.lastEvent = ev.label()
+	s.lastEventAt = time.Now()
+	switch {
+	case ev.Type == "assistant" && ev.callsTool():
+		s.toolUsed = true
+		s.toolRunning = true
+	case ev.Type == "user":
+		s.toolRunning = false
+	}
+	if s.idle == nil {
+		return
+	}
+	if s.toolRunning {
+		s.idle.Stop()
+		return
+	}
+	s.idle.Reset(s.stallAfter + extra)
+}
+
+// stallPoint says where the CLI went quiet, for messages.
+func (s *claudeStream) stallPoint() string {
+	if s.lastEvent == "" {
+		return "(it sent no events at all)"
+	}
+	return fmt.Sprintf("(last event: %s, %s into the call)", s.lastEvent, s.lastEventAt.Sub(s.started).Round(time.Second))
+}
+
+// stalledError says the CLI stalled and, when it said why, why. It reads
+// "timed out" so the status line files it as a timeout.
+func (s *claudeStream) stalledError(after time.Duration, retried bool) error {
+	msg := fmt.Sprintf("claude timed out: the CLI sent nothing for %s %s", after, s.stallPoint())
+	if retried {
+		msg += ", on the retry too"
+	}
+	if s.lastRetry != nil {
+		msg += fmt.Sprintf("; it was retrying an API error (%s, retry %d/%d)", s.lastRetry.describe(), s.lastRetry.Attempt, s.lastRetry.MaxRetries)
+	}
+	if stderr := strings.TrimSpace(s.stderr); stderr != "" {
+		msg += "\nclaude stderr:\n" + stderr
+	}
+	return errors.New(msg)
+}
+
 // flush handles a last line that had no newline.
 func (s *claudeStream) flush() {
 	s.handleLine(bytes.TrimSpace(s.partial))
@@ -573,6 +727,11 @@ func (s *claudeStream) handleLine(line []byte) {
 		s.other.WriteByte('\n')
 		return
 	}
+	var extra time.Duration
+	if ev.Type == "system" && ev.Subtype == "api_retry" {
+		extra = time.Duration(ev.RetryDelayMS) * time.Millisecond
+	}
+	s.sawEvent(&ev, extra)
 	switch {
 	case ev.Type == "result":
 		var resp claudeJSONResponse
