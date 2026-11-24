@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -203,10 +204,10 @@ exec sleep 30`)
 	if err == nil {
 		t.Fatal("want a stall error")
 	}
-	for _, want := range []string{"sent nothing for 1s", "last event: system/status requesting", "on the retry too", "still connecting"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error missing %q: %q", want, err)
-		}
+	want := "claude timed out: the CLI sent nothing for 1s (last event: system/status requesting, Ns into the call), on the retry too\n" +
+		"claude stderr:\nstill connecting"
+	if got := normalizeElapsed(err.Error()); got != want {
+		t.Errorf("error =\n%s\nwant\n%s", got, want)
 	}
 	if !strings.HasPrefix(errorStatusDescription(err), "timeout: ") {
 		t.Errorf("status description should be a timeout: %q", errorStatusDescription(err))
@@ -214,6 +215,12 @@ exec sleep 30`)
 	if calls() != 2 {
 		t.Errorf("CLI ran %d times, want 2", calls())
 	}
+}
+
+// normalizeElapsed replaces the time into the call in a stall message,
+// which depends on how fast the fake CLI started.
+func normalizeElapsed(s string) string {
+	return regexp.MustCompile(`\d+s into the call`).ReplaceAllString(s, "Ns into the call")
 }
 
 // Events keep the call alive however long it runs.
@@ -256,11 +263,38 @@ func TestClaudeRun_StallAfterToolIsNotRetried(t *testing.T) {
 echo '{"type":"user","message":{"content":[{"type":"tool_result"}]}}'
 exec sleep 30`)
 	_, err := p.Run(context.Background(), "prompt", RunOpts{Timeout: 20 * time.Second})
-	if err == nil || !strings.Contains(err.Error(), "sent nothing for 1s") || strings.Contains(err.Error(), "retry too") {
-		t.Fatalf("err = %v; want a stall reported without a retry", err)
+	if err == nil {
+		t.Fatal("want a stall error")
+	}
+	want := "claude timed out: the CLI sent nothing for 1s (last event: user, Ns into the call)"
+	if got := normalizeElapsed(err.Error()); got != want {
+		t.Errorf("error =\n%s\nwant\n%s", got, want)
 	}
 	if calls() != 1 {
 		t.Errorf("CLI ran %d times, want 1", calls())
+	}
+}
+
+// Parallel tool calls: the timer stays off until every call has its result,
+// not just the first.
+func TestClaudeRun_ParallelToolsWaitForAllResults(t *testing.T) {
+	p, calls := countedFakeClaude(t, `echo '{"type":"assistant","message":{"content":[{"type":"tool_use"},{"type":"tool_use"}]}}'
+echo '{"type":"user","message":{"content":[{"type":"tool_result"}]}}'
+sleep 2
+echo '{"type":"user","message":{"content":[{"type":"tool_result"}]}}'
+`+evResult)
+	res, err := p.Run(context.Background(), "prompt", RunOpts{Timeout: 20 * time.Second})
+	if err != nil || res.Text != "no findings" || calls() != 1 {
+		t.Fatalf("res = %+v, err = %v, calls = %d; want the slower tool waited out", res, err, calls())
+	}
+}
+
+// A message whose content is a plain string still counts as an event.
+func TestClaudeStream_StringContentIsAnEvent(t *testing.T) {
+	s := &claudeStream{model: "opus", abort: func() {}}
+	_, _ = s.Write([]byte(`{"type":"user","message":{"content":"hello"}}` + "\n"))
+	if s.lastEvent != "user" || s.toolsRunning != 0 {
+		t.Errorf("lastEvent = %q, toolsRunning = %d; want the user event seen", s.lastEvent, s.toolsRunning)
 	}
 }
 

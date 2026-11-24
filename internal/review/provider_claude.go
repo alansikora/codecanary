@@ -557,10 +557,9 @@ type claudeStreamEvent struct {
 		Type string `json:"type"`
 	} `json:"event"` // stream_event: the API's streaming event
 	Message *struct {
-		Content []struct {
-			Type string `json:"type"`
-		} `json:"content"`
-	} `json:"message"` // assistant: the finished message
+		// Content is a list of blocks, or a plain string; see countBlocks.
+		Content json.RawMessage `json:"content"`
+	} `json:"message"` // assistant and user messages
 }
 
 // label names the event for messages, e.g. "system/status requesting".
@@ -578,17 +577,26 @@ func (e *claudeStreamEvent) label() string {
 	return l
 }
 
-// callsTool reports whether an assistant message asks to run a tool.
-func (e *claudeStreamEvent) callsTool() bool {
+// countBlocks counts the message's content blocks of type typ: tool_use in
+// an assistant message, tool_result in a user one. Content that isn't a
+// list of blocks has none.
+func (e *claudeStreamEvent) countBlocks(typ string) int {
 	if e.Message == nil {
-		return false
+		return 0
 	}
-	for _, c := range e.Message.Content {
-		if c.Type == "tool_use" {
-			return true
+	var blocks []struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(e.Message.Content, &blocks) != nil {
+		return 0
+	}
+	n := 0
+	for _, b := range blocks {
+		if b.Type == typ {
+			n++
 		}
 	}
-	return false
+	return n
 }
 
 // describe renders an api_retry event's error, e.g. "429 rate_limit".
@@ -622,16 +630,16 @@ type claudeStream struct {
 	model string // for messages, see modelLabel
 	abort func() // stops the CLI
 
-	stallAfter  time.Duration
-	idle        *time.Timer // nil when not watching
-	stalled     atomic.Bool // set by idle when it runs out
-	started     time.Time
-	lastEvent   string    // label of the latest event
-	lastEventAt time.Time // when it arrived
-	toolRunning bool      // between a tool call and its result
-	toolUsed    bool      // a tool was called, so the call can't just be rerun
-	stalledOut  bool      // the CLI was stopped for a stall, with no result
-	stderr      string    // the CLI's stderr tail, kept on a stall
+	stallAfter   time.Duration
+	idle         *time.Timer // nil when not watching
+	stalled      atomic.Bool // set by idle when it runs out
+	started      time.Time
+	lastEvent    string    // label of the latest event
+	lastEventAt  time.Time // when it arrived
+	toolsRunning int       // tool calls not yet answered by a result
+	toolUsed     bool      // a tool was called, so the call can't just be rerun
+	stalledOut   bool      // the CLI was stopped for a stall, with no result
+	stderr       string    // the CLI's stderr tail, kept on a stall
 
 	result    *claudeJSONResponse // the final result event, if one arrived
 	resultRaw []byte
@@ -670,17 +678,21 @@ func (s *claudeStream) watch(after time.Duration) {
 func (s *claudeStream) sawEvent(ev *claudeStreamEvent, extra time.Duration) {
 	s.lastEvent = ev.label()
 	s.lastEventAt = time.Now()
-	switch {
-	case ev.Type == "assistant" && ev.callsTool():
-		s.toolUsed = true
-		s.toolRunning = true
-	case ev.Type == "user":
-		s.toolRunning = false
+	// Counted, not flagged: the model can call several tools at once, and
+	// the first result must not restart the timer while another still runs.
+	switch ev.Type {
+	case "assistant":
+		if n := ev.countBlocks("tool_use"); n > 0 {
+			s.toolUsed = true
+			s.toolsRunning += n
+		}
+	case "user":
+		s.toolsRunning = max(0, s.toolsRunning-ev.countBlocks("tool_result"))
 	}
 	if s.idle == nil {
 		return
 	}
-	if s.toolRunning {
+	if s.toolsRunning > 0 {
 		s.idle.Stop()
 		return
 	}
