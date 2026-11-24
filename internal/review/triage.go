@@ -309,6 +309,10 @@ func ClassifyThreads(threads []ReviewThread, activityDiff, contextDiff, botLogin
 		}
 
 		var class ThreadClassification
+		// replyPushed: the author replied and pushed, but the finding's lines
+		// did not change (not outdated), so the fix, if any, is elsewhere —
+		// possibly in another file. The evaluator needs the whole PR diff.
+		replyPushed := false
 		switch {
 		case priorAck != "":
 			class = TriagePreviouslyAcked
@@ -320,6 +324,13 @@ func ClassifyThreads(threads []ReviewThread, activityDiff, contextDiff, botLogin
 			class = TriageCodeChangedReply
 		case outdated:
 			class = TriageCodeChanged
+		case hasReply && activityDiff != "":
+			// The author replied and code changed since the last review. A
+			// reply saying "fixed in <commit>" is then checkable against the
+			// diff, even when the fix is in another file than the finding;
+			// judged as reply-only, a real fix could never resolve it.
+			class = TriageCodeChangedReply
+			replyPushed = true
 		case hasReply:
 			class = TriageHasReply
 		default:
@@ -344,19 +355,19 @@ func ClassifyThreads(threads []ReviewThread, activityDiff, contextDiff, botLogin
 		// unrelated files, causing false "not resolved" verdicts. Cross-file
 		// evaluations keep the full diff since the fix is in a different file.
 		var fileDiff, fullDiff, fileSnippet string
-		switch class {
-		case TriageCodeChanged, TriageCodeChangedReply:
-			fileDiff, fullDiff, fileSnippet = codeChangeContext(t, contextDiff, fileContents)
-		case TriageCrossFileChange:
+		switch {
+		case replyPushed, class == TriageCrossFileChange:
 			fileDiff = contextDiff
+		case class == TriageCodeChanged, class == TriageCodeChangedReply:
+			fileDiff, fullDiff, fileSnippet = codeChangeContext(t, contextDiff, fileContents)
 		}
 
 		if content, ok := fileContents[t.Path]; ok {
-			switch class {
-			case TriageCrossFileChange:
+			switch {
+			case replyPushed, class == TriageCrossFileChange:
 				// Show finding's file context even though the diff is in other files.
 				fileSnippet = ExtractFileSnippet(content, t.Line, "", 200)
-			case TriageHasReply:
+			case class == TriageHasReply:
 				// Show current file state so the LLM can judge whether the author's
 				// rebuttal is technically accurate given the code as it stands.
 				fileSnippet = ExtractFileSnippet(content, t.Line, "", 200)
@@ -648,7 +659,7 @@ func buildCodeChangeReplyPrompt(t TriagedThread, cfg *ReviewConfig) string {
 
 	b.WriteString("## Task\n")
 	b.WriteString("Is the finding resolved? It may be resolved by the code change, the reply, or both.\n\n")
-	b.WriteString("**Start with the current file content** (if provided). If the issue no longer exists in the current code — the root cause is fixed, the code was removed, or the code was restructured — it is resolved by code change regardless of which diff line produced the fix.\n\n")
+	b.WriteString("**Start with the current file content** (if provided). If the issue no longer exists in the current code — the root cause is fixed, the code was removed, or the code was restructured — it is resolved by code change regardless of which diff line produced the fix — or which file: the fix may be in a different file from the finding, as the author's reply may say. A reply claiming a fix the code and diff don't show is not a code change.\n\n")
 	b.WriteString("If the code still shows the issue, evaluate the reply:\n")
 	b.WriteString("- **Dismissed**: Reply explicitly asks the reviewer to dismiss, ignore, or skip the finding (e.g. \"dismiss this\", \"you can safely dismiss\", \"please ignore\", \"skip this one\"). The author is exercising their authority to close the thread without further justification.\n")
 	b.WriteString("- **Acknowledged**: Reply indicates the finding is intentional, accepted, or tracked elsewhere (e.g. \"intentional\", \"will fix in a future PR\", \"tracked in issue #N\").\n")

@@ -136,8 +136,8 @@ Two diffs serve different purposes:
 | `TriagePreviouslyFixed` | Bot already posted a `<!-- codecanary:fixed -->` reply: an earlier run judged the finding fixed but could not resolve the thread | Resolved as `code_change` by Go code (no LLM), even after a new reply |
 | `TriageSkip` | No activity diff, not outdated, no replies | Skipped (no LLM) |
 | `TriageCodeChanged` | GitHub outdated flag, or file in PR diff | LLM evaluates with file-scoped diff + file snippet |
-| `TriageHasReply` | Human replied (no code changes) | LLM evaluates reply intent with a file snippet around the finding |
-| `TriageCodeChangedReply` | Both code changed and human replied | LLM evaluates both |
+| `TriageHasReply` | Human replied, no code changes since the last review | LLM evaluates reply intent with a file snippet around the finding |
+| `TriageCodeChangedReply` | Human replied, and the thread is outdated or code changed since the last review | LLM evaluates both. When the thread isn't outdated (only the push since the last review makes it this class), it gets the full PR diff: the finding's lines didn't change, so a fix the reply names may be in another file |
 | `TriageCrossFileChange` | Changes in other files only | LLM evaluates with full PR diff |
 | `TriageFileRemovedFromPR` | File no longer in PR | Auto-resolved by Go code (no LLM) -- thread resolved on GitHub |
 
