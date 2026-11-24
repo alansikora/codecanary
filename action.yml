@@ -19,7 +19,7 @@ inputs:
   codecanary_version:
     description: 'CodeCanary CLI version to install (e.g. "v0.1.0"). Defaults to latest release.'
     required: false
-    default: 'latest'
+    default: 'canary'
   reply_only:
     description: 'Evaluate thread replies only, skip new findings'
     required: false
