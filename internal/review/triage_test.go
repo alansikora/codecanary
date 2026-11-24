@@ -679,3 +679,51 @@ func TestClassifyThreads_PreviouslyFixedIsResolvedOnRerun(t *testing.T) {
 		t.Errorf("countNonSkipped = %d; a previously fixed thread needs no model call", n)
 	}
 }
+
+// Regression (thetechfx/techfx#125): the author fixed a finding in another
+// file, pushed, and replied saying so. The finding's lines were untouched, so
+// the thread was judged on the reply alone, with no diff, and a real fix
+// could never resolve it.
+func TestClassifyThreads_ReplyWithCrossFilePushSeesFullDiff(t *testing.T) {
+	threads := []ReviewThread{{
+		Path: ".cargo/config.toml", Line: 4, Body: "walk will descend into target/",
+		Replies: []ThreadReply{{Author: "user", Body: "walk now skips target (commit 405c243)"}},
+	}}
+	fix := "diff --git a/check.test.mjs b/check.test.mjs\n--- a/check.test.mjs\n+++ b/check.test.mjs\n@@ -1,1 +1,2 @@\n+if (rel === 'target') continue\n"
+	pr := "diff --git a/.cargo/config.toml b/.cargo/config.toml\n--- /dev/null\n+++ b/.cargo/config.toml\n@@ -0,0 +1,4 @@\n+[build]\n" + fix
+	files := []string{".cargo/config.toml", "check.test.mjs"}
+
+	tt := ClassifyThreads(threads, fix, pr, "bot", files, nil)[0]
+	if tt.Class != TriageCodeChangedReply {
+		t.Fatalf("expected TriageCodeChangedReply, got %d", tt.Class)
+	}
+	prompt := BuildPerThreadPrompt(tt, nil)
+	if !strings.Contains(prompt, "if (rel === 'target') continue") {
+		t.Errorf("prompt should carry the full PR diff so the cross-file fix is visible, got:\n%s", prompt)
+	}
+	if res := validateResolutionReason(ThreadResolution{Resolved: true, Reason: "code_change"}, tt.Class); !res.Resolved {
+		t.Error("a code_change verdict backed by the shown diff should resolve")
+	}
+
+	// No push since the last review: the reply alone is judged, as before.
+	if got := ClassifyThreads(threads, "", pr, "bot", files, nil)[0].Class; got != TriageHasReply {
+		t.Errorf("reply without new changes: class = %d, want TriageHasReply", got)
+	}
+}
+
+func TestClassifyThreads_ReplyWithSameFilePushIsFileScoped(t *testing.T) {
+	threads := []ReviewThread{{
+		Path: "a.go", Line: 10, Body: "Issue",
+		Replies: []ThreadReply{{Author: "user", Body: "fixed"}},
+	}}
+	diff := "diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -40,1 +40,1 @@\n-x\n+y\n" +
+		"diff --git a/b.go b/b.go\n--- a/b.go\n+++ b/b.go\n@@ -1,1 +1,1 @@\n-p\n+q\n"
+
+	tt := ClassifyThreads(threads, diff, diff, "bot", []string{"a.go", "b.go"}, nil)[0]
+	if tt.Class != TriageCodeChangedReply {
+		t.Fatalf("expected TriageCodeChangedReply, got %d", tt.Class)
+	}
+	if strings.Contains(tt.FileDiff, "b.go") || !strings.Contains(tt.FileDiff, "a.go") {
+		t.Errorf("same-file push should give the file-scoped diff, got:\n%s", tt.FileDiff)
+	}
+}
